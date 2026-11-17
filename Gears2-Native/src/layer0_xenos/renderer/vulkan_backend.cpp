@@ -79,7 +79,7 @@ std::unique_ptr<Backend> CreateVulkanBackend() { return nullptr; }
 
 #include "vk_present_spirv.h"
 
-// system_report.cpp (GitHub #59): logs the Vulkan ids against DXGI's; XenosGpuVendorId() prefers these.
+// system_report.cpp (GitHub #59): logs the Vulkan ids against DXGI's; the logged GPU vendor prefers these.
 // (Move to <xenos/dev_tools.h> next to XenosLogSystemReport.)
 #ifdef _WIN32
 void XenosReportVulkanDevice(uint32_t vendor, uint32_t device, const char* name);
@@ -183,6 +183,7 @@ FormatInfo Info(Format f) {
     case Format::kBC3: return {VK_FORMAT_BC3_UNORM_BLOCK, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, 16, true};
     case Format::kBC4: return {VK_FORMAT_BC4_UNORM_BLOCK, VK_FORMAT_BC4_SNORM_BLOCK, VK_FORMAT_UNDEFINED, 8, true};
     case Format::kBC5: return {VK_FORMAT_BC5_UNORM_BLOCK, VK_FORMAT_BC5_SNORM_BLOCK, VK_FORMAT_UNDEFINED, 16, true};
+    case Format::kBC7: return {VK_FORMAT_BC7_UNORM_BLOCK, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, 16, true};
     case Format::kD32FloatS8X24: return {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, 8, false, true};
     case Format::kD24UnormS8: return {VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, 4, false, true};
     default: return {};

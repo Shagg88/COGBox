@@ -1,85 +1,12 @@
 // Layer 0 (game-free): see xenos/renderer/guest_watch.h. Our code (MIT).
 #include <xenos/renderer/guest_watch.h>
 
-#include <xenos/dev_tools.h>
-
-#include <rex/logging/macros.h>
 #include <rex/system/xmemory.h>
-#include <rex/system/xthread.h>
 
 #include <algorithm>
-#include <cstring>
-#include <mutex>
-#include <string>
 #include <utility>
 
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#include <dbghelp.h>
-#pragma comment(lib, "dbghelp.lib")
-#endif
-
 namespace xenos::renderer {
-
-namespace {
-// Diagnostic only (the watch report): the host call stack of the write that raised a reported callback, with symbol
-// names from the PDB where DbgHelp finds them (else module+offset, for llvm-symbolizer --relative-address) - shows
-// which kernel call (file read, free, decommit, protect) and which game function caused it.
-std::string HostStack() {
-#if defined(_WIN32)
-  static std::mutex mutex;
-  static int ready = 0;  // 0 not tried, 1 ok, -1 failed
-  std::lock_guard<std::mutex> lock(mutex);
-  HANDLE process = GetCurrentProcess();
-  if (ready == 0) {
-    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-    ready = SymInitialize(process, nullptr, TRUE) ? 1 : -1;
-  }
-  void* frames[28] = {};
-  const USHORT n = CaptureStackBackTrace(1, 28, frames, nullptr);
-  alignas(SYMBOL_INFO) char storage[sizeof(SYMBOL_INFO) + 256] = {};
-  auto* sym = reinterpret_cast<SYMBOL_INFO*>(storage);
-  std::string out;
-  for (USHORT i = 0; i < n; ++i) {
-    if (!out.empty()) out += " < ";
-    sym->SizeOfStruct = sizeof(SYMBOL_INFO);
-    sym->MaxNameLen = 255;
-    DWORD64 disp = 0;
-    if (ready == 1 && SymFromAddr(process, DWORD64(frames[i]), &disp, sym)) {
-      out += std::string(sym->Name, sym->NameLen);
-      continue;
-    }
-    HMODULE m = nullptr;
-    char path[MAX_PATH] = {};
-    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           static_cast<LPCSTR>(frames[i]), &m) &&
-        m && GetModuleFileNameA(m, path, MAX_PATH)) {
-      const char* slash = strrchr(path, '\\');
-      out += fmt::format("{}+{:X}", slash ? slash + 1 : path, uint64_t(uintptr_t(frames[i]) - uintptr_t(m)));
-    } else {
-      out += fmt::format("{:X}", uint64_t(uintptr_t(frames[i])));
-    }
-  }
-  return out;
-#else
-  return "no stack on this platform";
-#endif
-}
-}  // namespace
-
-void GuestWatch::SetReportRanges(std::vector<std::pair<uint32_t, uint32_t>> ranges) {
-  report_ = std::move(ranges);
-  if (!report_.empty()) {
-    const std::string warm = HostStack();
-    REXLOG_INFO("gow2_renderer: watch report call stacks ready (sample: {})", warm.substr(0, 300));
-  }
-}
 
 GuestWatch::GuestWatch(rex::memory::Memory* memory)
     : memory_(memory),
@@ -96,21 +23,6 @@ std::pair<uint32_t, uint32_t> GuestWatch::Callback(void* context, uint32_t start
   auto* self = static_cast<GuestWatch*>(context);
   self->callbacks_.fetch_add(1, std::memory_order_relaxed);
   start &= 0x1FFFFFFFu;
-  if (!self->report_.empty()) {
-    const uint64_t a = start, b = uint64_t(start) + std::max(length, 1u);
-    for (const auto& [rs, rl] : self->report_) {
-      if (a < uint64_t(rs) + rl && b > rs) {
-        if (self->report_lines_.fetch_add(1, std::memory_order_relaxed) < 120) {
-          auto* t = rex::system::XThread::GetCurrentThread();
-          REXLOG_INFO("gow2_renderer: WATCH write {:08X}+{:X} ({}) into {:08X}+{:X} | swap {} | guest thread {}", start,
-                      length, exact_range ? "exact range: a host-side write such as a file read" : "page: a CPU store",
-                      rs, rl, XenosSwapCount(), t ? fmt::format("{:X}", t->thread_id()) : std::string("none (host)"));
-          REXLOG_INFO("gow2_renderer: WATCH stack {}", HostStack());
-        }
-        break;
-      }
-    }
-  }
   if (exact_range && length) {  // green-vine review (diagnostic): GPU-current pages this exact bump ends
     const uint32_t first = start >> kPageShift;
     const uint32_t last = uint32_t(std::min<uint64_t>((uint64_t(start) + length - 1) >> kPageShift, kPages - 1));

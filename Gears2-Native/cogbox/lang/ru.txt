@@ -200,6 +200,7 @@ Aftermath 3 - outro = Последствия 3 - финал
 Aftermath 4 = Последствия 4
 Aftermath 5 = Последствия 5
 DLSS (NVIDIA RTX) = DLSS (NVIDIA RTX)
+DLSS (NVIDIA RTX, experimental) = DLSS (NVIDIA RTX, экспериментально)
 Not yet in  = Пока нет в 
 Fullscreen = Полный экран
 Fullscreen (borderless) = Полный экран (без рамки)
@@ -262,6 +263,12 @@ Game's own (smallest) = Встроенная в игру (наименьшая)
 Standard (196 MB / Gears 3 200 MB) = Стандартная (196 МБ / Gears 3 200 МБ)
 Large (256 MB) = Большая (256 МБ)
 Larger (320 MB, not long-tested) = Ещё больше (320 МБ, долго не тестировалось)
+Texture cache (video memory) = Кэш текстур (видеопамять)
+512 MB = 512 МБ
+1 GB = 1 ГБ
+2 GB = 2 ГБ
+4 GB = 4 ГБ
+How much video memory the PC side keeps the game's textures in before the least recently used ones are freed. Texture packs need more: a freed pack texture is read from disk again when it is next drawn, which stutters. Auto: 512 MB; with a texture pack on, 2 GB (1 GB on cards with less than 6 GB). Keep it well under your graphics card's memory. = Сколько видеопамяти сторона ПК отводит под текстуры игры, прежде чем освобождать давно не использованные. Пакетам текстур нужно больше: освобождённая текстура пакета при следующей отрисовке снова читается с диска, что вызывает подтормаживания. Авто: 512 МБ; с включённым пакетом текстур — 2 ГБ (1 ГБ на картах с памятью меньше 6 ГБ). Держите значительно ниже объёма памяти видеокарты.
 Draw distance = Дальность прорисовки
 Original = Оригинал
 Far (1.5x) = Далеко (1,5x)
@@ -1016,8 +1023,7 @@ Controller layout = Раскладка контроллера
 Southpaw (sticks swapped) = Для левшей (стики поменяны)
 A and B swapped = A и B поменяны
 Bumpers and triggers swapped = Бамперы и курки поменяны
-Custom (CogBox.ini [Pad] Remap=) = Своя (CogBox.ini [Pad] Remap=)
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = Переназначает кнопки и стики контроллера до того, как их увидит игра, поэтому подсказки кнопок в игре по-прежнему показывают исходные кнопки. Своя: впишите пары src=dst (a b x y lb rb lt rt ls rs back start up down left right или sticks=swap) в CogBox.ini, в строку Remap= раздела [Pad].
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = Переназначает кнопки и стики контроллера до того, как их увидит игра, поэтому подсказки кнопок в игре по-прежнему показывают исходные кнопки. Своя: в списке ниже выберите кнопку контроллера для каждой кнопки игры (одна раскладка для всех четырёх игр, хранится в CogBox.ini, в строке Remap= раздела [Pad]).
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = Обновления теперь обязательны: каждая игра запускается с последним патчем от Epic (Gears 2 и 3: TU6, Judgment: TU4, Gears 1: TU5). Версии только с диска больше не поддерживаются.
 Two-player split = Разделение на двоих
 Top and bottom (game's) = Сверху и снизу (как в игре)
@@ -1143,7 +1149,7 @@ D-pad choose   A pick   B close = Крестовина выбор   A выбра
 ICON = ЗНАЧОК
 BACK = НАЗАД
 Horde bots = Боты в Орде
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Локальная Орда: нажмите «Назад» / «Просмотр», когда впервые появится таблица счёта Орды, чтобы добавить двух ботов (нажмите ещё раз — ещё двух). Они возрождаются каждую волну. Выключайте для кампании и версуса: «Назад» также включает флаг читов игры.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = Back / View, как обычно, показывает таблицу счёта, а в игре «Орда», которую вы проводите сами, ещё и добирает вашу команду ботами до пяти (они возрождаются каждую волну). В режиме Versus, в лобби и в чужой игре ничего не делает. Для ботов в Versus используйте настройку ботов в самом лобби.
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = Вкл.
@@ -1334,8 +1340,8 @@ start it once from COGBox to add its pictures. = запустите её оди�
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = Чувствительность при прицеливании (%)
 Zoom sensitivity (%) = Чувствительность при зуме (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при прицеливании, в процентах от обычной. 100 = без изменений. Только с нативным обзором мышью.
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при зуме через прицел (Longshot, Молот Зари), в процентах от обычной. 100 = без изменений. Только с нативным обзором мышью.
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при прицеливании, в процентах от обычной. 100: без изменений. Только с нативным обзором мышью.
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при зуме через прицел (Longshot, Молот Зари), в процентах от обычной. 100: без изменений. Только с нативным обзором мышью.
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = УДАЛИТЬ ЭТОТ ПРОФИЛЬ
 DELETE = УДАЛИТЬ
@@ -1348,7 +1354,7 @@ Paste a path = Вставить путь
 Import saves... = Импортировать сохранения...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = Для максимально плавной игры этим играм нужны указанные Title Update. Подробности в README.
 # 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
-The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = Читерские клавиши разработчиков, F5-F11 в игре (режим бога, замедление, свободная камера - в Gears 1 полёт сквозь стены - скрытие HUD, всё оружие). Gears 2: только в играх на этом ПК - никогда в играх по System Link или онлайн. Gears 3 и Judgment: также в игре по System Link или онлайн, которую вы хостите, где замедление и остальное действуют на всех игроков - пожалуйста, используйте их только в своих играх. Gears 1: в играх по System Link пока не проверено. Достижения и сохранения - на ваше усмотрение.
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. They do not work in Versus matches - only in the campaign and the wave modes (Horde, Beast, Survival). = Читерские клавиши разработчиков, F5-F11 в игре (режим бога, замедление, свободная камера - в Gears 1 полёт сквозь стены - скрытие HUD, всё оружие). Gears 2: только в играх на этом ПК - никогда в играх по System Link или онлайн. Gears 3 и Judgment: также в игре по System Link или онлайн, которую вы хостите, где замедление и остальное действуют на всех игроков - пожалуйста, используйте их только в своих играх. Gears 1: в играх по System Link пока не проверено. Достижения и сохранения - на ваше усмотрение. В матчах Versus они не работают - только в кампании и в режимах волн (Horde, Beast, Survival).
 Not on a Mac (CrossOver). = Не на Mac (CrossOver).
 Vulkan only on Proton / Wine. = В Proton / Wine только Vulkan.
 On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = На Mac (CrossOver) игры работают на DirectX 12 через D3DMetal (Apple Silicon). Vulkan там не запускается.
@@ -1416,6 +1422,7 @@ Join their game. = Присоединиться к его игре.
 Set up this game in COGBox to join. = Настройте эту игру в COGBox, чтобы присоединиться.
 Invite them to the game you are hosting. = Пригласить в игру, которую вы хостите.
 Remove this friend (asks first). = Удалить этого друга (сначала спросит).
+Take back your friend request. = Отозвать ваш запрос в друзья.
 Remove this friend? = Удалить этого друга?
 Yes, remove = Да, удалить
 Close the running game first, then press JOIN again. = Сначала закройте запущенную игру, затем снова нажмите ПРИСОЕДИНИТЬСЯ.
@@ -1504,3 +1511,68 @@ Graphics card = Видеокарта
 Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = Какую видеокарту использует игра на ПК, где их несколько (встроенная графика ноутбука и его собственная карта или две карты). «Автоматически» выбирает карту с наибольшим объёмом собственной видеопамяти, а среди карт с примерно равным объёмом - ту, к которой подключён монитор; для DirectX 12 и Vulkan выбирается одна и та же карта. Выберите карту, чтобы использовать её вместо этого. Если выбранной карты больше нет в этом ПК, используется «Автоматически».
 (not found - Automatic is used) = (не найдена - используется «Автоматически»)
 The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = Выбранной видеокарты сейчас нет в этом ПК - игра выбирает карту сама («Автоматически»).
+# 0.6.3 (GitHub #316): the window key
+GAME WINDOW = ОКНО ИГРЫ
+Windowed / full screen key = Клавиша окно / полный экран
+Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = Переключает окно игры между оконным режимом и полным экраном (без рамки или эксклюзивным, если вы его выбрали) на том мониторе, где оно находится, и возвращает его к прежнему размеру и положению окна. Работает в окне игры во всех четырёх играх, с включённой или выключенной Клавиатурой и мышью. Чтобы использовать другую клавишу, добавьте в extra-args.txt строку вроде --bind_cogbox_fullscreen=F12 (название клавиши, при желании с Alt+, Ctrl+ или Shift+ перед ним; None отключает клавишу).
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = Своя (выбор ниже)
+Customise... = Настроить...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = Выберите сами кнопку контроллера для каждой кнопки игры, начиная с раскладки, выбранной выше.
+Left: the game's buttons. Right: the controller button that does each one. = Слева: кнопки игры. Справа: кнопка контроллера, которая их нажимает.
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = Выберите кнопку игры, затем нажмите кнопку контроллера, которая будет её нажимать (Esc отменяет). У кнопки контроллера одна задача: если у неё уже была другая, они меняются местами.
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = Контроллер не подключён - выберите кнопку контроллера из списка. У кнопки контроллера одна задача: если у неё уже была другая, они меняются местами.
+Press a button... = Нажмите кнопку...
+Nothing = Нет
+Swap sticks = Поменять стики местами
+The left stick moves the camera and the right stick moves you (southpaw). = Левый стик управляет камерой, а правый - движением (для левшей).
+Reset to the game's own = Сбросить на раскладку игры
+{1} now does the game's {2}. = {1} теперь нажимает {2} игры.
+{1} does the game's {2} instead. = {1} вместо этого нажимает {2} игры.
+No button does the game's {1} now. = Теперь ни одна кнопка не нажимает {1} игры.
+Your earlier custom layout was replaced. = Ваша прежняя своя раскладка заменена.
+Undo Customise = Отменить «Настроить»
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = Есть в CogBox.ini, но игра это не понимает (оставлено, без пробелов и символов):
+Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = Отменяет все изменения после «Настроить»: возврат к раскладке, выбранной до этого (и её строке в CogBox.ini).
+Or choose it from the list. = Или выберите из списка.
+# 0.6.3 GitHub #245 Xbox trigger rumble (machine-made translation, please check)
+Trigger rumble (Xbox controllers) = Вибрация триггеров (контроллеры Xbox)
+Xbox One and Series controllers over USB or the Xbox Wireless Adapter (Bluetooth may give none), with Steam Input off for the controller: the motors in the triggers kick with each shot (harder for shotguns and heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while Controller vibration is off, here or in the game's options. While this is on, every Xbox-style controller (Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press the triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in another order, and rarely Windows stops sending controller input until the PC restarts - untick this if a controller misbehaves. PlayStation controllers are not affected. = Контроллеры Xbox One и Series по USB или через беспроводной адаптер Xbox (по Bluetooth может не работать), с выключенным для контроллера Steam Input: моторы в триггерах дают короткий толчок при каждом выстреле (сильнее у дробовиков и тяжёлого оружия) и вибрируют, пока работает бензопила или стреляет миниган или огнемёт. Ничего, пока Вибрация контроллера выключена — здесь или в настройках игры. Пока это включено, все контроллеры в стиле Xbox (также Xbox 360 и контроллеры в режиме XInput) читаются через Raw Input Windows: до первого нажатия кнопки триггеры, кнопка Guide и вибрация могут работать неправильно, игроки на разделённом экране могут получить контроллеры в другом порядке, и изредка Windows перестаёт передавать ввод с контроллеров до перезагрузки ПК — снимите флажок, если контроллер ведёт себя странно. Контроллеры PlayStation не затрагиваются.
+# 0.6.4 Shadow detail (machine-made translation, please check)
+Shadow detail = Детализация теней
+Full (original) = Полная (оригинал)
+Balanced = Сбалансированная
+Performance = Производительность
+Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows. = Меньше мелких и дальних теней ради более высокой частоты кадров там, где тени замедляют игру (напряжённые бои). Близкие и крупные тени, персонажи и ролики сохраняют свои; остальные исчезают с собственным затуханием игры. Сбалансированная: вдвое больше минимального размера тени игры. Производительность: втрое, и чуть более мягкие тени.
+# 0.6.4: the Mods tab's lines ({1}, {2}, {3} are filled in: names and numbers)
+Left out by the game: {1} = Пропущено игрой: {1}
+Texture pack: 1 texture = Пакет текстур: 1 текстура
+Texture pack: {1} textures = Пакет текстур: текстур: {1}
+made for a newer COGBox (mod API {1}; this one has {2}) = сделан для более новой COGBox (API модов {1}; у этой {2})
+Select Chapter: Act {1} {2}, chapter {3} = Выбор главы: Акт {1} {2}, глава {3}
+Select Chapter: Act {1} {2}, chapters {3} = Выбор главы: Акт {1} {2}, главы {3}
+(one player) = (один игрок)
+(co-op up to {1}) = (кооператив до {1})
+its chapters' place in Select Chapter shows once the game's files are in = место его глав в «Выборе главы» появится, когда будут файлы игры
+# 0.6.4: saves on the Gameplay tab, hand-copied saves
+SAVES = СОХРАНЕНИЯ
+Open saves folder = Открыть папку сохранений
+Saves copied into the saves folder by hand that the game can't use as they are: {1}. = Сохранения, вручную скопированные в папку сохранений, которые игра не может использовать в таком виде: {1}.
+Bring them in = Перенести их
+Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken from a profile). What you copied is kept as it was, in a folder beside the saves folder. = Размещает их так же, как «Импорт сохранений» (пакеты Xbox 360 распаковываются, прогресс игры берётся из профиля). Скопированное вами остаётся как было — в папке рядом с папкой сохранений.
+Saves COGBox can't use yet = Сохранения, которые COGBox пока не может использовать
+Saves were copied into the saves folder by hand, and the game can't use them as they are (another profile's folder, Xbox 360 packages that aren't unpacked, or another layout). = Сохранения были вручную скопированы в папку сохранений, и игра не может использовать их в таком виде (папка другого профиля, нераспакованные пакеты Xbox 360 или другая структура).
+Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, in a folder beside the saves folder. = Перенести их сейчас? Они будут размещены так же, как при «Импорте сохранений»; скопированное вами останется как было — в папке рядом с папкой сохранений.
+Not now = Не сейчас
+No saves to bring in were found in the saves folder. = В папке сохранений не найдено сохранений для переноса.
+The saves could not be moved (is the game or another program using them?). Nothing was changed. = Не удалось переместить сохранения (их использует игра или другая программа?). Ничего не изменено.
+A backup of the saves is still being made - try again when it's done. = Резервная копия сохранений ещё создаётся — попробуйте снова, когда она будет готова.
+Switch weapon = Смена оружия
+Pistol = Пистолет
+anti-aliasing only at this render resolution = при этом разрешении рендеринга только сглаживание
+This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = Это обновление игры сделано для другой копии default.xex (другого тиража или издания игры), и игра, скорее всего, вылетит при запуске.
+Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = Используйте файлы игры в том виде, в каком они сняты с диска (или вашу копию Games on Demand), с обновлением, сделанным для них.
+Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and the host's game picks your team. = Gears 3: перейдите сейчас в Versus > Social > {1}. Поиск игры найдёт этот матч, а игра хоста выберет вашу команду.
+the match's playlist = плейлист матча
+Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: чтобы выбрать COG или Locust, создайте Versus > Private, а остальные пусть войдут по коду комнаты или через «Присоединиться к другу». В лобби нажмите Y, чтобы сменить команду.
+Join through Gears 3's own matchmaking: the host's game picks your team. = Войти через поиск игры Gears 3: игра хоста выберет вашу команду.

@@ -66,9 +66,6 @@ class PromptOverlayCompositor {
   // building the style if needed. Returns an empty span / nullptr for `DeviceStyle::kOriginal` or unknown hashes. The
   // span stays valid only while the style is resident; hold GetOverlayShared's pointer to keep it.
   std::span<const uint8_t> GetOverlay(uint64_t hash, DeviceStyle style) const;
-  std::span<const uint8_t> GetActiveOverlay(uint64_t hash, DeviceStyle style) const {
-    return GetOverlay(hash, style);
-  }
   std::shared_ptr<const std::vector<uint8_t>> GetOverlayShared(uint64_t hash, DeviceStyle style) const;
 
   // Switches the active prompt overlay style in TextureCache across all cataloged (and aliased) prompt atlas hashes.

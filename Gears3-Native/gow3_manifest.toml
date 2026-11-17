@@ -9,6 +9,9 @@ game_root = "game/extracted"
 [entrypoint]
 file_path = "game/extracted/default.xex"
 out_directory_path = "generated/default"
+# SDK patches 110 + 111 (game side): the codegen templates in ../Gears2-Native/codegen-templates (see its README). The
+# disc build is not shipped; it takes patch 110's templates too, so it matches the 064c runtime and the 110 headers.
+template_dir = "../Gears2-Native/codegen-templates"
 includes = []
 
 [entrypoint.functions]
@@ -290,6 +293,15 @@ after_instruction = true
 address = 0x827C583C
 name = "Gow3UltrawideSizeCheck"
 registers = ["r30"]
+after_instruction = true
+
+# GitHub #330 (job 1907): after `addi r3,r1,260` at 0x827C6CCC, just before `bl` RHICreateSharedMemory (0x827C6CD0) for
+# scene shared memory block 2 in sub_827C6A20 (InitDynamicRHI): r5 = its size, raised to the 1280x720 size
+# (game_patches.cpp).
+[[entrypoint.midasm_hook]]
+address = 0x827C6CCC
+name = "Gow3UltrawideSharedMemory"
+registers = ["r5"]
 after_instruction = true
 
 [[entrypoint.midasm_hook]]

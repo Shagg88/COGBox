@@ -16,6 +16,8 @@ game_root = "game/tu6/patched"   # the disc's default.xex + the update's default
 [entrypoint]
 file_path = "game/tu6/patched/default.xex"
 out_directory_path = "generated/tu6"
+# SDK patch 110 (game side): the codegen templates in ../Gears2-Native/codegen-templates (see its README).
+template_dir = "../Gears2-Native/codegen-templates"
 includes = []
 # 0.4.9 (cg049, plan-049-perf item 1; docs/scan-049-codegen-safety.md section 5: statically safe, no G3 code reads ctx.cr):
 # CR fields in host locals, as Gears 1, Gears 2 and Judgment already ship (Gears 2 job 223: -10% game-thread frame time).
@@ -289,6 +291,15 @@ after_instruction = true
 address = 0x827D7ACC
 name = "Gow3UltrawideSizeCheck"
 registers = ["r30"]
+after_instruction = true
+
+# GitHub #330 (job 1907): after `addi r3,r1,260` at 0x827D8F5C, just before `bl` RHICreateSharedMemory (0x827D8F60) for
+# scene shared memory block 2 in sub_827D8CB0 (InitDynamicRHI): r5 = its size, raised to the 1280x720 size
+# (game_patches.cpp).
+[[entrypoint.midasm_hook]]
+address = 0x827D8F5C
+name = "Gow3UltrawideSharedMemory"
+registers = ["r5"]
 after_instruction = true
 
 [[entrypoint.midasm_hook]]

@@ -89,13 +89,11 @@ class OverlayFolder : public rex::filesystem::HostPathEntry {
 class OverlayDevice : public rex::filesystem::HostPathDevice {
  public:
   OverlayDevice(std::string_view mount, std::filesystem::path game_dir, std::filesystem::path edit_dir,
-                std::set<std::string> replaced, std::set<std::string> hidden = {})
+                std::set<std::string> replaced)
       : HostPathDevice(mount, game_dir, true),
         game_dir_(std::move(game_dir)),
         edit_dir_(std::move(edit_dir)),
-        replaced_(std::move(replaced)),
-        hidden_(std::move(hidden)) {}
-  uint32_t hidden_count() const { return hidden_hits_; }
+        replaced_(std::move(replaced)) {}
   bool Initialize() override {
     std::error_code ec;
     if (!std::filesystem::is_directory(game_dir_, ec)) return false;
@@ -123,7 +121,6 @@ class OverlayDevice : public rex::filesystem::HostPathDevice {
       rex::filesystem::FileInfo use = info;
       std::filesystem::path host = game_path;
       const std::string rel_name = rel + rex::path_to_utf8(info.name);
-      if (hidden_.count(AsciiLower(rel_name))) { ++hidden_hits_; continue; }   // not in this view at all
       if (replaced_.count(AsciiLower(rel_name))) {
         rex::filesystem::FileInfo edited;
         const std::filesystem::path edited_path = edit_dir_ / std::filesystem::path(rel_name);
@@ -139,10 +136,8 @@ class OverlayDevice : public rex::filesystem::HostPathDevice {
   }
   std::filesystem::path game_dir_, edit_dir_;
   std::set<std::string> replaced_;
-  std::set<std::string> hidden_;
   std::unique_ptr<OverlayFolder> root_;
   uint32_t replaced_hits_ = 0;
-  uint32_t hidden_hits_ = 0;
 };
 // GitHub #116: the image's address range is not all readable (a 0x83xxxxxx page of the TU6 image faulted on one PC,
 // 0xC0000005 at start-up right after the first bundle was edited). Only the pages the guest heap has readable are
@@ -781,24 +776,4 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
   REXLOG_INFO("ue3_ini_edits: {} edit(s) applied to {} config bundle(s) in {}; the game's {} now shows them ({} entries "
               "replaced, {} checked through the file system; {} hash table entries updated, {} table-of-contents lines)",
               edits.size(), written, out_dir.string(), game_folder, view->replaced_count(), verified, hashed, toc_lines);
-}
-
-// A view of <game data>\<folder> without the named files (lower-case names), e.g. the logo films (Gears 1's skip-logos
-// option: a film that is not there is skipped by the engine). The game's files are never touched.
-void Ue3HideGameFiles(rex::Runtime* runtime, const std::string& folder, const std::set<std::string>& names) {
-  if (!runtime || !runtime->file_system() || names.empty()) return;
-  const std::filesystem::path dir = runtime->game_data_root() / std::filesystem::path(folder);
-  std::error_code ec;
-  if (!std::filesystem::is_directory(dir, ec)) { REXLOG_WARN("ue3_hide: {} is not a folder", dir.string()); return; }
-  const std::string dev = std::string("\\Device\\Ue3Hide") + std::to_string(std::hash<std::string>{}(folder) & 0xFFFF);
-  auto view = std::make_unique<OverlayDevice>(dev, dir, dir, std::set<std::string>{}, names);
-  OverlayDevice* v = view.get();
-  if (!view->Initialize() || !runtime->file_system()->RegisterDevice(std::move(view))) {
-    REXLOG_WARN("ue3_hide: could not set up the view of {}", folder);
-    return;
-  }
-  std::string guest = folder;
-  for (char& c : guest) if (c == '/') c = '\\';
-  runtime->file_system()->RegisterSymbolicLink(std::string(kGameDevice) + "\\" + guest, dev);
-  REXLOG_INFO("ue3_hide: {}: {} file(s) left out", folder, v->hidden_count());
 }

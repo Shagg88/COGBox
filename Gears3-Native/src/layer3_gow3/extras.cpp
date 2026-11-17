@@ -13,11 +13,24 @@
 // Console commands reach the engine through ue3/console.h, run from our override of UEngine::GetMaxTickRate (once per
 // engine loop on the game thread; disc sub_8253D990, TU6 sub_8254E488 - the function whose `lfs f1,0x4C8(r3)` the
 // frame-rate hook patches). Our code (MIT).
+//
+// 0.6.3: no cheat command runs in a Versus match (ue3/match_guard.h, asked from the console before every command): the
+// campaign (solo and co-op), Horde and Beast keep the cheats, every Versus game type - local split screen, System Link, online,
+// private matches, with or without bots - does not, although the patched AllowCheats would let the engine allow them. Gears 3's
+// GearGame package (disc and TU6 GearGame.xxx, class export table): Engine.GameInfo > GearGame.GearGameMP_Base, whose
+// subclasses are GearGameTDM_Base (Team Deathmatch, Warzone, Execution - the "tdm" / "warzone" aliases of Coalesced.ini's
+// GameInfoClassAliases - and GearGameHunter, GearGameKTL_Base > GearGameCTL_Base, GearGameTDM_Newb, GearGameWingman_Base),
+// GearGameRing_Base (GearGameAnnex_Base, GearGameKOTH_Base), GearGameBombDelivery and GearGameWaveBased (GearGameHorde_Base,
+// GearGameSiege_Base: the "horde" and "siege" / "beast" aliases; GearGameContent.GearGameSuperHorde is in the content package,
+// not in this one - not checked, taken as a Horde variant by its name). Campaign
+// (GearGameSP_Base, GearGameSP_Arcade), GearMenuGame and the lobby classes are not under GearGameMP_Base. Not Versus, so
+// cheats as before: everything under GearGameWaveBased.
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
 #include <ue3/console.h>
+#include <ue3/match_guard.h>
 
 #include "gow3_addresses.h"
 
@@ -25,7 +38,7 @@
 #include <string>
 
 REXCVAR_DEFINE_BOOL(gow3_cheats, false, "Gears3",
-                    "Developer cheats on, with hotkeys: F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F8 free "
+                    "Developer cheats on (never in a Versus match), with hotkeys: F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F8 free "
                     "camera (photo mode), F9 freeze the world, F10 hide the HUD, F11 all weapons and ammo (keys can be "
                     "changed with --ue3_hotkeys)");
 REXCVAR_DEFINE_BOOL(gow3_unlock_mutators, false, "Gears3",
@@ -44,6 +57,13 @@ constexpr const char* kMutatorsPatch =
 constexpr const char* kDefaultHotkeys =
     "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F8=ToggleDebugCamera;F9=PlayersOnly;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
 
+// 0.6.3 (ue3/match_guard.h): cheats run in the campaign (and Arcade), Horde, Beast and the front end only - every other game
+// type is Versus (review r41: an allow-list, so a DLC mode such as Guardian is refused). The party / pre-game lobbies (and
+// the front end, which runs as one): refused.
+constexpr const char* kAllowed[] = {"GearGameSP_Base", "GearGameWaveBased", "GearMenuGame", nullptr};
+constexpr const char* kDenied[] = {"GearPartyGame_Base", nullptr};
+bool OpenObjects() { return ue3::obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar); }
+
 void AddPackagePatch(const char* patch) {
   const std::string now = REXCVAR_GET(ue3_package_patches);
   rex::cvar::SetFlagByName("ue3_package_patches", now.empty() ? std::string(patch) : now + ";" + patch);
@@ -55,11 +75,14 @@ void Gow3InstallExtras() {
   Ue3ConsoleTarget target;
   target.engine_global = gow3::addr::kGEngine;
   target.log_global = gow3::addr::kGLog;
+  ue3::match::Configure({"Gears 3", kAllowed, kDenied, target.engine_global, target.players_data_offset,
+                         target.players_num_offset, &OpenObjects});
+  target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
   if (REXCVAR_GET(gow3_cheats)) {
     AddPackagePatch(kCheatsPatch);
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
-    REXLOG_INFO("gow3_cheats: developer cheats on");
+    REXLOG_INFO("gow3_cheats: developer cheats on (never in a Versus match)");
   } else {
     Ue3ConsoleInstallHotkeys();  // only what --ue3_hotkeys names
   }
@@ -89,10 +112,16 @@ void Gow3Tu6PackageHashOk(PPCRegister& r9) {
 #define GOW3_JOIN(a, b) GOW3_JOIN2(a, b)
 extern "C" void GOW3_JOIN(__imp__, GOW3_MAX_TICK_RATE)(PPCContext& __restrict ctx, uint8_t* base);
 extern std::atomic<uint32_t> g_tick_hook_hits;                           // game_patches.cpp (GitHub #313)
-void Gow3NoteTickCall(uint32_t hits_before, double result);               // game_patches.cpp
+extern std::atomic<uint32_t> g_tick_caller;                              // game_patches.cpp (0.6.3 host fps)
+void Gow3NoteTickCall(uint32_t hits_before, double result, uint32_t caller);  // game_patches.cpp
 extern "C" void GOW3_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
+  // 0.6.3: who asks (the guest return address). A host with remote players asks twice per frame - the engine loop and
+  // UWorld::ServerTickClients; the limiter hook inside the original waits only for the engine loop's call.
+  const uint32_t caller = uint32_t(ctx.lr);
+  g_tick_caller.store(caller, std::memory_order_relaxed);
   const uint32_t hits_before = g_tick_hook_hits.load(std::memory_order_relaxed);
   GOW3_JOIN(__imp__, GOW3_MAX_TICK_RATE)(ctx, base);
-  Gow3NoteTickCall(hits_before, ctx.f1.f64);  // read-only: counts the ticks that did not reach the limiter hook
+  Gow3NoteTickCall(hits_before, ctx.f1.f64, caller);  // read-only: counts the ticks that did not reach the limiter hook
+  if (caller == gow3::addr::kServerTickClientsTickRateRet) return;  // once per engine frame (the engine loop's call)
   Ue3ConsoleRunQueued(ctx, base);
 }

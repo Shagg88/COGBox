@@ -2,6 +2,7 @@
 
 COGBox's runtime (`rexruntime.dll`) is the rexglue SDK at tag
 `nightly-20261002-bd833a2a` with these patches.
+0.6.3's runtime (rexruntime 063b) is 0.6.2's plus patches 104, 106 and 107. 0.6.4's (064a) adds 108; 064b adds 110; 064c is 064b with patch 110's start-up self-check fixed (jobs 1934 / 1935).
 
 ## Quick way
 
@@ -88,6 +89,56 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
 - `sdk-patch89-lobby-search-privacy.diff` (0.6.1, after 84; 85-88 are the HDR, audio and display patches): the session block a hosted lobby is registered with no longer carries the PC's LAN address - its XNADDR's `ina` is zeroed and the MAC made from that IP is made from the XUID in the online marker instead. Online peers never used either (they reach the host through the marker and its virtual IP); the game's own XNADDR is unchanged, so System Link / LAN keep the real IP. The games' lobby search now signs in, so the master server can require it (`LOBBY_SEARCH_REQUIRES_SIGN_IN`, off by default) once most players are past 0.6.0. Tests in `tests/unit/net/online_sessions_test.cpp`. Apply it in the SDK root (`git apply`).
 - `sdk-patch92-matchmaking-fixes.diff` (0.6.1, after 90; Flippage's patch 91, renumbered - 90 is our media-verify patch; 93 is the ping bar): **matchmaking only finds its own playlist** - a game's search returned every public lobby of that game, and the games join whatever a search returns (Xbox Live filtered by the query), so a Social Guardian search put players into a Horde lobby. The search's playlist property (`0x1000000B`) now filters the results (a lobby that names no playlist is kept). **Gears 2's host-ban watch works**: Gears 2's older UE3 keeps an object's own index at +4 (+32 in Gears 3 / Judgment), so its object table was never found and the watch never ran (no popup, no 30-minute lift: a Gears 2 player with a quit could never host versus). The settings reader also tries UE3's real 24-byte entry (id at +4) first, as Gears 2 has a lookalike table at stride 16 that read as no penalty. One `host ban watch: profile found / IsOkayToHost found / penalty` line per run shows what the watch found. Tests in `online_sessions_test.cpp` and `host_ban_test.cpp`. Apply it in the SDK root (`git apply`).
 - `sdk-patch93-ping.diff` (0.6.1, after 92; Flippage's patch 90, renumbered): the ping for the FPS bar (`--cogbox_show_ping`). Every 2 s a connected peer gets a punch on a proven route, timed by its sequence number; every COGBox (0.6.0 too) answers a punch with an ack carrying that number, so the time to the ack is the round trip, smoothed (70 % old, 30 % new). `CurrentPing()` (online_startup.h) gives the bar the ping to the host of the newest session we joined (its XUID from the session's XNADDR online marker); in a party / co-op join, which makes no session here, the host whose lobby the game looked up (invite, Join friend, open match) while its game packets arrive (a failed join stops them, so the bar drops it at once); while we host, the worst ping among the players the game put in our sessions (not every connected peer). Tests in `tests/unit/net/peer_manager_test.cpp` and `online_sessions_test.cpp`. Apply it in the SDK root (`git apply`).
+- `sdk-patch107-ping-join-beacon.diff` (0.6.3, after 106; in the 0.6.3 runtime; Flippage's patch 104, renumbered - 104 is the impulse-trigger patch): the FPS bar's ping after a matchmaking join. Matchmaking puts the game in a lobby picked from search results: no session is created here and no lobby is looked up, so 0.6.2 knew no host and showed `Ping -- (hosting)` (our own party). The game's connect to a peer's join beacon (TCP 8700, Gears 3 Ranked 8675) now makes that peer the join target (`OnlineSessions::OnBeaconConnect`, the peer's XUID from its virtual IP by `VirtualPeerManager::XuidOfVip`), handled as patch 93's looked-up host: shown while its game packets arrive, forgotten 30 s after they stop. Two unit tests. Apply it in the SDK root (`git apply`).
+- `sdk-patch110-e0-view-placeholders.diff` (0.6.4, after 108; runtime 064b, job 1928): rexglue 34f9923 + 10acc0d ported.
+  On Windows the guest 0xE0000000 view can now start at physical 0x1000 itself (VirtualAlloc2 / MapViewOfFile3
+  placeholders take a 4 KiB file offset), so generated code no longer adds 0x1000 to every access from 0xE0000000. The
+  layout is OPT-IN per exe: code generated with the templates in `Gears2-Native/codegen-templates` (each game's manifest
+  `template_dir`, jobs 1927 / 1927b) calls `rex::memory::detail::SetE0ViewMapped(true)` from a static initializer;
+  exes generated before keep the old layout on this runtime. A module of the other layout arriving later aborts with a
+  clear error; start-up self-check (marker written at physical 0x1000, read back through 0xE0000000) catches a host that
+  maps it wrong (older Wine); `-DREX_E0_VIEW_MAPPED=0` in the generated code keeps the old layout. Review r106. The diff also
+  changes the SDK's embedded codegen templates; the copies in `Gears2-Native/codegen-templates` (with patch 111's macros) are for a code generator built without it (the test template `test/ppc_config_h.inja` stays on the old layout).
+  064c (job 1935): the self-check's marker write and read are volatile - clang -O2 dropped the plain memcpy store (it
+  looked dead before the page's memset) and the check failed on a correctly mapped host (jobs 1930b / 1934).
+- `sdk-patch111-vector-stores.diff` (0.6.4, after 110; the code generator `rexglue.exe`, not the runtime; job 1932):
+  rexglue 55dd9b0 (its stores part) ported. stvlx / stvrx are emitted as `REX_STVLX(ea, v.u8)` / `REX_STVRX(ea, v.u8)`
+  instead of a byte-by-byte loop: the 16 bytes are reversed once and written with at most two overlapping memcpys.
+  The macros live in the pch template (`Gears2-Native/codegen-templates/codegen/pch_h.inja`, with patch 110's half).
+  Same bytes as the loop in 256,000 checked cases (and a reviewer's 61,440). Gears 3 TU6, job 1936: patch 110 0.7 %
+  and 110 + 111 1.4 % less frame time than 0.6.4 without them (PGO off, three runs each, every 110 + 111 run faster).
+  Needs a code generator built with it (`work\t1932\tool-T1` on the build PC) in each game's SDK prefix.
+- `sdk-patch112-open-matches-matchmaking.diff` (0.6.4, the runtime, on 064c): Gears 3 Open matches join through the
+  game's own matchmaking instead of an invite. The server's new `{type:'prefer', room_code}` message (sent for
+  `POST /api/v1/matches/<id>/join?via=matchmaking`), or `--net_prefer_lobby=COG-XXXX` when the launcher starts the game,
+  makes `OnlineSessions::Search` answer only that lobby for 3 minutes (a game started for it: up to 15 minutes, 3 from its
+  first search), looked up by room code each search, so another region's match is found; a search of another playlist,
+  or a lobby that closed, gets the normal results; connecting to that host's join beacon ends it. The launcher uses it
+  only for a Gears 3 match not yet in progress (untested whether a host seats matchmaking mid-match). The game then
+  asks the host's join beacon (TCP 8700) for a place as its own party, and the host's game picks the team - as strangers
+  met on Xbox Live. Before, every Open matches joiner came in as a member of the host's party, on the host's team
+  (Discord, 16 Nov). Join friend, invites and room codes keep the invite. Unit tests: 6 search cases, 1 message parse.
+- `sdk-patch109-codegen-fixes.diff` (0.6.4, after 111; the code generator `rexglue.exe`, not the runtime; jobs 1941 /
+  1942): three of rexglue's code generator fixes brought over. fctid / fctidz: a value of 2^63 or more saturates to the
+  largest integer (c9f1938); srad / sraw: a shift of 64 / 32 or more sets CA from the sign (02a002f); vcmpbfp: a NaN sets
+  both bound bits and the record form never sets CR6 bit 0 (ab61f2e). Checked against the PowerPC ISA. Gears 3 TU6
+  codegen, job 1941: 164 of 459 files differ, every differing line one of these forms (554 fctid / fctidz, 145 srad /
+  sraw, 271 + 271 vcmpbfp), none of the old forms left; a tool built from the tree without it gives the same code as
+  before. Needs a code generator built with it (`work\t1941\tool-T2` on the build PC, sha256 95ac2e21...) in each game's
+  SDK prefix (job 1942 put it there).
+- `sdk-patch108-xma-edge-decoder.diff` + `sdk-patch108-ffmpeg-xmaframes.diff` (0.6.4, after 107; the two go together):
+  the XMA audio decoder follows Xenia Edge's (has207, edge b9a46a3, commits 37bf631..0ce969b: multi-stream buffer
+  switches, loop end frames cut at their end subframe, seeks to a subframe (DWORD1 bits 24-26 = decode_subframe, which
+  rexglue read as "output padding"), the position held until a frame is out, whole stereo subframes, error / parser
+  status, split frames waiting for a late buffer, passes for subframe_decode_count above 4, one-shot sounds with no
+  loop, frames after a packet-boundary frame) and XMASetLoopData reads an XMA_LOOP_DATA. Review r104 fixes: Work()
+  re-checks enable/allocate under the lock, Release() clears enable, Setup() logs an error once if FFmpeg lacks the
+  second diff. The second diff patches the FFmpeg submodule's xmaframes decoder (from has207/FFmpeg c4f4407, 3913ff9,
+  9307052, dfc5a39): output starts 192 samples in (the realignment rexglue did in its context), a cut loop-end frame
+  (header bit 0) keeps the overlap of the frame before it, frames whose data ends early play, decode errors are
+  reported, and a flush callback. Apply the first in the SDK root (`git apply`), the second inside the submodule
+  (`git -C thirdparty/FFmpeg apply`; that file is CRLF in the Windows checkout) - and again after every submodule or
+  SDK update. Needs patch 80.
 - `sdk-patch59-sdl-pump-without-controllers.diff` (GitHub #108, Steam Deck; after 58, NOT BUILT yet - needs a runtime build): the SDL driver pumped SDL events only from calls on a controller it already knew, so with none known it never pumped, and under Wine / Proton SDL finds pads (XInput / DirectInput) only while pumping - the 0.3.5 Deck logs show `SDL input driver initialized` and never `SDL JoystickAdded`. `EnumerateDevices` now queues a pump at most every 0.5 s while no controller is known. Apply it in the SDK root (`git apply`).
 - `sdk-patch58-g3-online-xuid-save-convert.diff` (GitHub #68, jobs 1066 / 1067; COGBox 0.4.0's runtime, after 57): the
   Gears 3 friendly-fire / "killed out of nowhere" fix, ported from Xenia Canary. `NetDll_XNetRandom` fills the buffer
@@ -144,3 +195,63 @@ Gears 3 and Judgment use the same runtime.
   (0 linear, 1 sRGB, 2 BT.709 = default, 3 power) and `--kernel_display_gamma_power`, as in Xenia Canary; this SDK had the
   answer of `VdGetCurrentDisplayGamma` fixed at 2 / 2.22222233. Defaults unchanged. A test switch for the Judgment brightness
   reports (GitHub #185 / #250). Apply it in the SDK root; it only touches `src/kernel/xboxkrnl/xboxkrnl_video.cpp`.
+- `sdk-patch104-xbox-impulse-triggers.diff` (0.6.3, GitHub #245; after 103; in the 0.6.3 runtime): Xbox One / Series impulse triggers. `InputSystem::SetTriggerRumble(user, left,
+  right, ms)` sends `SDL_RumbleGamepadTriggers` to that player's SDL pads that report trigger motors
+  (`SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN`); nothing while `--vibration` is off, COGBox's UI is open or the window is
+  not in front. `--pad_trigger_rumble` (off by default) also turns on SDL's raw input controller driver on Windows: SDL
+  3.4's default Xbox path there is XInput, which has no trigger motors; SDL reaches them only through Windows.Gaming.Input
+  or GameInput, and its raw input driver (which pairs each pad with its WGI gamepad) is the one used here - the
+  stand-alone WGI and GameInput drivers are off by default as well. SDL turned the raw input driver off by default in May
+  2025 (Windows could stop delivering raw controller input until a reboot), which is why the option is off by default.
+  With it on, every XInput-class pad (Xbox 360, X-mode pads, Steam Input's virtual pad) moves to raw input: other SDL
+  GUIDs, a combined trigger axis, no Guide and no rumble until the pad's first input (a failed rumble is sent again with
+  that input), and pads added in raw input's order (split screen may differ from the ring lights). Over Bluetooth
+  Windows may drive no trigger motors even where SDL reports them. Apply it in the SDK root (`git apply`).
+- `sdk-patch106-save-adopt-and-key-change-copy.diff` (0.6.3, GitHub #329 "Saves deleted"; after 104, independent of it; in the
+  0.6.3 runtime, PC-tested): Gears 3
+  signs PlayerStorage.dat and its profile settings with SHA-1(online XUID + data), and patches 58 / 79 only re-signed
+  between the offline XUID, 0 and this run's online XUID. A save signed for any other key - the online account before a
+  new one (DELETE ONLINE ACCOUNT, a new #number), a deleted `identity.json` with online play off, another PC / console,
+  an old backup put back or imported - was left alone; Gears 3 reset it (brightness screen, campaign progress gone,
+  checkpoints kept) and wrote fresh files over it, with no copy kept. `CogPrepareGears3Saves` (called from
+  `OnlineStartup`) now does, in order:
+  1. **Copy:** when this run's signing key differs from the last run's (`<user dir>\cogbox-save-key`; none yet counts
+     as a change), every Gears 3 / Judgment save file in place (players 2-4's `.p2`-`.p4` settings included) is copied
+     to `<user dir>\_cogbox-save-backups\<nnnnnn>-<stamp>-<old key|first|unknown>-to-<new key>\` (`nnnnnn` a sequence
+     number, so order never depends on the clock; the old key is always formatted from a parsed key, never the key
+     file's text; built in a `.cogbox-tmp` folder and renamed when whole, the rename retried for up to ~1 s for an
+     antivirus scan). No copy is made when the newest copy there already holds every one of these files byte for byte
+     (a start that couldn't note its key would otherwise copy every start); a copy past sequence number 999999 takes
+     the highest free number below. A file that can't be read fails the copy: no folder, tried again next start. Before
+     the Judgment swap, so it holds the outgoing mode's files. Pruning (while more than 20 copies) only removes a copy
+     whose every file is, with the same data (a signature may differ), in one newer copy - oldest first, never the
+     oldest copy, a `first` one or the one just made - and only ever folders named exactly as above (plus that name +
+     `.cogbox-tmp`, once last written more than 10 minutes ago, so another instance's copy in progress is never
+     removed). Links / junctions and folders players put there are never touched; names are matched on the native path
+     text (no conversion that can throw).
+  2. **Verified conversions** to this run's key from 0 / the online XUID (as before), from each of the last 8 runs'
+     keys (`.pre-lastkey` backup) - so a new online account from now on is a checked conversion - and from
+     `--cogbox_save_adopt_key=<16 hex digits>` (an old XUID from a `LIVE emulation with online XUID` log line;
+     `.pre-adoptkey` backup).
+  3. **Unverified re-sign** (`--cogbox_save_adopt_foreign`, on by default) of what is still not signed for this run,
+     only for a whole, plausible save: PlayerStorage.dat alone at 4 KB - 64 KB (TU6 writes 6232-6520 bytes in our and
+     players' logs), not all zero; or the full set 63E83FFF + FFE + FFD: FFF exactly 1000 bytes and not all zero, FFE /
+     FFD at most 1000 bytes, empty or not all zero (TU6 writes FFF at 1000 bytes in all 181 logged writes, FFE at 0-219
+     and FFD at 0, all three within milliseconds); FFF not more than an hour older than FFE / FFD, and FFE / FFD written
+     within an hour of each other (FFF put back from an older backup over the game's reset files is refused; FFF newer
+     than FFE / FFD is normal, as COGBox's own re-signs rewrite FFF only). The checked conversions take any size. The
+     data is never changed, only the 20-byte signature; the file as it was is kept as `<file>.cogbox-adopted-<stamp>`
+     (never replaced). Each adoption is noted in `<user dir>\cogbox-save-adopted` (body digest, key, signature before,
+     save id). For the same key, a noted body found signed with yet another key is not adopted again, unless it carries
+     its pre-adoption signature (the player put that file back); and a save adopted 3 times for this key is not adopted
+     again until the key changes (logged each start) - no endless copies if the game signs with a key we don't predict.
+     Anything refused is logged with the reason.
+  4. The patch-101 verdict per set.
+  5. This run's key is noted (newest first, 8 kept) only now, and only if the copy was made or not needed, so a failed
+     copy or a crash before here keeps the old key for the next start's copy and checked conversion.
+  A read failure is no longer an empty file (`CogReadFile`): a set with a file that can't be read is skipped by every
+  pass. Judgment's signing can't be redone: with a new online account Judgment's online copy still starts fresh, but its
+  old files are in the copy of step 1. Tests in `tests/unit/net/save_resign_test.cpp`: built and run on Linux (g++ 13.3,
+  `-Wall -Wextra`, with and without `-fno-char8_t`, Catch2 3.4), as root and as a normal user: 42 pass, the read-only
+  case runs on Windows only (POSIX rename replaces a read-only file); MinGW syntax-checks the Windows paths. Apply it
+  in the SDK root (`git apply`).

@@ -531,9 +531,6 @@ struct Gen {
     a.OpDiv(R(d, mask), S(l), LF(1023.0f));
   }
 
-  // If on a uint condition component (non-zero = true).
-  void IfNz(const Src& c, bool when_nonzero = true) { a.OpIf(when_nonzero, c); }
-
   // ---- Registers and operands ----
   void NoteRegister(uint32_t index, Addressing addressing) {
     if (addressing == Addressing::kLoopRelative) dynamic_regs = true;

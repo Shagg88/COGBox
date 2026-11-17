@@ -177,11 +177,52 @@ void TickTimeline() {  // the game thread is the only caller
 // only ended when play stopped (the pause menu) [G: the re-read is inferred from "only a pause releases it"; these
 // lines show it]. Now only the loading movie or a level package not yet seen in this window re-arms it, and each
 // trigger is logged (the first 12 per window, then a count), so the next report names what keeps a cap on.
+//
+// GitHub #318 (= #54 / #38 / #77; 0.6.3): the file-open window is not enough. Report i318 (2026-11-15): at the end of
+// Monroe Commons the game read LoadingMovie_ESM.txt / LoadingMovie.txt (07:33:42, cap on), opened NO level package,
+// the window ended after its 5 s minimum, and the loading screen then ran at 165 fps for 3 minutes without ending. Two
+// earlier loading screens in that session (07:15, 07:18) look exactly the same in the log and ended fine - file opens
+// cannot tell them apart. So the cap now follows the engine's own answer to "is the loading movie up?":
+//   GowjPollLoadingMovie (below) calls, once per engine tick on the game thread (from our UEngine::GetMaxTickRate
+//   override, cheats.cpp), the game's own predicate sub_82B8AF98 and reports the answer through GowjSetLoadingState.
+// What sub_82B8AF98 is, read in the TU4 image (SHA-1 BD3FEE4A..., notes/03) and our generated code [V = read there]:
+//   [V] it takes no arguments and returns, as 0 / 1:
+//         GFullScreenMovie (the global at 0x835462BC) != null
+//         && GFullScreenMovie->vtable[8](L"")            (0x82393A50, GameThreadIsMoviePlaying)
+//         && _wcsicmp(GFullScreenMovie->vtable[9](), L"LoadingMovie") == 0   (0x82393B68 GameThreadGetLastMovieName,
+//                                                         0x82D9DC48 _wcsicmp, L"LoadingMovie" at 0x8209FDEC)
+//   [V] GFullScreenMovie is made by sub_829D8110 (436 bytes, constructor 0x823910C8, vtable 0x820A3360; the
+//       constructor reads [FullScreenMovie] / Engine.StreamingMovies and starts the Bink async threads). vtable[4] =
+//       0x82392EE0 is GameThreadPlayMovie (builds Movies\<name>.bik), vtable[9] returns the FString at +28 (the last
+//       movie's name), vtable[8] with an empty name returns "the object at +8 answers 0 to its vtable[5](0)".
+//   [G, standard UE3 FFullScreenMovieBink] +8 is the movie-finished event (made by the synch-event factory at
+//       0x835443F0, manual reset) and vtable[5](0) is FEvent::Wait(0), so the predicate is "the movie whose name is
+//       LoadingMovie is still playing". The loading movie loops until the game stops it.
+//   [V] the game itself uses this predicate to drop the player's input while the loading movie is up: both callers are
+//       the GearGame viewport client's input handlers (0x82B8B188 InputKey-like, 0x82B8B260; vtable at 0x8222B764 /
+//       0x8222B76C, next to its Attract_Opening_Cinematic handling) and both return "handled" when it is true. So when
+//       it is true the player has no control: it cannot be normal gameplay (the #77 worry). [G] When the loading
+//       screen ends the game stops the movie, so the answer turns false and the cap is released on the next tick.
+//   [G] In the #318 stuck case the screen shown is the loading movie (it was started at 07:33:42: the subtitle .txt is
+//       read by the movie player when it plays a movie), so the cap now holds through it, as at 30 fps where the
+//       report says the game gets through. To be confirmed on the PC: a run through the end of Monroe Commons at 165
+//       fps, whose log should show "cap on - engine signal" at that loading screen and "cap off - engine signal: the
+//       loading movie stopped" when it ends.
+// The file-open heuristic stays as the fallback while there is no engine answer: before GFullScreenMovie exists (the
+// first loading screen at start-up), with --cogbox_test_skip_movies (no movie ever plays), or if the TU4 code check in
+// GowjPollLoadingMovie fails. Once the engine answers, file opens no longer start or re-arm the cap (they only note
+// the time of a level change for the freeze watchdog). --gowj_loading_max_s stays the hard stop for both; with the
+// engine answer a cap that hit it is not re-armed until the movie has stopped once.
 REXCVAR_DEFINE_INT32(gowj_loading_fps, 30, "Judgment",
                      "GitHub #38: the engine's frame-rate limit while a loading screen runs (0 = no change). Above it a "
                      "loading screen can stay up for ever (the end of Monroe Commons at 162 fps)");
-REXCVAR_DEFINE_INT32(gowj_loading_max_s, 90, "Judgment",
-                     "GitHub #77: a loading-screen cap ends after this many seconds whatever the loading signals say (0 = never)");
+// GitHub #318: 90 -> 300 s. With the engine's own answer the cap ends when the loading movie stops, and while it plays
+// the game takes no input (see above), so a long hard stop cannot hold gameplay at 30; a first visit that builds its
+// shaders can keep a loading screen up for well over a minute on a slow PC, and releasing the cap there would bring
+// the #318 hang back. The file-open fallback still ends seconds after its last trigger, as before.
+REXCVAR_DEFINE_INT32(gowj_loading_max_s, 300, "Judgment",
+                     "GitHub #77 / #318: a loading-screen cap ends after this many seconds whatever the loading signals "
+                     "say (0 = never)");
 REXCVAR_DEFINE_INT32(gowj_loading_stream_s, 8, "Judgment",
                      "GitHub #77: streamed level packages (.xxx that are not *_P.xxx) keep the cap on for at most this many "
                      "seconds after the last level package / loading movie");
@@ -190,6 +231,7 @@ REXCVAR_DEFINE_INT32(gowj_loading_tail_s, 3, "Judgment",
                      "0.4.6 (Shagg 5 Nov: the 30 fps after a loading screen / cutscene lasted too long): seconds the "
                      "loading cap stays on after the last level package / loading movie (was 6), and the cap's minimum "
                      "length is this + 2 (was 10)");
+REXCVAR_DECLARE(bool, cogbox_test_skip_movies);  // defined below (no movie plays: the engine answer is not used)
 
 namespace {
 using LoadClock = std::chrono::steady_clock;
@@ -197,10 +239,11 @@ std::atomic<int64_t> g_load_start{0};     // steady_clock ticks of the loading m
 std::atomic<int64_t> g_load_last_pkg{0};  // the last .xxx opened since then
 std::atomic<int64_t> g_load_last_trigger{0};  // the last loading movie / *_P.xxx (a real level change)
 std::atomic<int64_t> g_load_watchdog{0};      // the last "still loading" line
-// GitHub #77: the engine's own loading state when a hook reports it: -1 = no hook (file-open heuristic), 0 = not
-// loading, 1 = loading. Hook candidates (addresses to be found in this build): GIsLoading / UGameEngine::LoadMap entry
-// and exit, FFullScreenMovie::GameThreadIsMoviePlaying("LoadingMovie").
+// The engine's own loading state (GitHub #77 / #318): -1 = no answer yet (file-open heuristic), 0 = the loading movie
+// is not playing, 1 = it is. Set every engine tick by GowjPollLoadingMovie through GowjSetLoadingState.
 std::atomic<int> g_load_flag{-1};
+std::atomic<bool> g_load_by_engine{false};     // the current cap is held by the engine answer (for the log lines)
+std::atomic<bool> g_load_engine_timed_out{false};  // the hard stop ended an engine-held cap: wait for the movie to stop
 // GitHub #77: the level packages that already started or re-armed the current window (cleared when it ends).
 std::mutex g_load_names_mutex;
 std::vector<std::string> g_load_names;
@@ -236,6 +279,19 @@ void OnGowjFileOpened(std::string_view guest_path, const std::filesystem::path*)
   // Monroe Commons and a checkpoint reload, while the .bik is opened once a session. So the .txt starts the cap too.
   const bool movie = ContainsNoCase(guest_path, "loadingmovie") &&
                      (EndsWithNoCase(guest_path, ".bik") || EndsWithNoCase(guest_path, ".txt"));
+  // GitHub #318: once the engine answers (GowjPollLoadingMovie), it alone starts and ends the cap. A file open only
+  // notes the time of a level change (the freeze watchdog's GowjLastLevelLoadTicks) and, while a cap is on, the
+  // package name for the release line.
+  if (g_load_flag.load(std::memory_order_relaxed) != -1) {
+    if (movie || EndsWithNoCase(guest_path, "_p.xxx")) g_load_last_trigger.store(now);
+    if (!movie && g_load_start.load() != 0 && EndsWithNoCase(guest_path, "_p.xxx")) {
+      std::lock_guard<std::mutex> lock(g_load_names_mutex);
+      const std::string name = LowerName(guest_path);
+      if (std::find(g_load_names.begin(), g_load_names.end(), name) == g_load_names.end()) g_load_names.push_back(name);
+      else ++g_load_reopens;
+    }
+    return;
+  }
   if (movie || EndsWithNoCase(guest_path, "_p.xxx")) {
     // GitHub #77: a level package already seen in this window is a re-read, not a level change - it doesn't re-arm.
     int seen_count = 0;
@@ -258,7 +314,8 @@ void OnGowjFileOpened(std::string_view guest_path, const std::filesystem::path*)
       return;
     }
     if (g_load_start.exchange(now) == 0)
-      REXLOG_INFO("gowj_loading_fps: cap on - loading screen ({}), engine limit {} fps", guest_path, REXCVAR_GET(gowj_loading_fps));
+      REXLOG_INFO("gowj_loading_fps: cap on - file-open signal, no engine answer yet ({}), engine limit {} fps", guest_path,
+                  REXCVAR_GET(gowj_loading_fps));
     else if (seen_count <= 12)
       REXLOG_INFO("gowj_loading_fps: cap kept on - {} ({})", movie ? "loading movie" : "new level package", guest_path);
     g_load_last_pkg.store(now);
@@ -286,7 +343,7 @@ void ReleaseLoadingClamp(int64_t start, const char* why, std::chrono::steady_clo
       g_load_names.clear();
       g_load_reopens = 0;
     }
-    XenosNoteLoadEnded();  // --gow2_after_load_log_s (off by default)
+    g_load_by_engine.store(false);
     REXLOG_INFO("gowj_loading_fps: cap off - {} after {:.1f} s, the player's own limit again ({} level package(s), {} "
                 "re-read(s) ignored)", why, std::chrono::duration<double>(since_start).count(), levels, reopens);
   }
@@ -295,12 +352,24 @@ bool LoadingClampActive() {
   using namespace std::chrono;
   const int flag = g_load_flag.load(std::memory_order_relaxed);
   const int64_t now_ticks = LoadClock::now().time_since_epoch().count();
-  if (flag == 1) {  // the engine says it is loading: make sure the cap is on (also for loads no file open announced)
+  if (flag == 0) g_load_engine_timed_out.store(false);  // the movie stopped: the next one may start a cap again
+  if (flag == 1 && !g_load_engine_timed_out.load()) {  // the loading movie is up: make sure the cap is on
     int64_t zero = 0;
     if (g_load_start.compare_exchange_strong(zero, now_ticks)) {
       g_load_last_trigger.store(now_ticks);
-      REXLOG_INFO("gowj_loading_fps: cap on - engine loading flag, engine limit {} fps", REXCVAR_GET(gowj_loading_fps));
+      g_load_last_pkg.store(now_ticks);
+      {
+        std::lock_guard<std::mutex> lock(g_load_names_mutex);
+        g_load_names.clear();
+        g_load_reopens = 0;
+      }
+      REXLOG_INFO("gowj_loading_fps: cap on - engine signal: the loading movie is playing (the game's own check, "
+                  "0x82B8AF98), engine limit {} fps", REXCVAR_GET(gowj_loading_fps));
+    } else if (!g_load_by_engine.load()) {  // a file-open window from before the engine answered: the engine takes over
+      REXLOG_INFO("gowj_loading_fps: cap kept on - engine signal: the loading movie is playing (0x82B8AF98); it now "
+                  "decides when the cap ends");
     }
+    g_load_by_engine.store(true);
   }
   const int64_t start = g_load_start.load();
   if (start == 0) return false;
@@ -308,15 +377,17 @@ bool LoadingClampActive() {
   const auto since_start = now - LoadClock::duration(start);
   const int32_t max_s = REXCVAR_GET(gowj_loading_max_s);
   if (max_s > 0 && since_start >= seconds(max_s)) {  // hard stop: a cap that never ends is #77
-    ReleaseLoadingClamp(start, "timeout (--gowj_loading_max_s)", since_start);
+    if (flag == 1) g_load_engine_timed_out.store(true);  // not re-armed until the movie has stopped once
+    ReleaseLoadingClamp(start, flag == 1 ? "timeout (--gowj_loading_max_s) with the loading movie still playing"
+                                         : "timeout (--gowj_loading_max_s)", since_start);
     return false;
   }
-  if (flag == 0) {  // a real flag decides alone: the first tick it is clear ends the cap
-    ReleaseLoadingClamp(start, "engine loading flag clear", since_start);
+  if (flag == 0) {  // the engine answers and its loading movie is not playing: the first such tick ends the cap
+    ReleaseLoadingClamp(start, "engine signal: the loading movie stopped", since_start);
     return false;
   }
   bool on = flag == 1;
-  if (!on) {  // no hook: the file-open window, streamed packages capped at gowj_loading_stream_s past the last trigger
+  if (!on) {  // no engine answer: the file-open window, streamed packages capped at gowj_loading_stream_s past the last trigger
     const auto since_pkg = now - LoadClock::duration(g_load_last_pkg.load());
     const auto since_trigger = now - LoadClock::duration(g_load_last_trigger.load());
     const int32_t tail = std::clamp(REXCVAR_GET(gowj_loading_tail_s), 1, 10);  // 0.4.6: was a fixed 6 s (minimum 10 s)
@@ -324,23 +395,100 @@ bool LoadingClampActive() {
     on = since_start < seconds(tail + 2) || since_trigger < seconds(tail) || streaming;
   }
   if (!on) {
-    ReleaseLoadingClamp(start, "loading screen over", since_start);
+    ReleaseLoadingClamp(start, "file-open signal: loading screen over", since_start);
     return false;
   }
   // every 10 s: say it is still on, so a report shows a load that does not end (#54) and why the cap stays
   int64_t last = g_load_watchdog.load(std::memory_order_relaxed);
   if (now - LoadClock::duration(std::max(last, start)) >= seconds(10) && g_load_watchdog.compare_exchange_strong(last, now_ticks))
-    REXLOG_INFO("gowj_loading_fps: still loading after {:.0f} s (flag {}, last package {:.1f} s ago, last trigger {:.1f} s ago)",
-                duration<double>(since_start).count(), flag,
+    REXLOG_INFO("gowj_loading_fps: still loading after {:.0f} s ({}, last package {:.1f} s ago, last trigger {:.1f} s ago)",
+                duration<double>(since_start).count(),
+                flag == 1 ? "engine signal: the loading movie is playing" : "file-open signal, no engine answer",
                 duration<double>(now - LoadClock::duration(g_load_last_pkg.load())).count(),
                 duration<double>(now - LoadClock::duration(g_load_last_trigger.load())).count());
   return true;
 }
+uint32_t LoadBe32(const uint8_t* base, uint32_t guest) {
+  const uint8_t* p = base + guest;
+  return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+}
 }  // namespace
 
-// GitHub #77: for a hook on the engine's own loading state (see g_load_flag). Once called, the file-open heuristic is
-// no longer used for the release.
+// GitHub #77 / #318: the engine's own loading state (see g_load_flag). Once called, the file-open heuristic no longer
+// starts, re-arms or ends the cap.
 void GowjSetLoadingState(bool loading) { g_load_flag.store(loading ? 1 : 0, std::memory_order_relaxed); }
+
+// GitHub #318: once per engine tick, on the game thread, at the entry of UEngine::GetMaxTickRate (our override in
+// cheats.cpp, before the original): ask the game whether its loading movie is playing - its own check sub_82B8AF98,
+// described above - and pass the answer to GowjSetLoadingState. The call is made like layer 2's console exec: the
+// whole context is saved and put back, so the original sees exactly the registers it was called with. At a function
+// entry r1 is the caller's stack pointer with nothing live below it, so the callee's frame there is an ordinary call.
+// Cost per tick: one string compare and a zero-timeout event wait, plus one FString copy while a movie plays.
+void GowjPollLoadingMovie(PPCContext& ctx, uint8_t* base) {
+  constexpr uint32_t kIsLoadingMoviePlaying = 0x82B8AF98u;  // the game's own check (TU4)
+  constexpr uint32_t kGFullScreenMovie = 0x835462BCu;       // the movie player global it reads first
+  static PPCFunc* s_fn = nullptr;
+  static int s_state = 0;  // 0 = not checked yet, 1 = in use, -1 = not used (file-open heuristic only)
+  // Review r43: the game thread only (as layer 2's console exec): the first caller is the game's engine tick; a call
+  // from any other thread is ignored.
+  static std::thread::id s_thread;
+  if (s_thread == std::thread::id()) s_thread = std::this_thread::get_id();
+  if (std::this_thread::get_id() != s_thread) return;
+  if (s_state == 0) {      // the game thread is the only caller
+    s_state = -1;
+    if (REXCVAR_GET(gowj_loading_fps) <= 0 || !base) return;
+    if (REXCVAR_GET(cogbox_test_skip_movies)) {
+      REXLOG_INFO("gowj_loading_fps: --cogbox_test_skip_movies: no movie plays, so the loading-screen cap keeps the "
+                  "file-open signal");
+      return;
+    }
+    // The TU4 code this relies on (read from guest memory, as GowjInstallFilmGrainSwitch does): the check's
+    // `lis r31,0x8354` / `lwz r3,0x62BC(r31)` (GFullScreenMovie) and `addi r4,r11,-532` (L"LoadingMovie"), and the
+    // string itself. Anything else: not this build's image - keep the file-open signal.
+    static constexpr uint8_t kName[] = {0, 'L', 0, 'o', 0, 'a', 0, 'd', 0, 'i', 0, 'n', 0, 'g', 0, 'M', 0, 'o',
+                                        0, 'v', 0, 'i', 0, 'e', 0, 0};
+    const bool code_ok = LoadBe32(base, 0x82B8AFA4u) == 0x3FE08354u && LoadBe32(base, 0x82B8AFACu) == 0x807F62BCu &&
+                         LoadBe32(base, 0x82B8B010u) == 0x388BFDECu &&
+                         std::memcmp(base + 0x8209FDECu, kName, sizeof(kName)) == 0;
+    s_fn = code_ok ? rex::runtime::ResolveIndirectFunction(kIsLoadingMoviePlaying) : nullptr;
+    if (!s_fn) {
+      REXLOG_WARN("gowj_loading_fps: the game's loading-movie check at 0x{:08X} is not TU4's ({:08X} {:08X} {:08X}) - the "
+                  "loading-screen cap keeps the file-open signal",
+                  kIsLoadingMoviePlaying, LoadBe32(base, 0x82B8AFA4u), LoadBe32(base, 0x82B8AFACu),
+                  LoadBe32(base, 0x82B8B010u));
+      return;
+    }
+    s_state = 1;
+    REXLOG_INFO("gowj_loading_fps: engine signal on - the loading-screen cap follows the game's own \"loading movie is "
+                "playing\" check (0x{:08X}, GitHub #318)", kIsLoadingMoviePlaying);
+  }
+  if (s_state != 1) return;
+  if (LoadBe32(base, kGFullScreenMovie) == 0) return;  // no movie player yet (start-up): no answer, the flag stays
+  const PPCContext saved = ctx;
+  s_fn(ctx, base);
+  const bool playing = ctx.r3.u32 != 0;  // UBOOL (0 / 1)
+  ctx = saved;
+  const int was = g_load_flag.load(std::memory_order_relaxed);
+  if (was == -1)
+    REXLOG_INFO("gowj_loading_fps: first engine answer - the loading movie {}; file opens no longer start "
+                "the cap", playing ? "is playing" : "is not playing");
+  // Review r43: "not playing" must hold for 250 ms before the cap is released, so a one-tick blip (a movie restart,
+  // seamless travel) neither drops the cap for a few uncapped ticks nor logs an off / on pair. "Playing" applies at once.
+  static LoadClock::time_point s_false_since{};
+  if (playing) {
+    s_false_since = {};
+    GowjSetLoadingState(true);
+  } else if (was != 1) {
+    GowjSetLoadingState(false);
+  } else {
+    const auto now = LoadClock::now();
+    if (s_false_since == LoadClock::time_point{}) s_false_since = now;
+    if (now - s_false_since >= std::chrono::milliseconds(250)) {
+      s_false_since = {};
+      GowjSetLoadingState(false);
+    }
+  }
+}
 // GitHub #219: the freeze watchdog's thread asks when the last loading screen / level change began (steady_clock ticks,
 // 0 = none seen, or --gowj_loading_fps=0 so no file is watched). A relaxed load, off the game's threads.
 int64_t GowjLastLevelLoadTicks() { return g_load_last_trigger.load(std::memory_order_relaxed); }
@@ -360,14 +508,31 @@ void GowjInstallLoadingClamp() {
               "up a missing LoadingMovie*.txt keeps the player's limit");
 #endif
 #else
-  REXLOG_WARN("gowj_loading_fps: this SDK has no file-open observer (SDK patch 32); loading screens keep the player's limit");
+  REXLOG_WARN("gowj_loading_fps: this SDK has no file-open observer (SDK patch 32); until the engine answers (GitHub "
+              "#318), loading screens keep the player's limit");
 #endif
+}
+
+// 0.6.3 host frame-rate halving (as Gears 3): the guest return address of the GetMaxTickRate call in progress, set by
+// cheats.cpp's override before the original runs (game thread). UE3 asks twice per frame on a host with remote players:
+// the engine loop (returns to 0x829D8C44 / 0x82515478) and UWorld::ServerTickClients (vtable +308 in sub_825A1908, which
+// only reads the value: 0 -> DeltaSeconds, else 1/x). That one gets the limit without the wait - a second wait per frame
+// halved the player's limit - and without the per-frame work.
+constexpr uint32_t kServerTickClientsTickRateRet = 0x825A1CB0u;
+std::atomic<uint32_t> g_gowj_tick_caller{0};
+bool GowjNoteTickCall(uint32_t caller) {  // read-only (frame_limiter.h): logs the call sites
+  static xenos::TickCallSites sites;
+  const bool main = caller != kServerTickClientsTickRateRet;
+  sites.Note("gowj_max_fps", caller, main);
+  return main;
 }
 
 // Exact cap: the engine's own wait sleeps whole milliseconds (165 gave 162 fps), so with a player's limit the game
 // thread waits here on the host clock (shared precise limiter) and the engine is told "no limit" - it measured the time
 // before this call, so its own wait would come on top.
 static void GowjExactLimit(PPCRegister& f1) {
+  // ServerTickClients (host with remote players): no second wait, and 0 as in 0.6.2 (review r62 M1)
+  if (g_gowj_tick_caller.load(std::memory_order_relaxed) == kServerTickClientsTickRateRet) { f1.f64 = 0.0; return; }
   static xenos::FrameLimiter limiter;
   static std::atomic<bool> s_logged{false};
   if (!s_logged.exchange(true)) REXLOG_INFO("gowj_max_fps: exact host-side limiter on ({:.0f} fps)", f1.f64);
@@ -376,7 +541,7 @@ static void GowjExactLimit(PPCRegister& f1) {
 }
 
 void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E220: f1 = the engine's limit (fps)
-  TickTimeline();
+  if (g_gowj_tick_caller.load(std::memory_order_relaxed) != kServerTickClientsTickRateRet) TickTimeline();  // once per frame
   const int32_t cap = REXCVAR_GET(gowj_loading_fps);
   // GitHub #77 (report 20261031-105629): every change of the engine's own limit is logged, so a report names it.
   static std::atomic<int32_t> s_last_engine{-1000};
@@ -467,8 +632,8 @@ REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
                     "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
                     "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
                     "play. Not for players: loading screens go black. With it on, the loading movie no longer starts the "
-                    "loading-screen frame cap (--gowj_loading_fps) or --gow2_after_load_log_s - only a level package "
-                    "(*_P.xxx) does, so they may start late or not at all: don't measure loading with it");
+                    "loading-screen frame cap (--gowj_loading_fps) - only a level package (*_P.xxx) does, so it may start "
+                    "late or not at all: don't measure loading with it");
 static std::string GowjLevelSelectEdits() {
   struct Entry { const char* map; const char* name; };
   static constexpr Entry kMaps[] = {

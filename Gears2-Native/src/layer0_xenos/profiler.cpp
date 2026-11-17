@@ -179,7 +179,7 @@ void Refresh(std::vector<Tracked>& threads, DWORD self) {
 void Report(std::vector<Tracked>& threads, double wall_s) {
   HANDLE process = GetCurrentProcess();
   SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-  SymInitialize(process, nullptr, TRUE);  // fails harmlessly if the watch report already did it
+  SymInitialize(process, nullptr, TRUE);  // fails harmlessly if it was already done
   struct Row {
     Tracked* t;
     double cpu;  // % of one core

@@ -591,6 +591,12 @@ bool IsA(uint32_t object, uint32_t cls) {
   return false;
 }
 
+bool ClassIsA(uint32_t cls, uint32_t base) {
+  for (uint32_t c = cls, guard = 0; c && guard < 64; c = Read32(c + g_L.super), guard++)
+    if (c == base) return true;
+  return false;
+}
+
 namespace {
 // "Name" or "Name_<n>" -> (name index, number); the names read once each (the table only grows)
 bool NameKey(const std::string& full, uint32_t* index, uint32_t* number) {

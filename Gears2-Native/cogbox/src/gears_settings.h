@@ -88,12 +88,16 @@ struct Environment {
     int low_port_start = -1;        // 0.6.2 (R4): Linux's first port for normal programs (-1 unknown / not Linux)
     bool deck_lcd = false;
     std::vector<std::string> mods;              // 0.2.0: the enabled mod folders, in load order (--ue3_mods)
+    // texture packs (KiltedKernel; r95 L1): those of `mods` that hold texture-pack files, in load order
+    // (--gow2_texture_pack_dirs - only these, so the command line stays short and the renderer walks no other mod)
+    std::vector<std::string> texture_pack_mods;
+    unsigned vram_mb = 0;                      // 0.6.4 (GitHub #341): the main graphics card's video memory, 0 = unknown
     std::map<std::string, std::string> keys;   // 0.2.0: the player's own keyboard keys, cvar -> key (CogBox.ini [Keys])
     std::string recipe_pack;                   // job 630: <COGBox>\recipes\recipes-<exe>.rcp, "" = none
     std::string prompt_dir;                    // job 629: <COGBox>\prompts\keyboard (key-cap overlays), "" = none
     // PS1 960-961: the lines of out\extra-args.txt (raw; empty = no file). Trimmed, '#' lines skipped, {LOG} = log_dir.
     std::vector<std::string> extra_args_lines;
-    std::string pad_remap;  // GitHub #97: CogBox.ini [Pad] Remap= (the Custom controller layout, SDK patch 55)
+    std::string pad_remap;  // GitHub #97: CogBox.ini [Pad] Remap= (the Custom controller layout, SDK patch 55; PadMap below)
     std::string gamertags[3];   // 0.4.9 split-screen: [Profile] Gamertag2..4 (--user_gamertag2..4, SDK patch 71); "" = "Player N"
     std::string gamertag;   // GitHub #119: CogBox.ini [Profile] Gamertag= (--user_gamertag, SDK patch 54); "" = the runtime's "User"
     // GitHub #159: the Lang / VoiceLang choices (by index) whose files are not on the player's copy, found by the
@@ -171,6 +175,12 @@ extern const char* const k_fgVkNvidiaWarning;
 bool fg_vk_nvidia_warning(const Settings& s, const Environment& env);
 bool fsr_vulkan(const Environment& env);   // fsr049: FSR upscaling available on Vulkan
 bool fsr_vulkan_on(const Settings& s, const Environment& env);   // ...and "FSR on Vulkan (experimental)" is on
+// #345: the render scale the game will use (1-4): the chosen one, 1 for 720p / 1080p, and for "Match my monitor" what the
+// game picks - the smallest scale covering the monitor (by width with Ultrawide on); 2 when the monitor size is unknown
+int expected_render_scale(Game g, const Settings& s, const Environment& env);
+// #345 / GitHub #98: Scene resolution mode m (1 Quality, 2 Performance, 3 Ultra performance) has a whole-number scene size
+// at render scale `out` - otherwise the upscaler only anti-aliases (DLAA / native AA)
+inline bool scene_mode_fits(int m, int out) { return (m == 2 && (out == 2 || out == 4)) || ((m == 1 || m == 3) && out == 3); }
 // proton049: under Proton / Wine, a single choice that can't work there, with its one-line reason (always ok on
 // Windows): exclusive fullscreen, NVIDIA DLSS without an NVIDIA RTX card, DLSS / XeSS frame generation.
 Availability wine_choice_available(const Option& o, int index, const Environment& env);
@@ -188,13 +198,6 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
 Version effective_version(Game g, const Settings& s, const Environment& env);
 // Play starts the title update exe (Gears 2 / 3: TU6 build; Judgment: its only exe, with TU4 when present).
 bool exe_for_update(Game g, Version ver, const Environment& env);
-// cg050: faster game code (no user option since Shagg 10 Nov). Each game's title-update port folder holds
-// two builds of the same game code: <exe> (gow2.exe ...) made with the faster recompiler options (Gears 3: cr_as_local;
-// Gears 1 / 2 / Judgment: non_volatile_as_local) and <stem>-normal.exe (gow2-normal.exe ...) made without them. The
-// launcher starts the faster one, and silently the -normal one after the faster one crashed twice in a row
-// (play.cpp use_normal_code, CogBox.ini [FastCode] <game>Crashes / <game>Fallback = the COGBox version).
-const char* normal_code_exe_name(Game g);                     // "gow2-normal.exe"
-std::string normal_code_exe(const std::string& exePath);      // "...\gow2.exe" -> "...\gow2-normal.exe"
 
 // Presets (PS1 573-592). apply_preset sets the 13 preset boxes and Preset; Custom changes nothing.
 void apply_preset(Settings& s, int preset);
@@ -215,8 +218,6 @@ std::string monitor_label(int index1, int width, int height, bool primary);
 bool graphics_card_present(const Environment& env, const std::string& name);
 // PS1 152: the main graphics card of a list.
 std::string main_gpu(const std::vector<std::string>& gpus);
-// PS1 141: the start URL for a chapter (0-based).
-std::string launch_url(Game g, int chapter);
 
 // The remembered settings of all the games (PS1 $s + PerGame).
 class Store {
@@ -243,6 +244,56 @@ struct KeyAction { const char *cvar; const char *pad; const char *what; const ch
 // GitHub #208: per game - Judgment throws grenades with LB and opens the tactical display with D-pad down (the other
 // three the other way round), so its two rows are named and given their default keys (Tab / 4) by what they do there.
 const std::vector<KeyAction> &key_actions(Game g = Game::Gears2);
+// 0.6.3 (GitHub #316): the key that switches the game window between windowed and borderless full screen - the same in
+// all four games (the games' bind_cogbox_fullscreen). Not F11: the cheat keys (and the AO debug keys) have it. Shown on the
+// Controls tab; window_key() is what a --bind_cogbox_fullscreen=<key> line in extra-args.txt changes it to (the last line
+// wins; "None" = off), else the default. The key text is the games' own: [Alt+][Ctrl+][Shift+]<key name>.
+constexpr const char *kWindowKeyDefault = "Alt+Return";
+std::string window_key(const Environment &env);
+// 0.6.3 (reviews r49 / r50): one value for all games - the Shared options and the text ones (kept once, Store::texts).
+// Before a save, each unsaved page's Shared / text values that differ from what the store holds (its edits; compared after
+// that game's clamp, as view() shows them - r51) go to every page (clamped for each game), so a change on one page shows
+// on the others and committing another page can't put the old value back - and two unsaved pages' edits to different
+// options are both kept. On the same option the `prefer` page (the one being saved)
+// wins, else the later game. GameOwn / PerGame values are left alone. changed[k] = page k's values changed.
+void sync_shared(const Store& st, const Environment* envs, Settings* pages, const bool* dirty, int prefer,
+                 bool* changed);   // (all arrays kGameCount long)
+
+// 0.6.3: the Custom controller layout (Controller layout = Custom; CogBox.ini [Pad] Remap=, shared by all four games),
+// edited on the Controls tab. The runtime's pad_remap (SDK patch 55, input_system.cpp) reads "src=dst" pairs, comma
+// separated, spaces dropped, any case: the controller's src button presses the game's dst button. A button that is only
+// a source no longer presses its own; one never named as a source stays itself; two sources may press one dst. There is
+// no "nothing": every controller button presses some game button. "sticks=swap" swaps the two sticks. Anything else (an
+// unknown name, "a=", "a=b=c") is ignored by the runtime; the editor keeps such text as it was and says so.
+enum PadInput { PadA, PadB, PadX, PadY, PadLB, PadRB, PadLT, PadRT, PadLS, PadRS, PadBack, PadStart,
+                PadUp, PadDown, PadLeft, PadRight, kPadInputs };
+const char* pad_input_token(int i);   // the runtime's name: "a", "lb", "ls", "back", "up" ... (nullptr out of range)
+const char* pad_input_label(int i);   // the launcher's: "A", "LB", "Left stick click", "Back", "D-pad up" ...
+int pad_input_from_token(const std::string& token);   // any case; -1 = not a name the runtime knows
+struct PadMap {
+    int to[kPadInputs];                 // to[controller button] = the game button it presses (to[i] == i: unchanged)
+    bool sticks_swapped = false;
+    std::vector<std::string> unknown;   // parts of the text the runtime ignores, kept as written
+    PadMap() { for (int i = 0; i < kPadInputs; ++i) to[i] = i; }
+    bool same_layout(const PadMap& o) const;   // same buttons and sticks (unknown parts not compared)
+};
+// What the launcher hands the runtime (build_args): only letters, digits, '=' and ','.
+std::string pad_remap_clean(const std::string& spec);
+PadMap parse_pad_remap(const std::string& spec);    // as the runtime reads it (the last pair for a button wins)
+std::string format_pad_remap(const PadMap& m);      // only the moved buttons, in pad_input order; "" = the game's own
+const char* pad_layout_preset(int layout);          // Controller layout 0-3's text ("" "sticks=swap" "a=b,b=a" ...)
+std::vector<int> pad_sources(const PadMap& m, int game_button);   // the controller buttons that press it
+// The controller button `pad` now presses game button `game`. If that leaves the game button it pressed before with no
+// controller button, the buttons swap: a button that pressed `game` until now takes it over (as the keyboard keys'
+// "was taken from"). Returned: what changed besides `pad` itself, for the note under the list.
+struct PadAssign {
+    bool changed = false;
+    int took_from = -1;     // the game button `pad` pressed before
+    int swapped = -1;       // the controller button that now presses took_from instead (-1: none)
+    bool left_empty = false;   // took_from has no controller button now (no button could take it over)
+};
+PadAssign pad_assign(PadMap& m, int game, int pad);
+
 // Job 661: draws the keyboard button prompts (key caps over each game's controller-button sheet, 4x the sheet's size) for
 // these keys (cvar -> "Key[,Key2]") into <promptDir>\hires-<game>; returns that folder or "" (keycaps.cpp sets it).
 using PromptComposer = std::string (*)(const std::string &promptDir, const std::string &game,

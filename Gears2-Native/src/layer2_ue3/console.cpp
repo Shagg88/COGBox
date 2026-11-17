@@ -74,6 +74,28 @@ void Store32(uint8_t* base, uint32_t addr, uint32_t v) {
   std::memcpy(base + addr, &v, 4);
 }
 
+}  // namespace
+
+// The commands the launcher itself writes into --ue3_exec / --ue3_exec_each_level for display and corpse settings (cogbox
+// gears_settings.cpp; Gears 3's split-screen layout, game_patches.cpp): `set <class> <property> <value>` on exactly these
+// properties. They give no advantage, so a Versus match keeps them; every other command is a cheat to the gate.
+bool Ue3ConsoleIsDisplaySetting(const std::string& command) {
+  static const char* const kPrefixes[] = {
+      "set GameViewportClient DesiredSplitscreenType ",
+      "set GearPawn CorpseMaxLifeSpan ",
+      "set GearPawn DurationBeforeDestroyingDueToNotBeingSeen ",
+      "set WarPawn MaxAllowedDeadRagDollPawns ",
+      "set WarPawn DurationBeforeDestroyingDueToNotBeingSeen ",
+  };
+  for (const char* prefix : kPrefixes) {
+    const size_t n = std::strlen(prefix);
+    if (command.size() > n && command.compare(0, n, prefix) == 0 && command.find_first_of(";|\r\n", n) == std::string::npos)
+      return true;
+  }
+  return false;
+}
+
+namespace {
 // Runs one command through GamePlayers(0)'s FExec::Exec; false if the engine isn't ready (no player yet).
 bool ExecNow(PPCContext& ctx, uint8_t* base, const std::string& command, bool* handled) {
   const Ue3ConsoleTarget& t = g_target;
@@ -184,6 +206,20 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
       command = g_queue.front();
     }
     bool handled = false;
+    // 0.6.3: cheats are refused in Versus matches (g_target.gate = ue3/match_guard.h, asked for every command at the moment
+    // it would run, so a command held over a map change meets the new map's answer). The launcher's own settings are not cheats.
+    if (g_target.gate && !Ue3ConsoleIsDisplaySetting(command)) {
+      const int verdict = g_target.gate();
+      if (verdict == 1) return;  // the game state is not readable yet: keep it queued
+      if (verdict == 2) {
+        {
+          std::lock_guard<std::mutex> lock(g_mutex);
+          g_queue.pop_front();
+        }
+        REXLOG_DEBUG("ue3_console: tick {} ({:.1f} s): '{}' refused", g_ticks, secs, command);
+        continue;
+      }
+    }
     if (g_target.before_each && *g_target.before_each) {
       bool ignored = false;
       if (!ExecNow(ctx, base, g_target.before_each, &ignored)) return;  // no player yet: keep it queued

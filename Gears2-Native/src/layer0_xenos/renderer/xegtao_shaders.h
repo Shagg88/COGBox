@@ -35,6 +35,7 @@ cbuffer XeGtao : register(b0) { uint4 xe_c0; uint4 xe_c1; uint4 xe_c2; uint4 xe_
 #define XE_DENOISE_BETA    asfloat(xe_c3.x)
 #define XE_MIP_OFFSET      asfloat(xe_c3.y)
 #define XE_SAMPLE_POWER    asfloat(xe_c3.z)
+#define XE_MAX_SCREEN_RADIUS asfloat(xe_c3.w)   // COGBox: the samples' reach, a fraction of the screen height
 static const float XE_PI = 3.1415926535897932384626433832795;
 static const float XE_PI_HALF = 1.5707963267948966192313216916398;
 static const float XE_RADIUS_MULTIPLIER = 1.457;   // XE_GTAO_DEFAULT_RADIUS_MULTIPLIER
@@ -282,7 +283,12 @@ void main(uint3 id : SV_DispatchThreadID) {
   const float2 noise = XeSpatioTemporalNoise(id.xy, XE_NOISE_INDEX);
   const float pixel_too_close_threshold = 1.3;
   const float2 pixel_dir_rb_viewspace_size = viewspace_z.xx * (XeNdcToViewMul() * ps);
-  const float screenspace_radius = effect_radius / pixel_dir_rb_viewspace_size.x;
+  // COGBox: close to the camera (the player's character, the ground at the bottom of the screen) the radius on screen
+  // grows without limit and most samples leave the screen, where the edge row stood in for them and flickered with every
+  // small change there (DLSS jitter, idle animation). Capped (--gow2_ao_max_screen_radius); off-screen samples count
+  // as no occluder (weight 0) below.
+  const float screenspace_radius =
+      min(effect_radius / pixel_dir_rb_viewspace_size.x, XE_MAX_SCREEN_RADIUS * float(XE_SIZE.y));
   visibility += saturate((10.0 - screenspace_radius) / 100.0) * 0.5;  // fade out for small screen radii
   const float min_s = pixel_too_close_threshold / screenspace_radius;
 
@@ -320,8 +326,10 @@ void main(uint3 id : SV_DispatchThreadID) {
       const float sample_dist0 = length(sample_delta0), sample_dist1 = length(sample_delta1);
       const float3 sample_horizon_vec0 = sample_delta0 / sample_dist0;
       const float3 sample_horizon_vec1 = sample_delta1 / sample_dist1;
-      const float weight0 = saturate(sample_dist0 * falloff_mul + falloff_add);
-      const float weight1 = saturate(sample_dist1 * falloff_mul + falloff_add);
+      const float weight0 = all(saturate(sample_screen_pos0) == sample_screen_pos0) ?
+                            saturate(sample_dist0 * falloff_mul + falloff_add) : 0.0;   // COGBox: off screen
+      const float weight1 = all(saturate(sample_screen_pos1) == sample_screen_pos1) ?
+                            saturate(sample_dist1 * falloff_mul + falloff_add) : 0.0;
       float shc0 = dot(sample_horizon_vec0, view_vec), shc1 = dot(sample_horizon_vec1, view_vec);
       shc0 = lerp(low_horizon_cos0, shc0, weight0);
       shc1 = lerp(low_horizon_cos1, shc1, weight1);

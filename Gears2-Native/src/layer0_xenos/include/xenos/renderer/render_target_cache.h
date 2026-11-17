@@ -165,11 +165,6 @@ class RenderTargetCache {
     return false;
   }
   uint64_t HostBytes() const { return host_bytes_; }
-  // 0.4.9 task 7 (live settings): a new output scale. Call between frames only, then FreeUnusedScales.
-  void SetScale(uint32_t s) {
-    scale_ = s < 1 ? 1 : s;
-    phase_scale_ = scale_;
-  }
   // 0.4.9 task 7: Get makes one host target per key and scale and kept every one, so each resolution-scale or
   // upscaling-mode change added a full set. This frees every target that none of `phases` (phase scales, 0 =
   // scale()) would draw at: its texture (the backend defers the release past our GPU), its tiles in both ownership
@@ -188,6 +183,11 @@ class RenderTargetCache {
   // Patch 0141 review: the twin at the phase scale if it exists, else the other-scale twin that our GPU wrote last
   // (resolves, clears and fast clears of a key the other phase drew). Mode off: same as Find.
   RenderTarget* FindAny(const RenderTargetKey& key);
+  // #345: the target a colour resolve reads. As FindAny, but a key no draw ever used in any twin (a resolve-only view:
+  // Gears 3's k_2_10_10_10 view of its 7e3 scene, job 019; also a key only ever cleared or fast-cleared, which costs one
+  // more twin and a transfer per resolve, contents unchanged) gets its twin at the phase scale - FindAny kept returning the twin
+  // made at the first frame's scale, so the upscaler saw a scene copy at the wrong scale on every frame.
+  RenderTarget* FindForResolve(const RenderTargetKey& key);
   // The target is about to be written (or, with take_ownership = false, read) in the tiles that `pixels` touches.
   // Updates tile ownership in `book` and reports, per previous owner, how many of those tiles another target wrote
   // last (`aliases`, optional). `sources` (optional) receives every such tile. `clear_known`/`clear_bits`: this write
@@ -240,8 +240,6 @@ class RenderTargetCache {
   uint64_t book_epoch_[2] = {1, 1};  // bumped on every change of a book
   uint8_t taint_[edram::kTileCount] = {};
  public:
-  // Make the alternate book a copy of the primary one (when it is only tracked around comparison frames).
-  void ResyncAlternate();
   // Content taint of a tile (acting book; upl-n102): 0 = our data is what the EDRAM holds, 1 = part of it came
   // through transfers from a colour target we can't reinterpret yet (M2), 2 = from another unmodelled source. A new
   // owner starts at 0; the renderer sets it after deciding the transfer.

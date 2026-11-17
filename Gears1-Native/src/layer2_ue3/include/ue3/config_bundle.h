@@ -103,5 +103,3 @@ int UpdateTocEntry(std::string& toc, const std::string& file_name, uint64_t size
 // Off (nothing redirected) when no edit is set. Call after the runtime's file system is set up (OnPostSetup).
 namespace rex { class Runtime; }
 void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime);
-#include <set>
-void Ue3HideGameFiles(rex::Runtime* runtime, const std::string& folder, const std::set<std::string>& names);

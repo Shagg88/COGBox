@@ -33,11 +33,6 @@ static const GameDef k_games[G_ALL] = {
 
 static const int k_slotGame[G_ALL] = { G_GEARS1, G_GEARS2, G_GEARS3, G_JUDGMENT };   // release order
 int game_at_slot(int slot) { return k_slotGame[((slot % G_ALL) + G_ALL) % G_ALL]; }
-int game_slot(int g)
-{
-    for (int s = 0; s < G_ALL; s++) if (k_slotGame[s] == g) return s;
-    return 0;
-}
 
 const GameDef &game_def(int g) { return k_games[g < 0 || g >= G_ALL ? 0 : g]; }
 
@@ -113,12 +108,6 @@ std::string game_logs_dir(int g) { return join(game_root(g), "logs"); }
 std::string game_shader_dir(int g) { return join(game_root(g), "shadercache"); }
 std::string game_default_data_dir(int g) { return join(game_root(g), "game\\extracted"); }
 std::string game_default_update_dir(int g) { return join(game_root(g), "game\\update"); }
-
-std::string GameState::versionText() const
-{
-    if (ready != R_READY) return "";
-    return useUpdate ? "Title Update" : "Disc version";
-}
 
 static int64_t file_time(const std::string &p)
 {

@@ -1,5 +1,6 @@
 // Unit tests for the SDK-independent upscaler pieces (upscaler.h, notes/64): the jitter sequence and the camera motion
 // the motion-vector pass computes. Game-free. Our code (MIT).
+#include <initializer_list>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
@@ -7,6 +8,7 @@
 #include <cmath>
 #include <vector>
 #include <cstdint>
+#include <utility>
 
 #include "xenos/renderer/upscaler.h"
 
@@ -401,4 +403,179 @@ TEST_CASE("upscale: the frame's last scene copy is learned (notes/80 s.11)", "[u
   CHECK(frame(last, 2) == 1);
   CHECK(frame(last, 1) == -1);
   CHECK(frame(last, 1) == 0);
+}
+
+TEST_CASE("upscale: the last scene copy keeps its format (Judgment Blood Drive: DLSS re-created every other frame)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  // A frame's scene copies by format; returns the format of the copy taken first (0 = none), as the renderer asks.
+  const auto frame = [](up::SceneCopyPicker& p, std::initializer_list<uint32_t> formats) {
+    uint32_t taken = 0;
+    for (uint32_t f : formats)
+      if (p.Take(f) && !taken) taken = f;
+    p.EndFrame();
+    return taken;
+  };
+  constexpr uint32_t kF16 = 1, kR10 = 2;   // a mid-frame 16-bit float copy, the finished 10:10:10:2 scene
+  up::SceneCopyPicker p;
+  p.last_only = true;
+  CHECK(frame(p, {kF16, kR10}) == kF16);   // nothing learned: the first, as before
+  CHECK(frame(p, {kF16, kR10}) == kR10);   // the last: its format is the scene's from now on
+  // Blood Drive: frames with and without the mid-frame copy alternate. Counting every copy took the first (F16) after a
+  // one-copy frame, so the format - DLSS's HDR flag - flipped and DLSS was re-created (~33 ms) every other frame.
+  for (int i = 0; i < 6; ++i) {
+    CHECK(frame(p, {kR10}) == kR10);
+    CHECK(frame(p, {kF16, kR10}) == kR10);
+  }
+  // A real change of the scene's format (only the other one, for a while) is followed.
+  for (int i = 0; i < 60; ++i) frame(p, {kF16});
+  CHECK(frame(p, {kF16}) == kF16);
+  // Off (Gears 2 / 3): format plays no part.
+  up::SceneCopyPicker first;
+  CHECK(frame(first, {kF16, kR10}) == kF16);
+  CHECK(frame(first, {kR10}) == kR10);
+}
+
+TEST_CASE("upscale: a scene copy format learned from a menu frame is learned again in play", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  const auto frame = [](up::SceneCopyPicker& p, std::initializer_list<uint32_t> formats) {
+    uint32_t taken = 0;
+    for (uint32_t f : formats)
+      if (p.Take(f) && !taken) taken = f;
+    p.EndFrame();
+    return taken;
+  };
+  constexpr uint32_t kF16 = 1, kR10 = 2;
+  up::SceneCopyPicker p;
+  p.last_only = true;
+  // the first frames have only the mid-frame copy (a menu, a transition): its format is learned
+  frame(p, {kF16});
+  frame(p, {kF16});
+  // play: every frame still has a copy of that format, then the finished scene. For a while the old choice holds
+  // (no rebuild on a one-off frame) ...
+  for (int i = 0; i < 59; ++i) CHECK(frame(p, {kF16, kR10}) == kF16);
+  // ... then, kFormatPatience frames in a row ending in the other format, it learns again: the finished scene from now on
+  frame(p, {kF16, kR10});
+  frame(p, {kF16, kR10});
+  for (int i = 0; i < 100; ++i) CHECK(frame(p, {kF16, kR10}) == kR10);
+  // and the alternating Blood Drive frames still keep the finished scene
+  for (int i = 0; i < 100; ++i) CHECK(frame(p, i % 2 ? std::initializer_list<uint32_t>{kR10} : std::initializer_list<uint32_t>{kF16, kR10}) == kR10);
+  // a frame with no scene copies at all changes nothing
+  frame(p, {});
+  CHECK(frame(p, {kF16, kR10}) == kR10);
+}
+
+TEST_CASE("upscale: the last scene copy is found in a frame with more than 16 copies", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  up::SceneCopyPicker p;
+  p.last_only = true;
+  for (int f = 0; f < 3; ++f) {
+    int taken = -1;
+    for (int i = 0; i < 20; ++i)
+      if (p.Take(2) && taken < 0) taken = i;
+    p.EndFrame();
+    if (f > 0) CHECK(taken == 19);   // the first frame learns (it takes the first, as before)
+  }
+}
+
+TEST_CASE("upscale: one creation size for a scene that changes width (GitHub #323)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  uint32_t cw = 0, ch = 0;
+  CHECK(up::FitCreationSize(1280, 720, 1280, 720, cw, ch));  // first frame: its own size
+  CHECK((cw == 1280 && ch == 720));
+  // Gears 2 at Nexus: 1024..1280 in 64-pixel steps, many times a second - no re-creation.
+  for (uint32_t w : {1024u, 1088u, 1216u, 1280u, 1152u, 1024u}) {
+    CHECK_FALSE(up::FitCreationSize(w, 720, 1280, 720, cw, ch));
+    CHECK((cw == 1280 && ch == 720));
+  }
+  // A first frame narrower than the full scene, then wider: once more, straight to the full width.
+  cw = ch = 0;
+  CHECK(up::FitCreationSize(1024, 720, 1280, 720, cw, ch));
+  CHECK(cw == 1024);
+  CHECK(up::FitCreationSize(1088, 720, 1280, 720, cw, ch));
+  CHECK((cw == 1280 && ch == 720));
+  CHECK_FALSE(up::FitCreationSize(1216, 720, 1280, 720, cw, ch));
+  // A game always below the nominal size keeps its own (never padded); past the nominal: the frame's size.
+  cw = ch = 0;
+  CHECK(up::FitCreationSize(1280, 704, 1280, 720, cw, ch));
+  CHECK_FALSE(up::FitCreationSize(1280, 704, 1280, 720, cw, ch));
+  CHECK(ch == 704);
+  CHECK(up::FitCreationSize(1920, 704, 1280, 720, cw, ch));
+  CHECK((cw == 1920 && ch == 704));
+}
+
+TEST_CASE("upscale: motion re-expressed for the last frame's width (GitHub #323)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  CHECK(up::ResizedMotion(3.5f, 100.5f, 2560, 2560) == 3.5f);  // same size: unchanged
+  CHECK(up::ResizedMotion(3.5f, 100.5f, 2560, 0) == 3.5f);     // no last frame
+  // A still camera: the scene's centre (u = 0.5) was drawn at 1280 of 2560 last frame and is at 1024 of 2048 now.
+  CHECK(up::ResizedMotion(0.0f, 1024.0f, 2048, 2560) == Approx(256.0f));
+  CHECK(up::ResizedMotion(0.0f, 1280.0f, 2560, 2048) == Approx(-256.0f));
+  // A moving camera: previous position u_prev * prev_size, whatever the motion within the frame.
+  const float w = 2048.0f, prev = 2560.0f, pos = 300.5f, m = -12.25f;
+  const float u_prev = (pos + m) / w;
+  CHECK(pos + up::ResizedMotion(m, pos, 2048, 2560) == Approx(u_prev * prev));
+}
+
+TEST_CASE("upscale: the creation size shrinks slowly, without oscillating (GitHub #323, r83 L2)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  using C = up::CreationChange;
+  constexpr uint32_t kAfter = 600;
+  auto feed = [](up::CreationSize& s, uint32_t w, uint32_t h, uint32_t n) {  // n frames; the changes seen
+    uint32_t grows = 0, shrinks = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+      const C c = up::UpdateCreationSize(s, w, h, 1280, 720, kAfter);
+      grows += c == C::kGrow, shrinks += c == C::kShrink;
+    }
+    return std::pair{grows, shrinks};
+  };
+  // Ultrawide 1280 x 550 after one 720-high frame: the shrink comes on the 600th fitting frame, once.
+  up::CreationSize s;
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, kAfter) == C::kGrow);
+  CHECK(feed(s, 1280, 550, kAfter - 1) == std::pair{0u, 0u});
+  CHECK((s.w == 1280 && s.h == 720));
+  CHECK(up::UpdateCreationSize(s, 1280, 550, 1280, 720, kAfter) == C::kShrink);
+  CHECK((s.w == 1280 && s.h == 550));
+  CHECK(feed(s, 1280, 550, 10 * kAfter) == std::pair{0u, 0u});  // at the creation size: nothing more
+  // Undone by a 720-high frame: the next shrink needs twice the frames, the one after four times.
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, kAfter) == C::kGrow);
+  CHECK(feed(s, 1280, 550, 2 * kAfter - 1) == std::pair{0u, 0u});
+  CHECK(up::UpdateCreationSize(s, 1280, 550, 1280, 720, kAfter) == C::kShrink);
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, kAfter) == C::kGrow);
+  CHECK(feed(s, 1280, 550, 4 * kAfter - 1) == std::pair{0u, 0u});
+  CHECK(feed(s, 1280, 550, 1) == std::pair{0u, 1u});
+  // Staying at the shrunk size changes nothing; the wait stays doubled twice.
+  CHECK(feed(s, 1280, 550, 8 * kAfter) == std::pair{0u, 0u});
+  CHECK(s.wait == 4 * kAfter);
+
+  // Gears 2 at Nexus: 1024..1280 wide, a full-width frame now and then - never shrinks.
+  s = {};
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, kAfter) == C::kGrow);
+  uint32_t changes = 0;
+  for (uint32_t i = 0; i < 20 * kAfter; ++i) {
+    const uint32_t w = i % 100 == 99 ? 1280u : 1024u + 64u * (i % 4);
+    changes += up::UpdateCreationSize(s, w, 720, 1280, 720, kAfter) != C::kNone;
+  }
+  CHECK(changes == 0);
+  // 1216 wide (5% less area) for a long time: too small a saving to re-create for.
+  CHECK(feed(s, 1216, 720, 10 * kAfter) == std::pair{0u, 0u});
+  // One full-width frame starts the count again.
+  CHECK(feed(s, 1024, 720, kAfter - 1) == std::pair{0u, 0u});
+  CHECK(feed(s, 1280, 720, 1) == std::pair{0u, 0u});
+  CHECK(feed(s, 1024, 720, kAfter - 1) == std::pair{0u, 0u});
+  // A run that widens but stays 1/8 smaller keeps counting, and shrinks to the widest of its frames.
+  CHECK(feed(s, 1088, 720, 1) == std::pair{0u, 1u});
+  CHECK((s.w == 1088 && s.h == 720));
+  // A run that becomes too wide restarts with the frame that still fits a smaller box.
+  s = {};
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, kAfter) == C::kGrow);
+  CHECK(feed(s, 1024, 720, kAfter - 1) == std::pair{0u, 0u});
+  CHECK(feed(s, 1216, 720, 1) == std::pair{0u, 0u});  // 1216 x 720 is not 1/8 smaller: the run ends
+  CHECK(s.run == 0);
+  CHECK(feed(s, 1024, 720, kAfter) == std::pair{0u, 1u});
+  // shrink_after = 0: FitCreationSize alone.
+  s = {};
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, 0) == C::kGrow);
+  uint32_t none = 0;
+  for (int i = 0; i < 5000; ++i) none += up::UpdateCreationSize(s, 1024, 550, 1280, 720, 0) == C::kNone;
+  CHECK(none == 5000);
 }

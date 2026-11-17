@@ -12,6 +12,13 @@ FF=${FFMPEG_DIR:-third_party/ffmpeg-xma}   # (not committed: .gitignore)
 # GitHub #151: 0.4.1 - 0.4.3 were built from a clone without these headers and shipped without library music. A build
 # without them now stops, unless COGBOX_NO_FFMPEG=1 asks for a silent library on purpose.
 if [ -f $FF/include/libavcodec/avcodec.h ]; then FFDEF="-isystem $FF/include"
+  # 0.6.3 (0.6.2 shipped silent): the headers decide which DLLs CogBox.exe loads (avcodec-<major>.dll); they must be the
+  # FFmpeg the package ships, as named in licenses/FFmpeg-NOTICE.txt. Another FFmpeg's headers: stop.
+  AVC=$(sed -n 's/^#define LIBAVCODEC_VERSION_MAJOR *\([0-9]*\).*/\1/p' $FF/include/libavcodec/version_major.h $FF/include/libavcodec/version.h 2>/dev/null | head -1)
+  AVU=$(sed -n 's/^#define LIBAVUTIL_VERSION_MAJOR *\([0-9]*\).*/\1/p' $FF/include/libavutil/version.h 2>/dev/null | head -1)
+  if ! head -1 licenses/FFmpeg-NOTICE.txt | grep -q "avcodec-$AVC.dll, avutil-$AVU.dll"; then
+    echo "build.sh: the FFmpeg headers in $FF are avcodec-$AVC / avutil-$AVU, but licenses/FFmpeg-NOTICE.txt ships $(head -1 licenses/FFmpeg-NOTICE.txt) - set FFMPEG_DIR to that FFmpeg (tools/build_ffmpeg_xma.sh)" >&2; exit 1
+  fi
 elif [ "$COGBOX_NO_FFMPEG" = 1 ]; then FFDEF="-DCOGBOX_NO_FFMPEG"
 else echo "build.sh: no FFmpeg headers in $FF (tools/build_ffmpeg_xma.sh) - set FFMPEG_DIR, or COGBOX_NO_FFMPEG=1 for no music" >&2; exit 1; fi
 CXX=x86_64-w64-mingw32-g++
@@ -38,12 +45,12 @@ for f in third_party/lzma/*.c; do
 done
 for f in src/*.cpp ../src/layer2_ue3/prebuild_lzx.cpp ../src/layer0_xenos/achievements_data.cpp ../../Gears3-Native/src/layer2_ue3/modcore/modcore.cpp \
          ../src/layer0_xenos/achievements_browser_model.cpp ../src/layer0_xenos/achievements_popup_logic.cpp; do   # (the LZX decoder: Gears2-Native's own, MIT)
-  case $f in src/hello.cpp) continue;; esac
   o=$OUT/obj/$(basename $f .cpp).o; objs="$objs $o"
   $CXX $FLAGS -c $f -o $o
 done
 $CXX -mwindows -static -static-libgcc -static-libstdc++ $([ "$1" = debug ] || echo -s) -o $OUT/CogBox.exe $objs $OUT/obj/cogbox.res.o \
   $SDL/lib/libSDL3.dll.a -lshell32 -lole32 -luuid -lwinhttp -lbcrypt -ladvapi32 -ldxgi -lcomdlg32 -lversion -lwintrust -lcrypt32
 cp $SDL/bin/SDL3.dll $OUT/ 2>/dev/null || true
+rm -f $OUT/avcodec-*.dll $OUT/avutil-*.dll   # 0.6.3 (review r47): no older FFmpeg's DLLs left beside the new exe
 cp $FF/bin/avcodec-*.dll $FF/bin/avutil-*.dll $OUT/ 2>/dev/null || true
 ls -la $OUT/CogBox.exe

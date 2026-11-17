@@ -22,7 +22,6 @@ namespace fs = std::filesystem;
 std::mutex g_mutex;
 std::vector<modcore::Manifest> g_mods;        // the --ue3_mods folders' manifests, load order, problems set
 std::vector<std::string> g_content;
-uint64_t g_fingerprint = 0;
 
 std::vector<fs::path> SplitSpec(const std::string& spec) {
   std::vector<fs::path> out;
@@ -73,7 +72,6 @@ std::vector<fs::path> ActiveModFolders(const std::string& spec) {
       if (std::find(g_content.begin(), g_content.end(), c) == g_content.end()) g_content.push_back(c);
   }
   const modcore::NetSet net = modcore::ForMultiplayer(g_mods);
-  g_fingerprint = net.fingerprint;
   if (net.fingerprint) REXLOG_INFO("ue3_mods: co-op / System Link mod fingerprint {:016X} ({})", net.fingerprint, net.summary);
   return active;
 }
@@ -218,7 +216,5 @@ std::vector<ClassDefaultEdit> ModClassDefaultsForMap(const std::string& map) {
   }
   return out;
 }
-
-uint64_t ModFingerprint() { return g_fingerprint; }
 
 }  // namespace ue3

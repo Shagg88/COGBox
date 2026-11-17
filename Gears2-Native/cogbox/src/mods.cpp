@@ -7,6 +7,7 @@
 // Order and on/off are in CogBox.ini [Mods] <game>Order / <game>Enabled ("name|name|...").
 #include "app.h"
 #include "fabricator_model.h"
+#include "i18n.h"   // 0.6.4: the Mods tab lines built here (trf)
 #include "../third_party/miniz/miniz.h"
 #include "modcore/campaigns.h"
 
@@ -15,6 +16,7 @@
 #include <set>
 #include <filesystem>
 #include <cstring>
+#include <cwctype>
 
 static std::vector<std::string> split_bar(const std::string &s)
 {
@@ -65,7 +67,7 @@ static void apply_mod_rules(int g, std::vector<ModItem> &out)
     if (std::string(game_def(g).key) != "gears3") return;
     namespace fs = std::filesystem;
     std::error_code ec;
-    std::string sig;
+    std::string sig = i18n_current() + ";";   // review r1940: its lines are translated here, so a language switch rebuilds them
     for (const ModItem &m : out) {
         sig += m.folder + (m.enabled ? "+" : "-");
         const fs::path dir = fs::path(widen(m.path));
@@ -99,8 +101,8 @@ static void apply_mod_rules(int g, std::vector<ModItem> &out)
             if (!out[i].enabled) continue;
             r.problem = m.problem;
             if (m.api > modcore::kModApiLevel)
-                r.notes.push_back("made for a newer COGBox (mod API " + std::to_string(m.api) + "; this one has " +
-                                  std::to_string(modcore::kModApiLevel) + ")");
+                r.notes.push_back(trf("made for a newer COGBox (mod API {1}; this one has {2})",
+                                      { std::to_string(m.api), std::to_string(modcore::kModApiLevel) }));
             for (const std::string &p : alloc.problems)
                 if (p.rfind(m.name + ": ", 0) == 0) r.notes.push_back(p.substr(m.name.size() + 2));
             for (const modcore::PlacedCampaign &c : alloc.campaigns) {
@@ -108,13 +110,15 @@ static void apply_mod_rules(int g, std::vector<ModItem> &out)
                 for (const modcore::PlacedChapter &ch : c.chapters)
                     if (ch.mod == m.name) mine += (mine.empty() ? "" : ", ") + std::to_string(ch.decl.number);
                 if (!mine.empty())
-                    r.campaign = "Select Chapter: Act " + modcore::ActNumeral(c.act) + " " + c.title + ", chapter " + mine;
+                    r.campaign = trf(mine.find(',') == std::string::npos ? "Select Chapter: Act {1} {2}, chapter {3}"
+                                                                         : "Select Chapter: Act {1} {2}, chapters {3}",
+                                     { modcore::ActNumeral(c.act), c.title, mine });
             }
             if (!r.campaign.empty() && m.campaign.max_players > 0)   // ([Campaign] MaxPlayers)
-                r.campaign += m.campaign.max_players == 1 ? " (one player)"
-                                                          : " (co-op up to " + std::to_string(m.campaign.max_players) + ")";
+                r.campaign += " " + (m.campaign.max_players == 1 ? tr(std::string("(one player)"))
+                                                                 : trf("(co-op up to {1})", { std::to_string(m.campaign.max_players) }));
             if (m.Active() && !m.chapters.empty() && r.campaign.empty() && merged.empty())
-                r.notes.push_back("its chapters' place in Select Chapter shows once the game's files are in");
+                r.notes.push_back(tr(std::string("its chapters' place in Select Chapter shows once the game's files are in")));
         }
     }
     for (size_t i = 0; i < out.size(); i++) {
@@ -122,6 +126,49 @@ static void apply_mod_rules(int g, std::vector<ModItem> &out)
         out[i].campaign = s_res[i].campaign;
         out[i].notes = s_res[i].notes;
     }
+}
+
+// KiltedKernel: texture packs. A mod's folder may hold DDS files named after the hash of the texture each replaces
+// (`<hash16>_....dds`), anywhere in it - a pack made for the ReXGlue Gears 2 port keeps its `<TITLEID>\replace` folder as
+// it comes. Folders named dump, .build and replace_<variant> are left aside, as the game's renderer does
+// (layer0_xenos/renderer/texture_pack.cpp). Counted again at most every 10 s (the list is read every 2 s).
+static bool pack_texture_name(const std::wstring &n)
+{
+    if (n.size() < 20 || lower(narrow(n.substr(n.size() - 4))) != ".dds") return false;
+    for (size_t i = 0; i < 16; i++) if (!iswxdigit(n[i])) return false;
+    return n[16] == L'_' || n[16] == L'.';
+}
+static uint32_t count_pack_textures(const std::wstring &dir, int depth)
+{
+    uint32_t n = 0;
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (f == INVALID_HANDLE_VALUE) return 0;
+    do {
+        const std::wstring name = fd.cFileName;
+        if (name == L"." || name == L"..") continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            const std::string l = lower(narrow(name));
+            if (depth < 6 && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && l != "dump" && l != ".build" &&
+                l.rfind("replace_", 0) != 0)
+                n += count_pack_textures(dir + L"\\" + name, depth + 1);
+        } else if (pack_texture_name(name)) {
+            n++;
+        }
+    } while (FindNextFileW(f, &fd));
+    FindClose(f);
+    return n;
+}
+static uint32_t pack_textures(const std::string &path)
+{
+    struct Counted { Uint64 at; uint32_t n; };
+    static std::map<std::string, Counted> s_counted;
+    const Uint64 now = SDL_GetTicks();
+    auto it = s_counted.find(path);
+    if (it != s_counted.end() && now - it->second.at < 10000) return it->second.n;
+    const uint32_t n = count_pack_textures(widen(path), 0);
+    s_counted[path] = { now, n };
+    return n;
 }
 
 std::vector<ModItem> mods_list(App &a, int g)
@@ -170,6 +217,7 @@ std::vector<ModItem> mods_list(App &a, int g)
         out.push_back(m);
     }
     apply_mod_rules(g, out);
+    for (ModItem &m : out) m.textures = pack_textures(m.path);
     return out;
 }
 
@@ -199,13 +247,6 @@ void mods_move(App &a, int g, const std::string &folder, int dir)
     if (i < 0 || j < 0 || i >= (int)v.size() || j >= (int)v.size()) return;
     std::swap(v[i], v[j]);
     mods_store(a, g, v);
-}
-
-std::vector<std::string> mods_enabled_paths(App &a, int g)
-{
-    std::vector<std::string> p;
-    for (const ModItem &m : mods_list(a, g)) if (m.enabled) p.push_back(m.path);
-    return p;
 }
 
 // a folder COGBox made itself (the unpacking of a mod, a Fabricator backup), removed with everything in it; a link

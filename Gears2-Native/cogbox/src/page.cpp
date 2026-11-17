@@ -187,6 +187,8 @@ static std::string key_get(App &a, int g, const char *cvar)
 static bool lang_on_copy(const std::string &root, int g, int idx);
 static bool voice_on_copy(const std::string &root, int g, int idx);
 
+static void main_gpu_memory(std::string &name, unsigned &mb);   // (below, with auto_plan)
+
 void env_refresh(App &a, int g)
 {
     GameState &st = a.st[g];
@@ -202,7 +204,18 @@ void env_refresh(App &a, int g)
     e.online_stun = stun_address(e.online_server);
     e.online_region = e.online_server.empty() ? std::string() : region_or_default(a.ini.get("Online", "Region"), local_utc_minutes());
     e.shader_cache_dir = game_shader_dir(g);
-    e.mods = mods_enabled_paths(a, g);   // 0.2.0
+    {   // 0.6.4 (GitHub #341): the texture cache's Auto size depends on the card's video memory (read once)
+        static unsigned s_vram = ~0u;
+        if (s_vram == ~0u) { std::string n; main_gpu_memory(n, s_vram); }
+        e.vram_mb = s_vram;
+    }
+    e.mods.clear();                              // (env_refresh runs again on the same Environment)
+    e.texture_pack_mods.clear();
+    for (const ModItem &m : mods_list(a, g)) {   // 0.2.0 (the enabled mods, plus the texture packs among them)
+        if (!m.enabled) continue;
+        e.mods.push_back(m.path);
+        if (m.textures) e.texture_pack_mods.push_back(m.path);   // r95 L1: only mods with pack textures
+    }
     {   // job 620 (#45), GitHub #159: the Lang / VoiceLang choices not on this copy (greyed, and not passed at launch)
         const gs::Option *lo = gs::find_option((gs::Game)g, "Lang"), *vo = gs::find_option((gs::Game)g, "VoiceLang");
         e.lang_missing.assign(lo ? lo->choices.size() : 0, false);
@@ -242,6 +255,46 @@ void env_refresh(App &a, int g)
     e.steam_deck = a.proton.steamDeck;   // proton049
     e.low_port_start = a.proton.lowPortStart;   // 0.6.2 R4
     e.deck_lcd = a.proton.deckLcd;
+    // GitHub #350: Judgment's keys saved before 0.6.4 hold the old layout (Y = Q, D-pad up = 3), which now meets the new
+    // defaults (D-pad up = Q, Y = 3) - Q or 3 would press two buttons. Once: a Y / D-pad up pair that is the old layout
+    // (each either saved as it was or not saved) is moved to the new one; anything the player chose is left alone.
+    if (g == G_JUDGMENT && a.ini.get("Notices", "JudgmentKeys064") != "1") {
+        const std::string y = key_get(a, g, "keybind_y"), up = key_get(a, g, "keybind_dpad_up");
+        if ((y == "Q" || y.empty()) && (up == "3" || up.empty()) && !(y.empty() && up.empty())) {
+            a.ini.set(keys_section_name(g), "keybind_y", "3");
+            a.ini.set(keys_section_name(g), "keybind_dpad_up", "Q");
+        }
+        a.ini.set("Notices", "JudgmentKeys064", "1");
+        a.ini.save();
+    }
+    // Review r1952: 0.6.4's new defaults (Gears 1-3: 4 = grenade, 3 = pistol; Judgment: Y = 3, D-pad up = Q) must never land
+    // on a key the player already gave another action (a row the key was taken from is saved as "None"). Once per game: a
+    // row with no saved key whose default key is one of the player's saved keys gets "None" saved (as the Controls page
+    // does when a key moves).
+    {
+        const std::string flag = std::string("KeyDefaults064_") + game_def(g).key;
+        if (a.ini.get("Notices", flag) != "1") {
+            const auto &acts = gs::key_actions((gs::Game)g);
+            auto split = [](const std::string &v) { std::vector<std::string> out; size_t at = 0;
+                while (at <= v.size()) { size_t c = v.find(',', at); std::string k = v.substr(at, c == std::string::npos ? std::string::npos : c - at);
+                    while (!k.empty() && k.front() == ' ') k.erase(0, 1); while (!k.empty() && k.back() == ' ') k.pop_back();
+                    if (!k.empty()) out.push_back(k); if (c == std::string::npos) break; at = c + 1; } return out; };
+            std::vector<std::string> used;   // keys the player saved, any row
+            for (const gs::KeyAction &k : acts) { const std::string v = key_get(a, g, k.cvar); if (!v.empty()) for (const std::string &x : split(v)) used.push_back(x); }
+            for (const gs::KeyAction &k : acts) {
+                if (!key_get(a, g, k.cvar).empty()) continue;
+                std::string keep; bool dropped = false;   // (a two-key default keeps the key that is still free)
+                for (const std::string &x : split(k.def)) {
+                    bool clash = false;
+                    for (const std::string &u : used) if (x != "None" && SDL_strcasecmp(u.c_str(), x.c_str()) == 0) clash = true;
+                    if (clash) dropped = true; else keep += (keep.empty() ? "" : ",") + x;
+                }
+                if (dropped) a.ini.set(keys_section_name(g), k.cvar, keep.empty() ? std::string("None") : keep);
+            }
+            a.ini.set("Notices", flag, "1");
+            a.ini.save();
+        }
+    }
     e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab); GitHub #154: this game's own
     for (const gs::KeyAction &k : gs::key_actions((gs::Game)g)) {
         std::string v = key_get(a, g, k.cvar);
@@ -269,7 +322,6 @@ void env_refresh(App &a, int g)
     if (exe.empty()) exe = st.portExeDisc.empty() ? st.portExeTu : st.portExeDisc;
     st.useUpdate = !st.portExeTu.empty() && exe == st.portExeTu && !st.updateDir.empty();
     if (game_update_required(g)) st.useUpdate = !st.updateDir.empty() && (!game_def(g).updateNeeded || !st.portExeTu.empty());   // title updates required
-    if (use_normal_code(a, g) && file_exists(gs::normal_code_exe(exe))) exe = gs::normal_code_exe(exe);   // cg050
     // 0.5.0 (Play took 2+ minutes in Gears 2 / 3 / Judgment): writing the in-game menu file asks these ~10,000-12,000
     // times (live_lines runs build_args for every value of every live option). Each answer is now worked out once per
     // env (the files are checked when the env is built) and then read from memory - no file-system call per question.
@@ -303,13 +355,22 @@ void env_refresh(App &a, int g)
     };
 }
 
-bool settings_save(App &a)
+bool settings_save(App &a, int prefer)
 {
+    // 0.6.3 (reviews r49 / r50): the values all games share - each unsaved page's edits go to every page first (on the same
+    // option the page being saved wins), so they show everywhere and committing one page can't put another's back
+    {
+        static_assert(G_COUNT == gs::kGameCount, "one page per game");
+        bool changed[G_COUNT] = {};
+        gs::sync_shared(a.store, a.env, a.cur, a.dirty, prefer >= 0 ? prefer : a.page, changed);
+        for (int g = 0; g < G_COUNT; g++) if (changed[g]) env_refresh(a, g);   // (Monitor is Shared)
+    }
     for (int g = 0; g < G_COUNT; g++)
         if (a.dirty[g]) { a.store.commit((gs::Game)g, a.cur[g], a.env[g]); a.dirty[g] = false; }
     a.store.last_game = a.page;
     bool ok = write_file(join(exe_dir(), "settings.ini"), a.store.save_ini());
     if (!ok) set_message(a, "The settings couldn't be saved - is the COGBox folder read-only?", true);
+    a.saves++;   // 0.6.3 r48: the controller layout's Undo lasts until a save
     return ok;
 }
 
@@ -365,12 +426,18 @@ static bool small_button(const char *label_en)
 }
 
 // one short line of feedback or status, small and dim (instead of a paragraph)
+static void ui_note_shown(const std::string &text, ImVec4 c);
 void ui_note(const std::string &text_en, ImVec4 c)   // (also achievements_tab.cpp)
+{
+    ui_note_shown(tr(text_en), c);
+}
+// ui_note for a text already in the player's language (put together from translated pieces)
+static void ui_note_shown(const std::string &text, ImVec4 c)
 {
     ImGui::PushFont(F_SMALL, FS(F_SMALL) * k_rowText);
     ImGui::PushStyleColor(ImGuiCol_Text, c);
     ImGui::PushTextWrapPos(row_wrap_x());
-    ImGui::TextUnformatted(tr(text_en).c_str());
+    ImGui::TextUnformatted(text.c_str());
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
     ImGui::PopFont();
@@ -598,7 +665,12 @@ static void keys_section(App &a, int g)
     // the press that sets the key: a frame after the click that chose the row, so that click isn't taken as the key
     if (capture >= 0 && ImGui::GetFrameCount() > captureFrame + 1) {
         const char *name = nullptr;
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) { capture = -1; return; }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            // r48: Esc only cancels - the bar's LIBRARY (Esc) later this frame doesn't see it
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::SetKeyOwner(ImGuiKey_Escape, ImGui::GetID("##keycap"), ImGuiInputFlags_LockThisFrame);
+            capture = -1;
+            return;
+        }
         if (ImGui::IsMouseClicked(0)) name = "LMB";
         else if (ImGui::IsMouseClicked(1)) name = "RMB";
         else if (ImGui::IsMouseClicked(2)) name = "MMB";
@@ -650,6 +722,222 @@ static void keys_section(App &a, int g)
             capture = -1;
         }
     }
+}
+
+// 0.6.3 (GitHub #316): the game window's own key - windowed <-> borderless full screen, in every game and whatever
+// Keyboard and mouse says (it is the window's, not an action of the game). Shown here; changed with a
+// --bind_cogbox_fullscreen=<key> line in extra-args.txt, like the game's other system keys.
+static void window_key_section(App &a, int g)
+{
+    ui_section("GAME WINDOW");
+    row_label("Windowed / full screen key", "", true);
+    // "Alt+Return" -> "Alt + Enter", each part in the launcher's language (the key names the Keys list uses)
+    std::string shown, tok;
+    const std::string key = gs::window_key(a.env[g]);
+    for (size_t i = 0; i <= key.size(); i++) {
+        if (i < key.size() && key[i] != '+') { tok += key[i]; continue; }
+        if (!tok.empty()) {
+            // "Ctrl" is shown as the Keys list's "Control", the name the lang files translate (r40)
+            shown += (shown.empty() ? "" : " + ") +
+                     tr(tok == "None" ? std::string("Off") : tok == "Ctrl" || tok == "ctrl" ? std::string("Control") : key_shown(tok));
+        }
+        tok.clear();
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(shown.c_str());
+    ui_tip("Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the "
+           "monitor it is on, and back to its window size and place. Works in the game window in all four games, with or "
+           "without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to "
+           "extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off).");
+}
+
+// ---- 0.6.3: the Custom controller layout (Controller layout = Custom) --------------------------------------------------
+// One layout for all four games, as the Controller layout choice itself (Shared): CogBox.ini [Pad] Remap=, the runtime's
+// pad_remap text (gs::PadMap). Each row is one of the game's buttons; its box shows the controller button(s) that press
+// it. With a controller connected the box waits for a press (SDL's gamepad events, main.cpp pad_press_event); without one
+// it is a list. A controller button belongs to one game button: taking it leaves the old one to the button it replaced
+// (a swap, gs::pad_assign), and the note under the list says what moved.
+static void pad_remap_save(App &a, const std::string &spec)
+{
+    a.ini.set("Pad", "Remap", spec);
+    a.ini.save();
+    for (int k = 0; k < G_COUNT; k++) a.env[k].pad_remap = spec;   // (env_refresh reads the same line)
+}
+
+// A controller button's name: the pad's own (A / Cross, LB / L1 ... - pad_name), the stick clicks and D-pad translated
+static std::string pad_button_name(const App &a, int i)
+{
+    const char *l = gs::pad_input_label(i);
+    if (!l) return "?";
+    if (i <= gs::PadRT || i == gs::PadBack || i == gs::PadStart) return pad_name(a, l);
+    if (a.padPs && (i == gs::PadLS || i == gs::PadRS)) return i == gs::PadLS ? "L3" : "R3";   // r48: PlayStation names
+    return tr(l);
+}
+
+// "{1} now does the game's {2}." with the pieces put in after the translation (word order is the language's)
+static std::string fill_in(std::string t, const std::vector<std::string> &v)
+{
+    for (size_t i = 0; i < v.size(); i++) {
+        const std::string k = "{" + std::to_string(i + 1) + "}";
+        for (size_t p = t.find(k); p != std::string::npos; p = t.find(k, p + v[i].size())) t.replace(p, k.size(), v[i]);
+    }
+    return t;
+}
+
+static void pad_layout_section(App &a, int g)
+{
+    const gs::Game G = (gs::Game)g;
+    const gs::Option *o = gs::find_option(G, "PadLayout");
+    if (!o || !gs::available(*o, G, gs::effective_version(G, a.cur[g], a.env[g]), a.cur[g], a.env[g]).ok) return;
+    static int capture = -1, captureFrame = 0, padGame = -1, lastDrawn = -10;
+    static unsigned captureSeq = 0, savesSeen = 0;
+    static double captureAt = 0;
+    static std::string note;   // what the last change moved besides its own button
+    // r48: Customise can be undone - its Remap and layout choice from before - until the player leaves the Controls tab
+    // (or this page) or saves
+    static struct { bool on = false; std::string remap; int layout = 0; bool replaced = false; } undo;
+    const int frame = ImGui::GetFrameCount();
+    if (padGame != g || frame > lastDrawn + 1 || a.saves != savesSeen) {
+        padGame = g; capture = -1; note.clear(); undo.on = false; savesSeen = a.saves;
+    }
+    lastDrawn = frame;
+    // r48: the layout choice is saved together with Remap (no Custom-without-its-layout or the other way round)
+    auto save_layout = [&](int l) {
+        gs::set_value(G, a.cur[g], "PadLayout", l);
+        a.dirty[g] = true;
+        settings_save(a);
+        savesSeen = a.saves;   // (our own save keeps the Undo)
+    };
+    auto end_capture = [&]() { capture = -1; a.padCaptureHold = true; a.padCaptureHoldAt = ImGui::GetTime(); };   // the launcher's pad stays off while held (main.cpp)
+    const int layout = std::max(0, std::min(4, a.cur[g].has("PadLayout") ? a.cur[g].i("PadLayout") : (int)o->def));
+    if (layout != 4) {   // a ready-made layout: Customise starts the Custom one from it
+        capture = -1;
+        undo.on = false;   // r49: a layout chosen in the list ends the Undo (it can't come back with Custom later)
+        a.padCaptureActive = false;
+        ImGui::Dummy(ImVec2(0, 0));
+        ImGui::SameLine(g_labelW);
+        if (small_button("Customise...")) {
+            const std::string before = a.ini.get("Pad", "Remap"), start = gs::pad_layout_preset(layout);
+            const gs::PadMap was = gs::parse_pad_remap(before);
+            undo.on = true; undo.remap = before; undo.layout = layout;
+            undo.replaced = !before.empty() && (!was.same_layout(gs::parse_pad_remap(start)) || !was.unknown.empty());
+            pad_remap_save(a, start);
+            save_layout(4);
+            note.clear();
+        }
+        ui_tip("Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above.");
+        return;
+    }
+    gs::PadMap m = gs::parse_pad_remap(a.ini.get("Pad", "Remap"));
+    auto apply = [&](const gs::PadMap &nm) { pad_remap_save(a, gs::format_pad_remap(nm)); };
+    auto said = [&](int game, int pad, const gs::PadAssign &r) {
+        std::string t = fill_in(tr("{1} now does the game's {2}."), { pad_button_name(a, pad), pad_button_name(a, game) });
+        if (r.swapped >= 0)
+            t += " " + fill_in(tr("{1} does the game's {2} instead."), { pad_button_name(a, r.swapped), pad_button_name(a, r.took_from) });
+        else if (r.left_empty)
+            t += " " + fill_in(tr("No button does the game's {1} now."), { pad_button_name(a, r.took_from) });
+        return t;
+    };
+    const bool capturing = capture >= 0;
+    if (undo.on) {
+        if (undo.replaced) ui_note("Your earlier custom layout was replaced.", col::amber);
+        if (capturing) ImGui::BeginDisabled();
+        const bool back = small_button("Undo Customise");
+        if (capturing) ImGui::EndDisabled();
+        if (!capturing) ui_tip("Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line).");
+        if (back) {
+            pad_remap_save(a, undo.remap);
+            save_layout(undo.layout);
+            undo.on = false; note.clear();
+            return;
+        }
+    }
+    if (!m.unknown.empty()) {   // a hand-written Remap= with parts the game ignores: kept, and said
+        std::string list;
+        for (const std::string &u : m.unknown) list += (list.empty() ? "" : ", ") + u;
+        ui_note_shown(std::string(tr("In CogBox.ini but not understood by the game (kept, spaces and symbols removed):")) + " " + list, col::amber);
+    }
+    ui_note("Left: the game's buttons. Right: the controller button that does each one.");
+    if (!note.empty()) ui_note_shown(note, col::amber);
+    const bool pad = a.padConnected;
+    const char *tip = pad ? "Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). "
+                            "A controller button does one thing: if it already did another, the two swap."
+                          : "No controller connected - choose the controller button from the list. A controller button does "
+                            "one thing: if it already did another, the two swap.";
+    // while waiting, a press mustn't work the page - but the rows aren't dimmed (the waiting one is lit)
+    ImGui::PushStyleVar(ImGuiStyleVar_DisabledAlpha, 1.0f);
+    if (capturing) ImGui::BeginDisabled();
+    auto choose_list = [&](int i, const char *id, const char *preview, ImGuiComboFlags flags) {
+        if (!ImGui::BeginCombo(id, preview, flags)) return;
+        for (int b = 0; b < gs::kPadInputs; b++) {
+            ImGui::PushID(b);
+            if (ImGui::Selectable(pad_button_name(a, b).c_str(), m.to[b] == i)) {
+                const gs::PadAssign r = gs::pad_assign(m, i, b);
+                if (r.changed) { note = said(i, b, r); apply(m); }
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    };
+    for (int i = 0; i < gs::kPadInputs; i++) {
+        ImGui::PushID(i);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(pad_button_name(a, i).c_str());
+        ImGui::SameLine(g_labelW);
+        std::string shown;
+        for (int b : gs::pad_sources(m, i)) shown += (shown.empty() ? "" : " / ") + pad_button_name(a, b);
+        if (shown.empty()) shown = tr("Nothing");
+        if (capture == i) shown = tr("Press a button...");
+        if (pad) {   // press to set; the arrow beside it is the list, for the mouse
+            const float arrow = ImGui::GetFrameHeight();
+            if (th_button((shown + "##b").c_str(), ImVec2(g_ctrlW - arrow - S(4), T(26)), true, F_BODY, capture == i)) {
+                capture = i;
+                captureFrame = frame;
+                captureSeq = a.padPressSeq;   // (the press that chose the row is already counted)
+                captureAt = ImGui::GetTime();
+                note.clear();
+            }
+            if (!capturing) ui_tip(tip);
+            ImGui::SameLine(0, S(4));
+            choose_list(i, "##l", "", ImGuiComboFlags_NoPreview);
+            if (!capturing) ui_tip("Or choose it from the list.");
+        } else {
+            ImGui::SetNextItemWidth(g_ctrlW);
+            choose_list(i, "##b", shown.c_str(), 0);
+            if (!capturing) ui_tip(tip);
+        }
+        ImGui::PopID();
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(tr("Swap sticks"));
+    ImGui::SameLine(g_labelW);
+    bool sticks = m.sticks_swapped;
+    if (ImGui::Checkbox("##sticks", &sticks)) { m.sticks_swapped = sticks; note.clear(); apply(m); }
+    if (!capturing) ui_tip("The left stick moves the camera and the right stick moves you (southpaw).");
+    ImGui::Dummy(ImVec2(0, S(4)));
+    if (small_button("Reset to the game's own")) { apply(gs::PadMap()); note.clear(); }
+    if (capturing) ImGui::EndDisabled();
+    ImGui::PopStyleVar();
+    ImGui::Dummy(ImVec2(0, S(4)));
+    // the press: a controller button pressed after the row was chosen, in this window. Esc, a mouse click (which does
+    // nothing else - main.cpp takes it), the controller going away, the window losing focus, a question box opening or
+    // 10 seconds with no press cancel (B can't: it is a button to choose).
+    if (capture >= 0) {
+        a.padCaptureFrame = frame;   // the launcher's own controller uses are off (pad_capturing)
+        const bool late = frame > captureFrame + 1;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            ImGui::SetKeyOwner(ImGuiKey_Escape, ImGui::GetID("##padcap"), ImGuiInputFlags_LockThisFrame);   // not also LIBRARY
+            end_capture();
+        } else if (!a.padConnected || !SDL_GetKeyboardFocus() || a.modal.open || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) ||
+                   ImGui::GetTime() - captureAt > 10.0 || (late && a.padCaptureClickFrame == frame))
+            end_capture();
+        else if (a.padPressSeq != captureSeq && a.padPress >= 0) {
+            const gs::PadAssign r = gs::pad_assign(m, capture, a.padPress);
+            if (r.changed) { note = said(capture, a.padPress, r); apply(m); }
+            end_capture();
+        }
+    }
+    a.padCaptureActive = capture >= 0;
 }
 
 // Job 620 (GitHub #45): a game language whose text isn't on the player's copy can't be chosen - the game would fall
@@ -728,9 +1016,16 @@ static void option_row(App &a, int g, const gs::Option &o)
         for (std::string &it : items) it = tr(it);   // 0.2.0
         // notes/83: AMD FSR frame generation runs on Vulkan too, experimental there
         if (o.id == "FrameGen" && items.size() > 1 && gs::runs_vulkan(a.cur[g], a.env[g])) items[1] += std::string(" ") + tr("(experimental on Vulkan)");
+        // #345 / GitHub #98: a Scene resolution with no whole-number scene size at the render resolution (Match my monitor
+        // included: 4K picks 3x) only anti-aliases - said in the list and the closed box
+        if (o.id == "SceneMode" && items.size() == 4) {
+            const int out = gs::expected_render_scale((gs::Game)g, a.cur[g], a.env[g]);
+            for (int i = 1; i < 4; ++i)
+                if (!gs::scene_mode_fits(i, out)) items[i] += std::string(" - ") + tr("anti-aliasing only at this render resolution");
+        }
         // 0.6.2 Proton review (R11): settings from Windows say DirectX 12, but "Graphics API on Proton / Wine" = Automatic
         // runs Vulkan - the closed box says what the game will actually run
-        std::string preview = items.empty() ? std::string() : items[idx];   // (the closed box; the list keeps the plain names)
+        std::string preview = items.empty() ? std::string() : items[idx];   // (the closed box; Scene resolution's note shows in both)
         if (o.id == "Api" && a.env[g].wine && a.proton.proton && !a.env[g].mac && idx == 0 && gs::runs_vulkan(a.cur[g], a.env[g]))
             preview += std::string(" ") + tr("(Proton runs Vulkan)");
         if (ImGui::BeginCombo("##v", preview.c_str())) {
@@ -852,8 +1147,12 @@ static void option_row(App &a, int g, const gs::Option &o)
     if (o.id == "FrameGen" && av.ok && gs::fg_vk_nvidia_warning(a.cur[g], a.env[g]))   // vkfreeze049
         ui_note(gs::k_fgVkNvidiaWarning, col::amber);
     if (changed && nv != v) {
+        // 0.6.3: Custom chosen with no custom layout saved yet starts from the layout that was chosen (Southpaw ...)
+        const bool seed = o.id == "PadLayout" && (int)nv == 4 && v >= 1 && v <= 3 && a.ini.get("Pad", "Remap").empty();
+        if (seed) pad_remap_save(a, gs::pad_layout_preset((int)v));
         gs::set_value(G, a.cur[g], o.id, nv);
         a.dirty[g] = true;
+        if (seed) settings_save(a);   // r48: the choice is saved with the Remap it wrote
         if (o.id == "Version" || o.id == "Monitor") env_refresh(a, g);
     }
     // the description as a tooltip: the mouse resting on the row (label or control) for a second (greyed rows lead with why)
@@ -957,17 +1256,6 @@ static bool any_files(const std::string &dir)
 // Shagg 29 Oct: "This version works" - the player says an untested game version or title update runs fine. Remembered
 // by its fingerprint (no more warning for that exact file), and a pre-filled GitHub issue opens in the browser so the
 // player can tell the developer by submitting it. Nothing is sent by COGBox itself.
-[[maybe_unused]] static std::string url_encode(const std::string &s)   // (unused since legal2-050: tickets take no pre-filled link)
-{
-    static const char *hex = "0123456789ABCDEF";
-    std::string o;
-    for (unsigned char c : s) {
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += char(c);
-        else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
-    }
-    return o;
-}
-
 static void confirm_works(App &a, int g, bool update)
 {
     const GameDef &d = game_def(g);
@@ -1108,8 +1396,11 @@ static void mods_tab(App &a, int g)
             }
             if (running) ImGui::EndDisabled();
             // Gears 3: what the game will make of it (mods.cpp apply_mod_rules)
-            if (m.enabled && !m.problem.empty()) lamp_line(3, "Left out by the game: " + m.problem);
+            // 0.6.4: built from translated texts with gaps (trf); lamp_line's own tr() then finds no key and leaves them
+            if (m.enabled && !m.problem.empty()) lamp_line(3, trf("Left out by the game: {1}", { m.problem }));
             else if (m.enabled && !m.campaign.empty()) lamp_line(1, m.campaign);
+            if (m.textures) lamp_line(m.enabled ? 1 : 0, m.textures == 1 ? tr(std::string("Texture pack: 1 texture"))
+                                                                         : trf("Texture pack: {1} textures", { std::to_string(m.textures) }));
             for (const std::string &n : m.notes) ui_note("mod.ini: " + n, col::amber);
             ImGui::PopID();
         }
@@ -1130,6 +1421,43 @@ static void mods_tab(App &a, int g)
         if (small_button("Mods folder")) { make_dirs(mods_dir(g)); open_folder(a, mods_dir(g)); }
         ui_tip(k_noModsTip);
         if (changed) { mlAt[g] = 0; env_refresh(a, g); }
+    }
+}
+
+// 0.6.4 (Shagg 16 Nov: "the saves button should be under the gameplay tab"): import, back up and open the saves, and a
+// line when saves copied in by hand are waiting (save_import::find_misplaced) with a button that brings them in.
+static void saves_section(App &a, int g)
+{
+    const GameDef &d = game_def(g);
+    const bool busy = a.job.state.load() == 1, running = a.run.proc != nullptr;
+    ui_section("SAVES");
+    // 0.6.1 (Shagg 13 Nov): the player's own saves from Xenia or an Xbox 360 (save_import.cpp)
+    if (small_button("Import saves...")) {
+        if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
+        else {
+            const std::string from = pick_folder(L"Choose your Xenia content folder, or the Content folder copied from your Xbox 360 (not a whole drive)");
+            if (!from.empty()) import_saves_from(a, g, from);
+        }
+    }
+    ui_tip("Brings your own saves of this game in from Xenia (its content folder) or from an Xbox 360 (the Content folder "
+           "copied from the console's USB stick or hard disk). Saves it replaces are kept in a folder beside them.");
+    ImGui::SameLine();
+    if (small_button("Back up saves")) {
+        if (running) set_message(a, std::string(d.name) + " is running - close it first, so the save is complete.", true);
+        else if (!any_files(game_user_dir(g))) set_message(a, std::string(d.name) + " has no saves here yet.", false);
+        else ask(a, "backup", g, "Back up saves", std::string("Put a copy of ") + d.name + (a.wine ? "'s saves in a zip in COGBox's backups folder?" : "'s saves in a zip on your desktop?"), { "Back up", "Cancel" });
+    }
+    ImGui::SameLine();
+    if (small_button("Open saves folder")) { make_dirs(game_user_dir(g)); open_folder(a, game_user_dir(g)); }
+    const std::vector<std::filesystem::path> found = misplaced_saves(a, g);
+    if (!found.empty()) {
+        lamp_line(2, trf("Saves copied into the saves folder by hand that the game can't use as they are: {1}.", { std::to_string(found.size()) }));
+        if (small_button("Bring them in")) {
+            if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
+            else import_misplaced_saves(a, g);
+        }
+        ui_tip("Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken "
+               "from a profile). What you copied is kept as it was, in a folder beside the saves folder.");
     }
 }
 
@@ -1254,23 +1582,7 @@ static void about_tab(App &a, int g)
     if (small_button("Saves")) { make_dirs(game_user_dir(g)); open_folder(a, game_user_dir(g)); }
     ImGui::SameLine();
     if (small_button("Logs")) { make_dirs(game_logs_dir(g)); open_folder(a, game_logs_dir(g)); }
-    ImGui::SameLine();
-    if (small_button("Back up saves")) {
-        if (running) set_message(a, std::string(d.name) + " is running - close it first, so the save is complete.", true);
-        else if (!any_files(game_user_dir(g))) set_message(a, std::string(d.name) + " has no saves here yet.", false);
-        else ask(a, "backup", g, "Back up saves", std::string("Put a copy of ") + d.name + (a.wine ? "'s saves in a zip in COGBox's backups folder?" : "'s saves in a zip on your desktop?"), { "Back up", "Cancel" });
-    }
-    ImGui::SameLine();
-    // 0.6.1 (Shagg 13 Nov): the player's own saves from Xenia or an Xbox 360 (save_import.cpp).
-    if (small_button("Import saves...")) {
-        if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
-        else {
-            const std::string from = pick_folder(L"Choose your Xenia content folder, or the Content folder copied from your Xbox 360 (not a whole drive)");
-            if (!from.empty()) import_saves_from(a, g, from);
-        }
-    }
-    ui_tip("Brings your own saves of this game in from Xenia (its content folder) or from an Xbox 360 (the Content folder "
-           "copied from the console's USB stick or hard disk). Saves it replaces are kept in a folder beside them.");
+    // (0.6.4, Shagg 16 Nov: Back up saves and Import saves are on the Gameplay tab now - saves_section)
     ImGui::SameLine();
     if (small_button("Clear shaders...")) {
         if (!dir_exists(game_shader_dir(g))) set_message(a, std::string(d.name) + " has no saved shaders to clear.", false);
@@ -1394,9 +1706,9 @@ static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
 static const char *const k_dispPicture[] = { "HDR", "PaperWhite", "Peak", nullptr };
 static const char *const k_gfxQuality[] = { "GraphicsCard", "Api", "WineApi", "Preset", "Resolution", "AAMode", "DlssModel", "Sharpen", "SceneMode", "FrameGen", nullptr };
-static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Pool", "DrawDist", "AO", nullptr };
+static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Pool", "TexCache", "DrawDist", "ShadowDetail", "AO", nullptr };
 static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
-static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "AdaptiveTriggers", "PadPrompts", "PromptStyle", "DeadZone", "RadialDZ", "LowLag", nullptr };
+static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "AdaptiveTriggers", "TriggerRumble", "PadPrompts", "PromptStyle", "DeadZone", "RadialDZ", "LowLag", nullptr };
 static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
 static const char *const k_playGame[] = { "Version", "Lang", "VoiceLang", "SkipLogos", "Mute", nullptr };
 static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", "PeerIps", nullptr };
@@ -1480,7 +1792,9 @@ void page_draw(App &a, ImVec2 size)
     // The controller and the bottom bar (Shagg 22:23): D-pad down past the last row goes to the bar (Play chosen); there
     // D-pad left / right or LB / RB choose Library, Save or Play, A presses it, D-pad up goes back to the rows. Dear
     // ImGui's own navigation is off while the bar is chosen (main.cpp) and the bar's buttons are not in it.
-    bool padNav = a.padConnected && !a.modal.open && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.zoomTo == SCR_PAGE;
+    // 0.6.3: not while the controller layout list waits for a button (pad_layout_section) - that press only sets the button
+    const bool padCap = pad_capturing(a);
+    bool padNav = a.padConnected && !a.modal.open && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.zoomTo == SCR_PAGE && !padCap;
     if (!padNav || ImGui::IsMouseClicked(0)) a.barSel = -1;
     // B goes to the bar's Library button (Shagg 22:26), not straight back to the library: A there goes back, or move to
     // Save / Play. (A B that just closed a drop-down list was for the list, so it is left alone.)
@@ -1507,8 +1821,8 @@ void page_draw(App &a, ImVec2 size)
         }
     }
     // LB / RB switch tabs while the bar is not chosen
-    if (a.barSel < 0 && ImGui::IsKeyPressed(ImGuiKey_GamepadL1)) a.tab = (a.tab + k_tabCount - 1) % k_tabCount;
-    if (a.barSel < 0 && ImGui::IsKeyPressed(ImGuiKey_GamepadR1)) a.tab = (a.tab + 1) % k_tabCount;
+    if (a.barSel < 0 && !padCap && ImGui::IsKeyPressed(ImGuiKey_GamepadL1)) a.tab = (a.tab + k_tabCount - 1) % k_tabCount;
+    if (a.barSel < 0 && !padCap && ImGui::IsKeyPressed(ImGuiKey_GamepadR1)) a.tab = (a.tab + 1) % k_tabCount;
     dl->AddLine(ImVec2(p0.x + S(24), ty + tabH), ImVec2(p1.x - S(24), ty + tabH), U(col::redHi, 0.7f), S(2));
 
     // the rows
@@ -1550,9 +1864,15 @@ void page_draw(App &a, ImVec2 size)
             for (const gs::Option *o : mine) any |= group_of(o->id) == k;
             if (!any) continue;
             ui_section(tg.heading[k]);
-            for (const gs::Option *o : mine) if (group_of(o->id) == k) { option_row(a, g, *o); shown++; }
+            for (const gs::Option *o : mine) if (group_of(o->id) == k) {
+                option_row(a, g, *o);
+                shown++;
+                if (o->id == "PadLayout") pad_layout_section(a, g);   // 0.6.3: the Custom layout's buttons
+            }
         }
+        if (want == gs::Tab::Gameplay) saves_section(a, g);   // 0.6.4 (Shagg 16 Nov): saves on the Gameplay tab
         if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
+        if (want == gs::Tab::Controls) window_key_section(a, g);   // 0.6.3, GitHub #316
         if (want == gs::Tab::Graphics) dlss_file_section(a, g);   // 0.4.9
         if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
         if (want == gs::Tab::Achievements) achievements_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // achievements part 4
@@ -1571,6 +1891,7 @@ void page_draw(App &a, ImVec2 size)
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);   // the controller reaches the bar through a.barSel, not Dear ImGui
     if (th_button("LIBRARY", ImVec2(S(130), S(40)), true, F_HEAD, a.barSel == 0) || (barA && a.barSel == 0) ||
         (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !a.modal.open)) {
+        // (r48: an Esc that cancelled a key or controller-button wait was taken for this frame - SetKeyOwner)
         a.barSel = -1;
         if (std::any_of(a.dirty, a.dirty + G_COUNT, [](bool x) { return x; })) settings_save(a);
         a.zoomTo = SCR_FRONT; a.zoomStart = ImGui::GetTime();
@@ -1584,7 +1905,7 @@ void page_draw(App &a, ImVec2 size)
     if (th_button(anyDirty ? "SAVE *" : "SAVE", ImVec2(S(130), S(40)), true, F_HEAD, a.barSel == 1) || (barA && a.barSel == 1)) { if (settings_save(a)) set_message(a, "Saved.", false); }
     ImGui::SameLine(0, S(20));
     bool ready = a.st[g].ready == R_READY && !a.run.proc && a.job.state.load() != 1;
-    if (th_button_red("PLAY", ImVec2(S(130), S(40)), ready, F_HEAD, a.barSel == 2) || (ready && ((barA && a.barSel == 2) || ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false)))) {
+    if (th_button_red("PLAY", ImVec2(S(130), S(40)), ready, F_HEAD, a.barSel == 2) || (ready && ((barA && a.barSel == 2) || (!pad_capturing(a) && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false))))) {
         settings_save(a);
         play_start(a, g);
     }
@@ -1602,30 +1923,80 @@ void page_draw(App &a, ImVec2 size)
 
 // 0.6.1: the Import saves button, and a save package dropped onto COGBox (a player drags an Xbox 360 or Xenia save onto
 // the window instead of using the button - save_import takes one save package file as well as a folder).
-void import_saves_from(App &a, int g, const std::string &from)
+// 0.6.4: what find_misplaced finds in the current saves folder, looked at again at most every 3 s (the Gameplay tab draws
+// every frame) and whenever the folder changes game or launcher profile.
+static std::string s_misDir;
+static double s_misAt = -100.0;
+static std::vector<std::filesystem::path> s_misFound;
+static void misplaced_forget() { s_misDir.clear(); }   // after an import: look again at once
+
+std::vector<std::filesystem::path> misplaced_saves(App &a, int g)
+{
+    (void)a;
+    std::string &s_dir = s_misDir;
+    double &s_at = s_misAt;
+    std::vector<std::filesystem::path> &s_found = s_misFound;
+    const std::string dir = game_user_dir(g);
+    const double now = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0;
+    if (dir != s_dir || now - s_at > 3.0 || now < s_at) {
+        std::vector<uint32_t> ids{ game_def(g).titleId };
+        for (uint32_t t : region_title_ids(g)) ids.push_back(t);
+        s_found = save_import::find_misplaced(std::filesystem::u8path(dir), ids);
+        s_dir = dir;
+        s_at = now;
+    }
+    return s_found;
+}
+
+static std::vector<std::filesystem::path> own_user_dirs(int g)   // every launcher profile's saves folder of this game
+{
+    std::vector<std::filesystem::path> own;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+        if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
+    return own;
+}
+
+static void import_message(App &a, int g, bool ok, const save_import::Result &r)
 {
     const GameDef &d = game_def(g);
-    save_import::Result r;
-    make_dirs(game_user_dir(g));
-    std::vector<std::filesystem::path> own;   // every launcher profile's saves folder of this game (user, user-pN)
-    {
-        std::error_code ec;
-        for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
-            if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
-    }
-    if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r, own,
-                            region_title_ids(g))) {
-        std::string m = std::string(d.name) + ": imported ";
+    std::string m;
+    if (ok) {
+        m = std::string(d.name) + ": imported ";
         if (r.saves) m += std::to_string(r.saves) + (r.saves == 1 ? " save" : " saves");
         if (r.saves && r.settings) m += " and ";
         if (r.settings) m += "the profile's game progress";
         m += ".";
         if (!r.backup_dir.empty()) m += " What they replaced is kept in the saves folder, in " + r.backup_dir.filename().string() + ".";
-        for (const std::string &n : r.notes) m += " " + n;
-        set_message(a, m, false);
     } else {
-        std::string m = r.error;
-        for (const std::string &n : r.notes) m += " " + n;
-        set_message(a, m, true);
+        m = r.error;
     }
+    for (const std::string &n : r.notes) m += " " + n;
+    set_message(a, m, !ok);
+}
+
+std::string found_not_now_key(int g) { return std::string("FoundNotNow-") + game_def(g).dir + (current_profile() <= 1 ? "" : "-p" + std::to_string(current_profile())); }
+
+bool import_misplaced_saves(App &a, int g)
+{
+    const GameDef &d = game_def(g);
+    if (backup_running()) { set_message(a, "A backup of the saves is still being made - try again when it's done.", true); return false; }
+    save_import::Result r;
+    const bool ok = save_import::import_misplaced(std::filesystem::u8path(game_user_dir(g)), d.titleId, now_stamp(), r,
+                                                  own_user_dirs(g), region_title_ids(g));
+    import_message(a, g, ok, r);
+    misplaced_forget();
+    return ok;
+}
+
+void import_saves_from(App &a, int g, const std::string &from)
+{
+    const GameDef &d = game_def(g);
+    if (backup_running()) { set_message(a, "A backup of the saves is still being made - try again when it's done.", true); return; }
+    save_import::Result r;
+    make_dirs(game_user_dir(g));
+    const bool ok = save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r,
+                                        own_user_dirs(g), region_title_ids(g));
+    import_message(a, g, ok, r);
+    misplaced_forget();
 }

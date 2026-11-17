@@ -30,12 +30,19 @@ struct Ue3ConsoleTarget {
   // made per player controller, and only while Engine.GameInfo.AllowCheats says yes (a standalone game: never a System
   // Link / online host or client).
   const char* before_each = "";
+  // 0.6.3: asked before every queued command that is not one of the launcher's own display settings (see
+  // Ue3ConsoleIsDisplaySetting): 0 = run it, 1 = keep it queued (the game state is not readable yet), 2 = drop it (cheats
+  // are refused: Versus matches - ue3/match_guard.h). Empty: always run.
+  int (*gate)() = nullptr;
 };
 
 // Layer 3: where the game keeps these (per game version). Without a target nothing runs.
 void Ue3ConsoleSetTarget(const Ue3ConsoleTarget& target);
 // Hotkeys from --ue3_hotkeys (call once the app exists, e.g. OnPostSetup). `defaults` is used when the option is empty.
 void Ue3ConsoleInstallHotkeys(const std::string& defaults = std::string());
+// 0.6.3: true for the `set ...` commands the launcher writes for display / corpse settings (not cheats: the gate lets
+// them through in a Versus match).
+bool Ue3ConsoleIsDisplaySetting(const std::string& command);
 // Thread-safe; runs on the next Ue3ConsoleRunQueued.
 void Ue3ConsoleQueue(const std::string& command);
 // Game thread only (layer 3's override of a once-per-frame engine function, after the original): runs what is queued.

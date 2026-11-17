@@ -88,11 +88,6 @@ std::vector<std::string> start_names(Game g) {
     }
     return v;
 }
-// PS1 135-137
-const char* const k_mapsGJ[18] = { "SP_00_Museum_P", "SP_01_University_P", "SP_02_Mansion_P", "SP_02_Mansion_3_P", "SP_03_Island_P",
-    "SP_03_to_04_P", "SP_04_Rooftops_P", "SP_04_Rooftops2_P", "SP_05_Courthouse_P", "SP_05_CourthouseTrans_P",
-    "SP_05_CourthouseBoss_P", "SPE_E1_P", "SPE_E2_P", "SPE_E2oilrig_P", "SPE_E3_P", "SPE_E3_Outro_P", "SPE_E4_P", "SPE_E5_P" };
-
 const char* const k_aaNames[6] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS", "SMAA T2x" };   // PS1 150; 5: notes/80 s.7
 // Job 638: saved as "FrameCap", in order; the old "Fps" (30 / 60 / 120 / Unlimited) is read once and moved over
 // (Store::load_ini). Shagg: 30, 40, 45, 60, 90, 120, 144, 165, 180, Unlimited (list 2; 40 / 45 for the Steam Deck; list 1 had no 40 / 180 -
@@ -302,7 +297,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
-    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (FSR 4 on RX 6000 or newer, FSR 3.1 otherwise)", "DLSS (NVIDIA RTX)", "XeSS (highly experimental)",   /* fsr049 */   /* 0.4.7: DLSS tested clean in G2/G3/GJ */
+    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (FSR 4 on RX 6000 or newer, FSR 3.1 otherwise)", "DLSS (NVIDIA RTX, experimental)", "XeSS (highly experimental)",   /* fsr049 */   /* 0.4.7: DLSS tested clean in G2/G3/GJ; 0.6.4 (Shagg 16 Nov, GitHub #345): experimental again - scene scaling in Gears 3 / Judgment */
                  "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: AMD's temporal anti-aliasing / upscaler for the 3D scene - FSR 4 on RX 6000 or "
                "newer, FSR 3.1 otherwise (any graphics card), DirectX 12 or Vulkan. DLSS: the same on "
@@ -365,8 +360,27 @@ std::vector<Option> make_options(Game g) {
                { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)", "Larger (320 MB, not long-tested)" }, 1,
                "The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory "
                "for the rest of the game.", 360), "pool", "", true);
+    // 0.6.4 (GitHub #341): the renderer's host texture cache (--gow2_renderer_texture_cache_mb, 512 MB by default) - the
+    // video memory the PC keeps textures in, not the game's own pool. A 4x texture pack fills 512 MB quickly; evicted pack
+    // textures are read from disk again when the game draws them, which stutters.
+    add(choice("TexCache", "Texture cache (video memory)", Tab::Graphics, PG,
+               { "Auto", "512 MB", "1 GB", "2 GB", "4 GB" }, 0,
+               "How much video memory the PC side keeps the game's textures in before the least recently used ones are "
+               "freed. Texture packs need more: a freed pack texture is read from disk again when it is next drawn, which "
+               "stutters. Auto: 512 MB; with a texture pack on, 2 GB (1 GB on cards with less than 6 GB). Keep it well "
+               "under your graphics card's memory.",
+               0), "texcache");
     add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
                "How far away detail and objects are still drawn.", 361), "drawdist", "", true);
+    // 0.6.4 (Shagg 16 Nov: boma's "Smart Shadow Cuts" done our own way): the engine's own shadow-size limits
+    // ([SystemSettings] MinShadowResolution / ShadowFadeResolution and the pre-shadow pair). A shadow's size comes from how
+    // big its caster is on screen; below the minimum it isn't drawn and up to the fade size it fades in. Raising both
+    // drops small and far shadows first, with the game's own fade - large and close ones (characters, cutscenes) stay.
+    add(choice("ShadowDetail", "Shadow detail", Tab::Graphics, PG, { "Full (original)", "Balanced", "Performance" }, 0,
+               "Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). "
+               "Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. "
+               "Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows.", 362),
+        "shadowdetail");
     // GitHub #113's "Character detail (LOD)" (SkeletalMeshLODBias) was removed in 0.6.0 (Shagg): Highest halved Gears 3's
     // frame rate (the game thread skins every character at full detail) for detail only seen far away. The game's own
     // LOD is always used; a saved MeshLod value is ignored.
@@ -456,13 +470,14 @@ std::vector<Option> make_options(Game g) {
                "A round dead zone on both sticks (measured from the centre, not per axis), so small diagonal aim moves "
                "are not swallowed. Gears 1 and 2's own square dead zone on the camera is removed with it. Game's own = "
                "unchanged.", 0), "padlayout");
-    // GitHub #97: controller layouts (SDK patch 55, pad_remap). Custom = CogBox.ini [Pad] Remap=, e.g. "a=b,b=a".
+    // GitHub #97: controller layouts (SDK patch 55, pad_remap). Custom = CogBox.ini [Pad] Remap=, e.g. "a=b,b=a" - 0.6.3:
+    // edited on the Controls tab (page.cpp pad_layout_section, PadMap in the header).
     add(choice("PadLayout", "Controller layout", Tab::Controls, SH,
                { "Game's own", "Southpaw (sticks swapped)", "A and B swapped", "Bumpers and triggers swapped",
-                 "Custom (CogBox.ini [Pad] Remap=)" }, 0,
+                 "Custom (choose below)" }, 0,
                "Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts "
-               "keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up "
-               "down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=.", 0), "padlayout");
+               "keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list "
+               "below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=).", 0), "padlayout");
     add(make("Vibration", "Controller vibration", Tab::Controls, Kind::Bool, SH, 1, "The controller's rumble.", 383));   // no PS1 tooltip
     // GitHub #245 (SDK patch 98, --pad_adaptive_triggers): the game sets the DualSense's trigger feel per weapon. All
     // four games, each when its exe has the weapon table; per game, off by default.
@@ -470,6 +485,20 @@ std::vector<Option> make_options(Game g) {
              "PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon "
              "in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on "
              "for the controller, Steam keeps the triggers.", 0), "adaptivetriggers");
+    // 0.6.3 (GitHub #245, SDK patch 104, --pad_trigger_rumble): Xbox One / Series impulse triggers, from the same weapon
+    // table. Shared (one controller, one choice for every game); off by default: the runtime switches SDL to its raw
+    // input controller driver for it, which SDL itself turned off by default in May 2025 ("Disable
+    // SDL_HINT_JOYSTICK_RAWINPUT by default": Windows could stop delivering raw controller input until a reboot).
+    add(make("TriggerRumble", "Trigger rumble (Xbox controllers)", Tab::Controls, Kind::Bool, SH, 0,
+             "Xbox One and Series controllers over USB or the Xbox Wireless Adapter (Bluetooth may give none), with Steam"
+             " Input off for the controller: the motors in the triggers kick with each shot (harder for shotguns and "
+             "heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while "
+             "Controller vibration is off, here or in the game's options. While this is on, every Xbox-style controller "
+             "(Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press the "
+             "triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in"
+             " another order, and rarely Windows stops sending controller input until the PC restarts - untick this if a "
+             "controller misbehaves. PlayStation controllers are not affected.", 0), "triggerrumble",
+        "Vibration");
     add(make("LowLag", "Lower input lag", Tab::Controls, Kind::Bool, SH, 1,
              "Fewer frames waiting in line between the game and your screen, so the controller feels quicker. May cost a few "
              "fps on a busy graphics card; untick to compare.", 385), "lowlag");
@@ -484,8 +513,8 @@ std::vector<Option> make_options(Game g) {
                     // (the PS1 has G3Version = 1, the disc; Gears 3's chat built both its exes with PGO, job 143)
                "Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: "
                "TU4, Gears 1: TU5). Disc-only versions are no longer supported.", 324), "version");
-    // cg050 / Shagg 10 Nov: no "Faster game code" option - the faster build always runs, and the launcher falls back to
-    // the -normal one by itself after the faster one crashes twice in a row (play.cpp use_normal_code)
+    // cg050: no "Faster game code" option. 0.6.3 (Shagg 11-15): the faster build is the only one shipped - no -normal
+    // exe, no crash fallback (CogBox.ini [FastCode] of 0.5.0-0.6.2 is ignored; upgrade_cleanup.cpp drops it)
     add(choice("Players", "Players", Tab::Gameplay, PG, { "1", "2 (split-screen)", "3 (split-screen)", "4 (split-screen)" }, 0,
                "Local split-screen co-op, one controller each. In the game, choose Campaign > Play Split-Screen; player 2 is "
                "signed in automatically. If a controller shows up twice, turn off Steam Input or DS4Windows.", 325), "players");
@@ -526,17 +555,20 @@ std::vector<Option> make_options(Game g) {
              "On: Insane difficulty unlocks only after you finish the campaign, as in the original game. Off: Insane can be "
              "chosen from the start. Achievements work as usual.", 0),
         "originalunlocks");
-    // GitHub #89 (francoissubke-blip's tip): bots in local Horde
+    // GitHub #89 (francoissubke-blip's tip): bots in Horde. 0.6.3 fix: Back is "GBA_Scoreboard | Friends" (no NetMode
+    // change, no cheat flag), so it is safe to leave on in every mode
     add(make("HordeBots", "Horde bots", Tab::Gameplay, Kind::Bool, OWN, 0,
-             "Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). "
-             "They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag.", 0),
+             "Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots "
+             "(they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus "
+             "use the lobby's own bot setting.", 0),
         "hordebots");
     add(make("Cheats", "Cheats (hotkeys F5-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
              "The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - "
              "hide the HUD, all weapons). "
              "Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a "
              "System Link or online game you host, where slow motion and the rest affect every player - please keep them "
-             "to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business.", 327), "cheats");
+             "to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business."
+             " They do not work in Versus matches - only in the campaign and the wave modes (Horde, Beast, Survival).", 327), "cheats");
     add(make("Mutators", "Unlock all mutators", Tab::Gameplay, Kind::Bool, SH, 0,
              "Every mutator (gameplay modifier) available from the start. Writes nothing to your profile.", 328), "mutators");
     // First-person camera (Gears 3, Gears 2, Judgment; layer3 first_person.cpp): the game's own camera moved to the
@@ -595,6 +627,9 @@ bool cap_exe(const Environment& e, const std::string& n) {
     // 0.3.0 (job 733): --gow2_aspect / --gowj_aspect are short enough to be split the same way (job 730's gow2.exe: no
     // "gow2_aspect" text) - their description, a long literal, is searched instead
     if ((n == "gow2_aspect" || n == "gowj_aspect") && e.cap.exe_has && e.cap.exe_has("the shape. Empty = 21:9")) return true;
+    // Discord 16 Nov (Horde bots greyed in Gears 2 on 0.6.3): 0.6.3's gow2.exe has no "gow2_horde_bots" text either - the
+    // start of its description is searched (the 0.6.3 exe has it)
+    if (n == "gow2_horde_bots" && e.cap.exe_has && e.cap.exe_has("GitHub #237 (francoissubke-blip's tip")) return true;
     return e.cap.exe_has && e.cap.exe_has(n);
 }
 bool cap_rt(const Environment& e, const std::string& n) { return e.cap.runtime_has && e.cap.runtime_has(n); }
@@ -608,6 +643,18 @@ bool fsr_vulkan(const Environment& e) {
 }
 // Review: and the player turned "FSR on Vulkan (experimental)" on (--gow2_fsr_vulkan defaults to false)
 bool fsr_vulkan_on(const Settings& s, const Environment& e) { return s.b("FsrVulkan") && fsr_vulkan(e); }
+int expected_render_scale(Game g, const Settings& s, const Environment& e) {
+    const int r = s.i("Resolution") + 1;   // 1-4 = 1x-4x, 5 = Match my monitor, 6 = 1080p (drawn at 1x)
+    if (r >= 1 && r <= 4) return r;
+    if (r != 5) return 1;
+    if (e.monitor_w <= 0 || e.monitor_h <= 0) return 2;   // as the game does without a monitor size
+    // as shadow_renderer.cpp's "Match my monitor": by width for a wider game image, else the 16:9 shape
+    // review r1953: Ultrawide counts only when it is really sent (an available option, as build_args' on())
+    const Option* uw = find_option(g, "Ultrawide");
+    const bool wide = uw && s.b("Ultrawide") && available(*uw, g, effective_version(g, s, e), s, e).ok;
+    const double need = wide ? e.monitor_w / 1280.0 : std::min(e.monitor_w / 1280.0, e.monitor_h / 720.0);
+    return std::clamp(static_cast<int>(std::ceil(need - 1e-9)), 1, 4);
+}
 namespace {
 
 std::vector<std::string> gpu_list(const Environment& env) {
@@ -791,6 +838,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
             return no(not_yet(gi, "needs its next build"));
     } else if (f == "inifx") {   // motion blur, depth of field, lens flares: [SystemSettings] switches
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no setting for this.");
+    } else if (f == "shadowdetail") {   // 0.6.4: [SystemSettings] shadow sizes (Gears 1's 2006 engine has none there)
+        if (g == Game::Gears1) return no("Gears 1's engine (2006) has no shadow-size setting.");
     } else if (f == "drawdist") {
         if (g == Game::Gears2) return no(not_yet(0, "its config has no draw-distance setting"));
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no draw-distance setting.");
@@ -826,6 +875,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no mip-fade setting - its sharper textures already show at once.");
     } else if (f == "aniso") {
         if (g == Game::Gears1 && !cap_exe(env, "gow1_aniso16")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "texcache") {   // 0.6.4 (GitHub #341): layer 0's cvar, in every game's exe
+        if (!cap_exe(env, "gow2_renderer_texture_cache_mb")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "pool") {
         if (g == Game::Gears1 && !cap_exe(env, "gow1_texture_pool_mb")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "syslink") {   // 0.3.5: SDK patch 49b (the runtime's net_system_link); Gears 2 first
@@ -851,6 +902,15 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
             "Judgment weapon feel for DualSense pads", "Gears 1 weapon feel for DualSense pads"};
         if (!cap_rt(env, "DualSense adaptive triggers: games that support it") || !cap_exe(env, k_weaponFeel[gi]))
             return no(not_yet(gi, "needs its next build"));
+    } else if (f == "triggerrumble") {   // 0.6.3 (GitHub #245): the runtime's pad_trigger_rumble (SDK patch 104) and the
+        // game's trigger pulses (its log line, a long literal - cap_exe). Windows only: under Wine / Proton the raw input
+        // driver it switches to is not Windows' own.
+        static const char* const k_pulses[kGameCount] = {
+            "Gears 2 trigger pulses for Xbox pads", "Gears 3 trigger pulses for Xbox pads",
+            "Judgment trigger pulses for Xbox pads", "Gears 1 trigger pulses for Xbox pads"};
+        if (!cap_rt(env, "Xbox impulse triggers: games that support it") || !cap_exe(env, k_pulses[gi]))
+            return no(not_yet(gi, "needs its next build"));
+        if (env.wine) return no("Not under Proton / Wine.");
     } else if (f == "padlayout") {   // GitHub #95 / #97: SDK patch 55
         if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
     } else if (f == "gpucard") {   // 0.6.2 (GitHub #304): every game's renderer reads --gow2_graphics_card (layer 0)
@@ -902,26 +962,184 @@ const std::vector<KeyAction> &key_actions(Game g)
         { "keybind_left_shoulder", "LB", "Tactical display", "Tab" },
         { "keybind_dpad_left", "D-pad left", "Weapon (left)", "1" },
         { "keybind_dpad_right", "D-pad right", "Weapon (right)", "2" },
-        { "keybind_dpad_up", "D-pad up", "Weapon (up)", "3" },
-        { "keybind_dpad_down", "D-pad down", "Grenades", "4" },
+        // GitHub #350 (the games' own bindings, Coalesced_INT.bin: Gears 2 / 3 DPad_Up = GBA_Grenades, DPad_Down =
+        // GBA_Pistols; Gears 1 the same per its manual): the rows said "Weapon (up)" on 3 and "Grenades" on 4, so 3 threw a
+        // grenade and 4 drew the pistol. Shagg 16 Nov: 4 = grenade, 3 = pistol (as the labels promised; Judgment's too).
+        { "keybind_dpad_up", "D-pad up", "Grenades", "4" },
+        { "keybind_dpad_down", "D-pad down", "Pistol", "3" },
         { "keybind_rstick_press", "Right stick click", "Zoom", "MMB,Z" },
         { "keybind_lstick_press", "Left stick click", "Left stick click", "C" },
         { "keybind_start", "Start", "Pause menu", "Escape,Return" },
         { "keybind_back", "Back", "Back / scores", "Backspace" },
         { "keybind_walk", "-", "Walk", "None" },   // SDK patch 60: no key until chosen
     };
-    // GitHub #208: Judgment's LB is the grenade and D-pad down the tactical display - the same keys (Tab, 4) keep
-    // their meaning, so the two rows swap names and default keys
+    // Judgment's own bindings (its Coalesced_INT.bin): LB = GBA_Grenades, Y = GBA_SwitchWeapon, D-pad up = GBA_POI, D-pad
+    // down = GBA_Taccom, D-pad left / right = GBA_Weap2 / GBA_Weap1 (as the other games). GitHub #208 / #350: each key
+    // keeps its meaning - 4 grenade, Q point of interest, Tab tactical display, 1 / 2 the weapons; Y (switch weapon) gets
+    // 3 (Shagg 16 Nov).
     static const std::vector<KeyAction> judgment = [] {
         std::vector<KeyAction> j = v;
         for (KeyAction &k : j) {
             if (!strcmp(k.cvar, "keybind_left_shoulder")) { k.what = "Grenades"; k.def = "4"; }
             else if (!strcmp(k.cvar, "keybind_dpad_down")) { k.what = "Tactical display"; k.def = "Tab"; }
+            else if (!strcmp(k.cvar, "keybind_y")) { k.what = "Switch weapon"; k.def = "3"; }
+            else if (!strcmp(k.cvar, "keybind_dpad_up")) { k.what = "Look at / point of interest"; k.def = "Q"; }
         }
         return j;
     }();
     if (g == Game::Judgment) return judgment;
     return v;
+}
+
+std::string window_key(const Environment& env)
+{
+    static const std::string pre = "--bind_cogbox_fullscreen=";
+    std::string key = kWindowKeyDefault;
+    for (const std::string& raw : env.extra_args_lines) {   // as build_args reads extra-args.txt: one switch per line, # = comment
+        const std::string l = trim(raw);
+        if (l.compare(0, pre.size(), pre) != 0) continue;
+        std::string v = trim(l.substr(pre.size()));
+        if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = trim(v.substr(1, v.size() - 2));
+        key = v.empty() ? std::string("None") : v;   // no value: the game has no key then
+    }
+    return key;
+}
+
+void sync_shared(const Store& st, const Environment* envs, Settings* pages, const bool* dirty, int prefer, bool* changed)
+{
+    std::map<std::string, double> v;        // the edits, merged: a later page overwrites, `prefer` goes last
+    std::map<std::string, std::string> t;
+    auto collect = [&](int g) {
+        const Settings stored = st.view(static_cast<Game>(g), envs[g]);
+        const Settings& s = pages[g];
+        for (const Option& o : options(static_cast<Game>(g))) {
+            if (o.scope == Scope::GameOwn) continue;
+            if (o.kind == Kind::Text) {
+                auto it = s.t.find(o.id);
+                if (it != s.t.end() && it->second != stored.str(o.id)) t[o.id] = it->second;
+            } else if (o.scope == Scope::Shared && s.has(o.id)) {
+                // review r51 #1: compared as view() would show it - a stale Monitor above the screen count isn't an edit
+                const double x = clamp_value(o, s.f(o.id), &envs[g]);
+                if (!stored.has(o.id) || stored.f(o.id) != x) v[o.id] = x;
+            }
+        }
+    };
+    for (int g = 0; g < kGameCount; ++g) if (dirty[g] && g != prefer) collect(g);
+    if (prefer >= 0 && prefer < kGameCount && dirty[prefer]) collect(prefer);
+    for (int g = 0; g < kGameCount; ++g) {
+        changed[g] = false;
+        for (const Option& o : options(static_cast<Game>(g))) {
+            if (o.scope == Scope::GameOwn) continue;
+            if (o.kind == Kind::Text) {
+                auto it = t.find(o.id);
+                if (it != t.end() && pages[g].str(o.id) != it->second) { pages[g].t[o.id] = it->second; changed[g] = true; }
+            } else if (o.scope == Scope::Shared) {
+                auto it = v.find(o.id);
+                if (it == v.end()) continue;
+                const double x = clamp_value(o, it->second, &envs[g]);   // r51 #3: as this game's view() would hold it
+                if (!pages[g].has(o.id) || pages[g].f(o.id) != x) { pages[g].v[o.id] = x; changed[g] = true; }
+            }
+        }
+    }
+}
+
+// ---- 0.6.3: the Custom controller layout (see the header; the runtime's reader is input_system.cpp CurrentPadRemap) ----
+namespace {
+struct PadName { const char* token; const char* label; };
+const PadName k_padNames[kPadInputs] = {
+    { "a", "A" }, { "b", "B" }, { "x", "X" }, { "y", "Y" }, { "lb", "LB" }, { "rb", "RB" }, { "lt", "LT" }, { "rt", "RT" },
+    { "ls", "Left stick click" }, { "rs", "Right stick click" }, { "back", "Back" }, { "start", "Start" },
+    { "up", "D-pad up" }, { "down", "D-pad down" }, { "left", "D-pad left" }, { "right", "D-pad right" } };
+}  // namespace
+
+const char* pad_input_token(int i) { return i >= 0 && i < kPadInputs ? k_padNames[i].token : nullptr; }
+const char* pad_input_label(int i) { return i >= 0 && i < kPadInputs ? k_padNames[i].label : nullptr; }
+
+int pad_input_from_token(const std::string& token)
+{
+    std::string t;
+    for (char c : token) t += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (int i = 0; i < kPadInputs; ++i) if (t == k_padNames[i].token) return i;
+    return -1;
+}
+
+bool PadMap::same_layout(const PadMap& o) const
+{
+    if (sticks_swapped != o.sticks_swapped) return false;
+    for (int i = 0; i < kPadInputs; ++i) if (to[i] != o.to[i]) return false;
+    return true;
+}
+
+std::string pad_remap_clean(const std::string& spec)
+{
+    std::string clean;
+    for (char c : spec) if (std::isalnum(static_cast<unsigned char>(c)) || c == '=' || c == ',') clean += c;
+    return clean;
+}
+
+PadMap parse_pad_remap(const std::string& spec)
+{
+    PadMap m;
+    const std::string clean = pad_remap_clean(spec);   // what the runtime is given
+    size_t at = 0;
+    while (at <= clean.size()) {
+        size_t end = clean.find(',', at);
+        if (end == std::string::npos) end = clean.size();
+        const std::string item = clean.substr(at, end - at);
+        at = end + 1;
+        if (item.empty()) continue;   // ",," or a trailing comma: nothing to keep
+        std::string low;
+        for (char c : item) low += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (low == "sticks=swap") { m.sticks_swapped = true; continue; }
+        const size_t eq = low.find('=');
+        const int src = eq == std::string::npos ? -1 : pad_input_from_token(low.substr(0, eq));
+        const int dst = eq == std::string::npos ? -1 : pad_input_from_token(low.substr(eq + 1));
+        if (src >= 0 && dst >= 0) m.to[src] = dst;   // a later pair for the same button wins, as in the runtime
+        else m.unknown.push_back(item);
+    }
+    return m;
+}
+
+std::string format_pad_remap(const PadMap& m)
+{
+    std::string out;
+    auto put = [&](const std::string& s) { out += (out.empty() ? "" : ",") + s; };
+    for (int i = 0; i < kPadInputs; ++i)
+        if (m.to[i] != i && m.to[i] >= 0 && m.to[i] < kPadInputs) put(std::string(k_padNames[i].token) + "=" + k_padNames[m.to[i]].token);
+    if (m.sticks_swapped) put("sticks=swap");
+    for (const std::string& u : m.unknown) put(u);
+    return out;
+}
+
+const char* pad_layout_preset(int layout)
+{
+    static const char* const k_layouts[4] = { "", "sticks=swap", "a=b,b=a", "lb=lt,lt=lb,rb=rt,rt=rb" };
+    return layout >= 0 && layout < 4 ? k_layouts[layout] : "";
+}
+
+std::vector<int> pad_sources(const PadMap& m, int game_button)
+{
+    std::vector<int> v;
+    for (int i = 0; i < kPadInputs; ++i) if (m.to[i] == game_button) v.push_back(i);
+    return v;
+}
+
+PadAssign pad_assign(PadMap& m, int game, int pad)
+{
+    PadAssign r;
+    if (game < 0 || game >= kPadInputs || pad < 0 || pad >= kPadInputs || m.to[pad] == game) return r;
+    r.changed = true;
+    r.took_from = m.to[pad];
+    const std::vector<int> before = pad_sources(m, game);   // the buttons that pressed `game` until now
+    m.to[pad] = game;
+    if (!pad_sources(m, r.took_from).empty()) return r;     // something else still presses it
+    // a swap: the button that pressed `game` takes over took_from - the game button's own first (the usual case)
+    int q = -1;
+    for (int b : before) if (b == game) q = b;
+    if (q < 0 && !before.empty()) q = before.front();
+    if (q >= 0) { m.to[q] = r.took_from; r.swapped = q; }
+    else r.left_empty = true;
+    return r;
 }
 
 Availability available(const Option& o, Game g, Version ver, const Settings& s, const Environment& env) {
@@ -933,6 +1151,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "PaperWhite" || o.id == "Peak" || o.id == "HdrHighlights") on = s.b("HDR");   // PS1 366; 0.6.2
     else if (o.id == "PadPrompts") on = s.b("Mnk");                                  // GitHub #104
     else if (o.id == "WalkMode") on = s.b("Mnk");                                    // GitHub #125
+    else if (o.id == "TriggerRumble") on = s.b("Vibration");                         // 0.6.3: no rumble, no trigger rumble
     else if (o.id == "AimSens") on = s.b("Mnk") && cap_exe(env, "ue3_mouse_aim_scale");    // 0.5.0: games whose exe knows the camera FOV
     else if (o.id == "ZoomSens") on = s.b("Mnk") && cap_exe(env, "ue3_mouse_zoom_scale");
     else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("AAMode") <= 4 && (s.i("Api") == 0 || env.mac ||   /* r5: a Mac runs DX12 whatever Api says */ (s.i("AAMode") == 2 && fsr_vulkan_on(s, env)));   // PS1 352, 473; job 521; T2x: no scene scale; fsr049: FSR on Vulkan (opt-in)
@@ -1088,19 +1307,6 @@ bool exe_for_update(Game g, Version ver, const Environment& env) {   // PS1 442-
     if (g == Game::Judgment || g == Game::Gears1) return env.update_ready;
     return env.update_ready && ver == Version::TitleUpdate;
 }
-const char* normal_code_exe_name(Game g) {   // cg050
-    switch (g) {
-    case Game::Gears2: return "gow2-normal.exe";
-    case Game::Gears3: return "gow3-normal.exe";
-    case Game::Judgment: return "gowj-normal.exe";
-    default: return "gow1-normal.exe";
-    }
-}
-std::string normal_code_exe(const std::string& exePath) {
-    const size_t dot = exePath.find_last_of('.'), sep = exePath.find_last_of("\\/");
-    if (dot == std::string::npos || (sep != std::string::npos && dot < sep)) return exePath + "-normal";
-    return exePath.substr(0, dot) + "-normal" + exePath.substr(dot);
-}
 
 // ---- Presets (PS1 573-592) ------------------------------------------------------------------------------------------
 void apply_preset(Settings& s, int p) {
@@ -1203,15 +1409,6 @@ std::string main_gpu(const std::vector<std::string>& gpus) {     // PS1 152
     for (const std::string& n : gpus) if (icase_search(n, "NVIDIA|GeForce|Quadro|AMD|Radeon|Intel.*Arc")) return n;
     for (const std::string& n : gpus) if (!n.empty()) return n;
     return "";
-}
-std::string launch_url(Game g, int chapter) {                    // PS1 141-144
-    if (g == Game::Judgment) return std::string(k_mapsGJ[std::max(0, std::min(17, chapter))]) + " -nostartupmovies";
-    if (g == Game::Gears1) {   // the chapter's level file and its start point (the game's chapter select passes it the same way)
-        const int n = int(sizeof(k_gears1Chapters) / sizeof(k_gears1Chapters[0]));
-        const Gears1Chapter& c = k_gears1Chapters[std::max(0, std::min(n - 1, chapter))];
-        return std::string(c.map) + "?LoadChapter=" + std::to_string(c.point);
-    }
-    return "GearGame_P?loadcheckpoint=0?chapter=" + std::to_string(chapter) + " -nostartupmovies";
 }
 
 // ---- Store (PS1 103-123, 418-464, 759-774) --------------------------------------------------------------------------
@@ -1587,11 +1784,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
         // GitHub #98 (Gears 1 "DLSS" runs were DLAA): the scene scale is a whole number of times smaller than the render
         // resolution only for Performance at 2x / 4x and Quality / Ultra performance at 3x; any other pairing (and every
-        // 720p or "1080p" render resolution, both drawn at 1x) runs as native anti-aliasing. Say so before launch. Fixed
-        // scales only - "Match my monitor" picks its scale in the game (its log names the result).
-        if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4 && s.i("Resolution") + 1 != 5) {
-            const int out = scale;
-            const bool fits = (m == 2 && (out == 2 || out == 4)) || ((m == 1 || m == 3) && out == 3);
+        // 720p or "1080p" render resolution, both drawn at 1x) runs as native anti-aliasing. Say so before launch.
+        // #345: "Match my monitor" too, with the scale the game will pick (4K: 3x, so Performance there was DLAA unsaid).
+        if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4) {
+            const int out = expected_render_scale(g, s, env);
+            const bool fits = scene_mode_fits(m, out);
             if (!fits) {
                 static const char* const mname[4] = { "", "Quality", "Performance", "Ultra performance" };
                 notes.push_back(std::string("launcher: Scene resolution ") + mname[m] + " has no whole-number scene size at render "
@@ -1695,6 +1892,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back(sw[gi] + std::to_string(mb));
         }
     }
+    // 0.6.4 (GitHub #341): the host texture cache; Auto = the renderer's 512 MB, 2 GB with a texture pack on. Sent only
+    // when it is not 512 (the renderer's default)
+    if (avail("TexCache")) {
+        static const int k_cacheMb[5] = { 0, 512, 1024, 2048, 4096 };
+        int mb = k_cacheMb[std::max(0, std::min(4, s.i("TexCache")))];
+        // review r1937: 2 GB only on cards with 6 GB or more (or unknown size: 1 GB) - Vulkan stops on a failed texture
+        // allocation, D3D12 slows down
+        if (!mb) mb = !env.texture_pack_mods.empty() && cap_exe(env, "gow2_texture_pack_dirs") ? (env.vram_mb >= 5800 ? 2048 : 1024) : 512;
+        if (mb != 512) a.push_back("--gow2_renderer_texture_cache_mb=" + std::to_string(mb));
+    }
     // PS1 866-867: Gears 3 / Judgment trilinear and fast mip fade (on by default there, so always sent)
     if (isG3) { a.push_back("--gow3_trilinear=" + fmt_bool(s.b("Trilinear"))); a.push_back("--gow3_fast_mip_fade=" + fmt_bool(s.b("MipFade"))); }
     // 0.3.0 (GitHub #54, soldiermxdeath: Monroe Commons' loading screen ends at 30 fps, not at 60): loading screens at 30
@@ -1770,6 +1977,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             else if (isG3) ini.push_back(ei + "|FullScreenMovie|-StartupMovies=Open_Logos");
             else if (isG1) a.push_back("--gow1_skip_logos=true");
             else a.push_back("--gowj_skip_logos=true");
+        }
+        // 0.6.4 Shadow detail: the engine's own minimum and fade-in sizes for per-object shadows and pre-shadows, scaled
+        // (the games' values: Gears 2 64 / 128; Gears 3 and Judgment 64 / 128 and pre-shadows 8 / 16). Missing keys are
+        // left alone (a scale only changes a key the game has).
+        const int sd = std::max(0, std::min(2, s.i("ShadowDetail")));
+        if (avail("ShadowDetail") && sd > 0) {
+            const char* f = sd == 1 ? "2" : "3";
+            for (const char* k : { "MinShadowResolution", "ShadowFadeResolution", "MinPreShadowResolution", "PreShadowFadeResolution" })
+                ini.push_back(ei + "|SystemSettings|" + k + "*=" + f);
+            if (sd == 2) ini.push_back(ei + "|SystemSettings|ShadowTexelsPerPixel*=0.75");
         }
         int dd = std::max(0, std::min(2, s.i("DrawDist")));
         if (avail("DrawDist") && dd > 0) ini.push_back(ei + "|SystemSettings|MaxDrawDistanceScale=" + k_drawScale[dd]);
@@ -1901,6 +2118,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (!s.b("Vibration")) a.push_back("--vibration=false");
     if (on("AdaptiveTriggers")) a.push_back("--pad_adaptive_triggers=true");   // GitHub #245 (greyed: never sent)
+    if (on("TriggerRumble")) a.push_back("--pad_trigger_rumble=true");         // 0.6.3, GitHub #245 (greyed: never sent)
     // GitHub #95 / #97 (SDK patch 55): radial dead zone and controller layout
     if (avail("RadialDZ")) {
         static const double k_radial[6] = { 0, 0.08, 0.12, 0.16, 0.20, 0.25 };
@@ -1908,11 +2126,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (r > 0) a.push_back("--pad_radial_deadzone=" + fmt_double(k_radial[r]));
     }
     if (avail("PadLayout")) {
-        static const char* k_layouts[4] = { "", "sticks=swap", "a=b,b=a", "lb=lt,lt=lb,rb=rt,rt=rb" };
         const int l = std::max(0, std::min(4, s.i("PadLayout")));
-        std::string spec = l < 4 ? k_layouts[l] : env.pad_remap;
-        std::string clean;
-        for (char c : spec) if (std::isalnum(static_cast<unsigned char>(c)) || c == '=' || c == ',') clean += c;
+        const std::string clean = pad_remap_clean(l < 4 ? std::string(pad_layout_preset(l)) : env.pad_remap);   // 0.6.3: shared
         if (!clean.empty()) a.push_back("--pad_remap=" + clean);
     }
     // PS1 911-925 (patches 0133 / 0135 / 0136 / 0152): lower input lag; Reflex / Anti-Lag 2 by the main card's maker
@@ -2175,6 +2390,14 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         std::string j;
         for (const std::string &m : env.mods) j += (j.empty() ? "" : ";") + m;
         a.push_back("--ue3_mods=" + q(j));
+    }
+    // KiltedKernel: texture packs - the enabled mods that hold pack textures, the one loaded last first (it wins, as its
+    // files do); the renderer takes the DDS files named by texture hash in them (layer0_xenos/renderer/texture_pack.cpp).
+    // r95 L1: only those mods, not every enabled one (a long mod list would make the command line too long).
+    if (!env.texture_pack_mods.empty() && cap_exe(env, "gow2_texture_pack_dirs")) {
+        std::string j;
+        for (auto m = env.texture_pack_mods.rbegin(); m != env.texture_pack_mods.rend(); ++m) j += (j.empty() ? "" : ";") + *m;
+        a.push_back("--gow2_texture_pack_dirs=" + q(j));
     }
     // PS1 940-958 (launcher patches 0155 / 0158): frame rate. 0.4.6 (Shagg 5 Nov: "FPS cap needs to be 60"): the cap the
     // player picks is the cap. With vsync, only a cap ABOVE the refresh rate (or Unlimited) is brought down - to the refresh

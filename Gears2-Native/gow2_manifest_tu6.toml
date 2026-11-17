@@ -13,6 +13,8 @@ game_root = "game/tu6/patched"   # TU6 (notes/63): default.xex + default.xexp; t
 [entrypoint]
 file_path = "game/tu6/patched/default.xex"
 out_directory_path = "generated/tu6"
+# SDK patch 110 (game side): the codegen templates in ../Gears2-Native/codegen-templates (see its README).
+template_dir = "../Gears2-Native/codegen-templates"
 includes = []
 # CPU step 2 (notes/60, jobs 219-225; job 223: non_argument_as_local crashes at boot, cr_as_local -10%, the rest ~0): keep these PowerPC registers in host locals inside each function instead of the
 # shared context in memory, so the compiler can hold them in host registers. The XenonRecomp-family options; the

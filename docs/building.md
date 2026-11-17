@@ -29,8 +29,9 @@ From the project folder, in PowerShell:
 Gears 1, 3 and Judgment build on Gears 2's shared code (`Gears2-Native\src\layer0_xenos` and its tools), so keep the
 four project folders side by side as they are here.
 
-The launcher falls back to a second, normal build of a game whose faster build crashes twice in a row:
-`Gears2-Native\cogbox\tools\build_normal_code.ps1` builds all four into `build\<config>-normal\`.
+Each game ships one build, made with the faster recompiler options its manifest turns on. (0.5.0 - 0.6.2 also shipped
+a `<stem>-normal.exe` built without them, as a crash fallback; it and its `tools\build_normal_code.ps1` were removed in
+0.6.3 and are in the git history.)
 
 ## Building the launcher (COGBox)
 
@@ -41,8 +42,11 @@ cd Gears2-Native/cogbox
 SDL3_DIR=/path/to/SDL3-3.4.20/x86_64-w64-mingw32 FFMPEG_DIR=/path/to/ffmpeg-xma ./build.sh
 ```
 
-`tools/build_ffmpeg_xma.sh` builds the small FFmpeg (XMA decoder only, LGPL) the library music uses; without it the
-launcher builds and runs without music. The unit tests in `cogbox/test/` build with plain `g++` (see the first lines of
+`tools/build_ffmpeg_xma.sh` builds the small FFmpeg 9.0.2 (XMA decoder only, LGPL) the library music uses. `FFMPEG_DIR`
+must be that FFmpeg: `build.sh` stops when its headers are another version than the DLLs `licenses/FFmpeg-NOTICE.txt`
+names (0.6.2 shipped a launcher built against FFmpeg 7's headers, and its library was silent), and the packager refuses a
+CogBox.exe whose DLL names do not match the DLLs beside it. `COGBOX_NO_FFMPEG=1` builds a launcher with no music on
+purpose (for tests; it cannot be packaged). The unit tests in `cogbox/test/` build with plain `g++` (see the first lines of
 each test file).
 
 ## Packaging

@@ -9,6 +9,7 @@
 #include <xenos/formats.h>
 #include <xenos/input/prompt_device_monitor.h>
 #include <xenos/renderer/prompt_overlay_compositor.h>
+#include <xenos/renderer/texture_pack.h>
 #include <xenos/texture_layout.h>
 
 #include <rex/cvar.h>
@@ -74,17 +75,33 @@ void RunRows(uint32_t rows, uint32_t cols, Fn&& fn) {
 // loaded on the GPU from the guest-memory mirror keeps the mirror's bytes for pages our own resolve or memexport wrote
 // last (T2), instead of the CPU's. Real DXT data is never a resolve's output, so such a load means the mirror holds a
 // render target where the game now keeps a texture - a CPU / DMA / file write the page watch did not see.
-// --gow2_renderer_bc_gpu_page_log=N logs the first N such loads (base, format, size, pages); off by default.
-// --gow2_renderer_bc_cpu_over_gpu=true takes the CPU bytes for those pages of BC textures (pending memexport readbacks
-// land first); off by default - the 0.4.5 behaviour.
+// --gow2_renderer_bc_gpu_page_log=N logs the first N such loads (base, format, size, pages, and who wrote those pages
+// last: resolve / export / export of part of the page / export draw the backend refused); off by default.
+// --gow2_renderer_bc_cpu_over_gpu takes the CPU bytes for those pages of BC textures (pending memexport readbacks
+// land first). GitHub #315 (0.6.3): "auto", the default, turns it on where those read-backs exist (memexport with its
+// read-back: Gears 3 and Judgment). Why: the mirror's copy of an export is right (the export draw is recorded before
+// the load, and the load's dispatch moves the mirror out of UAV state, which waits for it), so the read-back landed by
+// the switch holds the same bytes; what the switch adds is guest memory where the mirror is older than it for a
+// GPU-current page. WHICH such pages Judgment's campaign hit is not proven (review r80): "destination pages mapped
+// read-only" (green-vine H1) was 0 in all three #315 logs (144722 with the switch, 081000 / 102209 without), so H1 is
+// not it - export_settle is no replacement for this switch. Candidates left: resolve pages reused for texture data
+// through a write the watch missed (#202's reading), and the parts of an exported page the export did not write
+// (unlikely: every logged range was whole pages). Export draws the backend refused are NOT something this switch fixes
+// (review r84): MarkExports still marks their pages, but the read-back copies the same stale mirror bytes into guest
+// memory, so the load gets them either way - a separate bug; the page log counts them ("refused") so a 0.6.3 log shows
+// whether it happens. --gow2_renderer_bc_gpu_page_log=N tells the cases apart. The
+// 0.6.2 #315 run with the switch on: Judgment's campaign clean (34 min), 37 loads waited for a read-back in 324k
+// frames. Gears 1 / 2 (no memexport) keep the mirror's bytes, as before. A read-back over the load that failed keeps
+// the mirror for that load (r80 L6).
 REXCVAR_DEFINE_INT32(gow2_renderer_bc_gpu_page_log, 0, "Gears2",
                      "Diagnostic (#202 / #185): log BC texture loads that keep pages our GPU wrote (resolve / memexport) "
                      "in the mirror, up to N lines (max 500). 0 = off");
-REXCVAR_DEFINE_BOOL(gow2_renderer_bc_cpu_over_gpu, false, "Gears2",
-                    "Experimental (#202): BC textures take the guest CPU bytes even for pages our GPU wrote last "
-                    "(a render target's data is never valid DXT). The pages stay marked GPU-written, so other readers "
-                    "(render-target and 32-bit textures) still take the mirror. false (default) = the mirror's bytes, "
-                    "as 0.4.5");
+REXCVAR_DEFINE_STRING(gow2_renderer_bc_cpu_over_gpu, "auto", "Gears2",
+                      "#202 / #315: BC textures take the guest CPU bytes even for pages our GPU wrote last (pending "
+                      "memexport read-backs over them land first; a render target's data is never valid DXT). The pages "
+                      "stay marked GPU-written. auto (default, 0.6.3) = on when memexport read-backs are on (Gears 3, "
+                      "Judgment), off otherwise; true = always; false = the mirror's bytes (0.4.5 - 0.6.2). Also "
+                      "1 / on / yes and 0 / off / no; an unknown value warns and is auto");
 
 // GitHub #311 / #282 / #255 / #297 (Gears 3: distant floors white or flickering, D3D12 only, AMD) and #315 / #243
 // (Judgment: white surfaces, blue / purple blocks): the D3D12 texture heaps are created not-zeroed and their ranges
@@ -109,14 +126,6 @@ REXCVAR_DEFINE_INT32(gow2_renderer_texture_verify_frames, 0, "Gears2",
                      "guest bytes when it is used at least N frames after its last check, and reload it if they changed "
                      "unseen. 0 = off (default). Costs CPU time; try 30");
 
-// GitHub #131 diagnostic (Judgment corruption on Vulkan / Proton, AMD): each distinct binding - guest base, guest
-// format, dimension, size, tiling, fetch swizzle and signs, and the host format, view components, signed view, load
-// path and host bytes it was given - logged once, up to N lines, so the same asset can be compared between D3D12 on
-// Windows and Vulkan under Proton. 0 = off (the default); capped at 4000 lines. Logging only: nothing is changed.
-REXCVAR_DEFINE_INT32(gow2_renderer_texture_view_log, 0, "Gears2",
-                     "Diagnostic (GitHub #131): log each distinct texture binding once (guest base / format / size / "
-                     "swizzle -> host format / view components / load path), up to N lines (max 4000). 0 = off");
-
 // Job 620 (GitHub #41 - keyboard button prompts): replace a guest texture by the XXH3 of its base-level guest bytes.
 REXCVAR_DEFINE_STRING(gow2_texture_replace_dir, "", "Gears2",
                       "Folder of replacement textures (job 620): <hash16>_<level>.bin = that level's host-format data "
@@ -134,6 +143,18 @@ REXCVAR_DEFINE_STRING(gow2_texture_dump_dir, "", "Gears2",
                       "BC blocks or texel rows) - to find texture atlases such as button prompts. Empty = off");
 REXCVAR_DEFINE_STRING(gow2_texture_dump_sizes, "128x128,256x256,512x512,1024x1024,512x256,256x512,1024x512,512x1024",
                       "Gears2", "Sizes --gow2_texture_dump_dir writes (WxH, comma-separated; 'all' = every size from 32x32 up)");
+
+// Texture packs (KiltedKernel; xenos/renderer/texture_pack.h): folders of DDS files named by the content hash of the
+// guest texture each replaces - the ReXGlue hash (ComputeRexTextureHash), so the Gears of War 2 PC port's packs load
+// unchanged. The launcher passes the enabled mods' texture folders here, the mod loaded last first.
+REXCVAR_DEFINE_STRING(gow2_texture_pack_dirs, "", "Gears2",
+                      "Texture packs: folders separated by ';' (the first that has a texture wins), searched for "
+                      "<hash16>[_...].dds files (a pack's <TITLEID>\\replace folder works as is). A replacement is the "
+                      "original's size or a whole multiple of it (up to 8x) with its mip levels, in BC1-5, BC7, R8, R8G8 "
+                      "or R8G8B8A8 / B8G8R8A8. 2D textures only. Empty = off");
+REXCVAR_DEFINE_STRING(gow2_texture_pack_dump_dir, "", "Gears2",
+                      "Texture-pack makers: write each new 2D texture the game draws once, as <dir>/<hash16>_<format>_"
+                      "<W>x<H>.dds (its top level, named by the hash packs use; render targets left out). Empty = off");
 
 namespace {
 std::atomic<uint64_t> g_overlay_gen{1};
@@ -154,6 +175,13 @@ struct TexSwap {
   bool dump_all = false;                    // job 628: --gow2_texture_dump_sizes=all
   std::unordered_set<uint64_t> dumped;
   uint32_t dump_count = 0, replaced = 0;
+  ::xenos::renderer::texpack::PackIndex packs;  // texture packs: hash -> DDS file
+  std::string pack_dump_dir;
+  std::filesystem::path pack_dump_path;  // r95 H1: pack_dump_dir read as UTF-8
+  // pack_refused: hashes whose refusal was logged; pack_bad (r95 M1): hashes whose file cannot be used for a reason that
+  // does not change (unreadable, wrong size / mips, too big) - not read again
+  std::unordered_set<uint64_t> pack_dumped, pack_refused, pack_bad;
+  uint32_t pack_dump_count = 0, pack_loaded = 0;
   void Init() {
     std::lock_guard<std::mutex> lock(mutex);
     if (init) return;
@@ -205,11 +233,32 @@ struct TexSwap {
       }
       REXLOG_INFO("gow2_texture_dump: textures of {} to {}", dump_all ? std::string("every size") : std::to_string(dump_sizes.size()) + " size(s)", dump_dir);
     }
-    static_on.store(!replace.empty() || !overlay.empty() || !dump_sizes.empty() || dump_all, std::memory_order_release);
+    try {  // r95 H1: Build does not throw; this is the last line of defence - a bad folder never takes the game down
+      packs.Build(REXCVAR_GET(gow2_texture_pack_dirs));
+    } catch (const std::exception& ex) {
+      REXLOG_ERROR("gow2_texture_pack: reading the pack folders failed ({}) - {} texture(s) kept", ex.what(), packs.size());
+    }
+    for (const std::string& err : packs.errors()) REXLOG_WARN("gow2_texture_pack: {}", err);
+    for (const auto& [folder, n] : packs.folders())  // (the launcher passes the enabled mods that have a pack)
+      if (n) REXLOG_INFO("gow2_texture_pack: {} texture(s) from {}", n, folder);
+    if (!packs.empty()) REXLOG_INFO("gow2_texture_pack: {} texture(s) in all", packs.size());
+    pack_dump_dir = REXCVAR_GET(gow2_texture_pack_dump_dir);
+    if (!pack_dump_dir.empty()) {
+      pack_dump_path = ::xenos::renderer::texpack::PathFromUtf8(pack_dump_dir);
+      std::filesystem::create_directories(pack_dump_path, ec);
+      REXLOG_INFO("gow2_texture_pack: dumping to {}", pack_dump_dir);
+    }
+    static_on.store(!replace.empty() || !overlay.empty() || !dump_sizes.empty() || dump_all || !packs.empty() ||
+                        !pack_dump_dir.empty(),
+                    std::memory_order_release);
   }
   bool Dumps(uint32_t w, uint32_t h) const { return dump_all ? (w >= 32 && h >= 32) : dump_sizes.count((w << 16) | h) != 0; }
   // PR117 fix: no lock on the hot path. Entries already carrying an overlay stay candidates through their own flags.
   bool On() const { return static_on.load(std::memory_order_acquire) || dyn_on.load(std::memory_order_acquire); }
+  const std::filesystem::path* FindPack(uint64_t h) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return packs.Find(h);
+  }
   bool HasReplace(uint64_t h) const {
     std::lock_guard<std::mutex> lock(mutex);
     return replace.count(h) != 0;
@@ -600,7 +649,24 @@ void ClearDynamicOverlays() {
   g_overlay_gen.fetch_add(1, std::memory_order_acq_rel);
 }
 
-uint64_t BumpOverlayGeneration() { return g_overlay_gen.fetch_add(1, std::memory_order_acq_rel) + 1; }
+void SetTexturePacksForTests(const std::string& pack_dirs, const std::string& pack_dump_dir) {
+  g_swap.Init();
+  std::lock_guard<std::mutex> lock(g_swap.mutex);
+  g_swap.packs = texpack::PackIndex{};
+  g_swap.packs.Build(pack_dirs);
+  g_swap.pack_dump_dir = pack_dump_dir;
+  g_swap.pack_dump_path = texpack::PathFromUtf8(pack_dump_dir);
+  std::error_code ec;
+  if (!pack_dump_dir.empty()) std::filesystem::create_directories(g_swap.pack_dump_path, ec);
+  g_swap.pack_dumped.clear();
+  g_swap.pack_refused.clear();
+  g_swap.pack_bad.clear();
+  g_swap.pack_dump_count = 0;
+  g_swap.pack_loaded = 0;
+  g_swap.static_on.store(!g_swap.replace.empty() || !g_swap.overlay.empty() || !g_swap.dump_sizes.empty() || g_swap.dump_all ||
+                             !g_swap.packs.empty() || !g_swap.pack_dump_dir.empty(),
+                         std::memory_order_release);
+}
 
 uint64_t OverlayGeneration() { return g_overlay_gen.load(std::memory_order_acquire); }
 
@@ -779,28 +845,6 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
       for (uint32_t i = 0; i < 4; ++i) v.components[i] = comp[i];
       v.signed_view = any_signed;
       ++stats_.bound;
-      if (const int32_t view_log = REXCVAR_GET(gow2_renderer_texture_view_log); view_log > 0) {  // GitHub #131
-        static std::mutex m;
-        static std::unordered_set<uint64_t> seen;
-        static uint32_t lines = 0;
-        const uint32_t cap = uint32_t(std::min(view_log, 4000));
-        const uint64_t sig = (uint64_t(tf[1] & 0xFFFFF03Fu) << 32) ^ (uint64_t(tf[2]) << 7) ^ (uint64_t(swz) << 1) ^
-                             (uint64_t(kind) << 60) ^ (uint64_t(Bits(tf[0], 2, 8)) << 50) ^ uint64_t(tf[0] >> 31);
-        std::lock_guard<std::mutex> lock(m);
-        if (lines < cap && seen.insert(sig).second) {
-          ++lines;
-          const uint32_t w = Bits(tf[2], 0, 13) + 1, h = Bits(tf[2], 13, 13) + 1;
-          REXLOG_INFO("gow2_texture_view: frame {} kind {} base {:08X} (+{:X}) mips {:08X} | guest fmt {} endian {} {}x{} "
-                      "dim {} tiled {} swizzle {:03X} signs {:02X} | host fmt {} view {}{}{}{}{} | {} {} bytes, "
-                      "loaded frame {}{}",
-                      frame, kind, e.base_start, e.base_length, e.mip_start, Bits(tf[1], 0, 6), Bits(tf[1], 6, 2), w, h,
-                      Bits(tf[5], 9, 2), Bits(tf[0], 31, 1), swz, Bits(tf[0], 2, 8),
-                      uint32_t(e.format), uint32_t(comp[0]), uint32_t(comp[1]), uint32_t(comp[2]), uint32_t(comp[3]),
-                      any_signed ? " signed" : "", e.gpu_storage ? "GPU untile" : "CPU", e.host_bytes,
-                      e.loaded_frame == ~0ull ? -1ll : (long long)e.loaded_frame,
-                      lines == cap ? " (gow2_renderer_texture_view_log: limit reached)" : "");
-        }
-      }
     }
     // Remember the result; a re-upload inside Lookup bumps nothing in the watch, so the epoch read before is valid.
     sc.valid = true;
@@ -832,6 +876,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   // longer overlaps dword 5 bit 9 (the dimension).
   const uint64_t b = (uint64_t(tf[2]) << 32) | (tf[5] & 0xFFFFFE00u) | ((tf[4] & 0x3C0u) >> 4) | host_kind;
   const Key key{a, b};
+  frame_now_ = frame;  // 0.6.4 (#341): ReleasePack's LRU stamp
   // Job 284 diagnostic: hash a probed texture's bytes at every load (any frame), log lookups inside the frame window.
   const bool probe_base = !probe_bases_.empty() && Probed(tf, ~0ull);
   const bool probe = probe_base && Probed(tf, frame);
@@ -860,7 +905,6 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
     e->loaded_frame = frame;
     e->freed_at_load = freed_total_;  // patch 0149
     if (probe_base) e->probe_load_hash = GuestHash(*e);
-    if (load_log_frame_ && frame == load_log_frame_) LogLoad(*e, tf, frame, "new");
     if (e->texture) {
       ++stats_.textures;
       stats_.host_bytes += e->host_bytes;
@@ -909,7 +953,6 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
       e.checked_frame = frame;
       e.callbacks_at_check = epoch_before;
       if (probe_base) e.probe_load_hash = GuestHash(e);
-      if (load_log_frame_ && frame == load_log_frame_) LogLoad(e, tf, frame, "reload: overlay generation changed");
       return done(e, "reload: overlay generation changed");
     }
     e.overlay_gen = ov_gen;
@@ -972,7 +1015,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   watch_.Watch(e.base_start, e.base_length);
   if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
   const uint64_t gpu_pages0 = stats_.gpu_pages_changed, volatile0 = stats_.volatile_reloads;
-  if (!always_reload_ && !PagesChanged(e)) {
+  if (!PagesChanged(e)) {
     e.version = rearmed;
     ++stats_.content_unchanged;
     return done(e, "hit: pages written, bytes hashed unchanged");
@@ -1004,7 +1047,6 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   else if (stats_.volatile_reloads != volatile0) ++stats_.reload_volatile;
   else ++stats_.reload_cpu;
   stats_.reload_bytes += uint64_t(e.base_length) + e.mip_length;
-  if (load_log_frame_ && frame == load_log_frame_) LogLoad(e, tf, frame, why);
   return done(e, why);
 }
 
@@ -1040,14 +1082,6 @@ void TextureCache::Probe(const Entry& e, const uint32_t* tf, uint64_t frame, con
   }
 }
 
-void TextureCache::LogLoad(const Entry& e, const uint32_t* tf, uint64_t frame, const char* reason) {
-  const uint32_t w = (tf[2] & 0x1FFFu) + 1, h = ((tf[2] >> 13) & 0x1FFFu) + 1;
-  REXLOG_INFO("gow2_renderer: texture load frame {}: {} | base {:08X} (+{:X}) mips {:08X} (+{:X}) format {} {}x{} dim {} "
-              "tiled {} | host {} bytes{}",
-              frame, reason, e.base_start, e.base_length, e.mip_start, e.mip_length, tf[1] & 0x3Fu, w, h,
-              (tf[5] >> 9) & 3u, tf[0] >> 31, e.host_bytes, e.gpu_storage ? " | GPU untile" : " | CPU");
-}
-
 TextureCache::Entry* TextureCache::LookupScaled(const uint32_t* tf) {
   const uint32_t format = Bits(tf[1], 0, 6), endian = Bits(tf[1], 6, 2);
   const uint32_t dim = Bits(tf[5], 9, 2);
@@ -1055,48 +1089,23 @@ TextureCache::Entry* TextureCache::LookupScaled(const uint32_t* tf) {
   const uint32_t base = Bits(tf[1], 12, 20) << 12, mip_base = Bits(tf[5], 12, 20) << 12;
   const uint32_t w = Bits(tf[2], 0, 13) + 1, h = Bits(tf[2], 13, 13) + 1;
   const uint32_t pitch_div_32 = Bits(tf[0], 22, 9);
-  // Job 189 diagnostic: why a texture our resolves wrote (any page GPU-current) is not taken at the scale.
-  auto miss = [&](const char* why) -> Entry* {
-    if (!scaled_miss_log_ || !base) return nullptr;  // job 227: the page walk below is the cost; off by default
-    const uint32_t len = std::max<uint32_t>(pitch_div_32 * 32u, w) * h * 4u;
-    bool ours = false;
-    for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + std::max(len, 1u) - 1) >> GuestWatch::kPageShift && !ours; ++p)
-      ours = watch_.GpuCurrent(p);
-    if (ours) {
-      char b[300];
-      std::snprintf(b, sizeof(b), "%s: base %08X fmt %u %ux%u pitch %u dim %u tiled %u mips %u", why, base, format, w, h,
-                    pitch_div_32 * 32u, dim, tiled ? 1u : 0u, mip_base ? Bits(tf[4], 6, 4) : 0u);
-      ++stats_.scaled_misses[b];
-    }
-    return nullptr;
-  };
-  if (dim != 1 || stacked || !base) return miss("not a single 2D");
-  if (mip_base && Bits(tf[4], 6, 4) != 0) return miss("mip chain");  // not a single resolved level
+  if (dim != 1 || stacked || !base) return nullptr;  // not a single 2D
+  if (mip_base && Bits(tf[4], 6, 4) != 0) return nullptr;  // a mip chain, not a single resolved level
   const HostFormat hf = Host(format);
   const bool depth_convert = hf.convert == Convert::kDepthUnorm || hf.convert == Convert::kDepthFloat;
-  if (!(hf.convert == Convert::kCopy || depth_convert) || hf.block_compressed) return miss("format conversion");
+  if (!(hf.convert == Convert::kCopy || depth_convert) || hf.block_compressed) return nullptr;  // format conversion
   const uint32_t code = hf.convert == Convert::kDepthUnorm ? 14u : hf.convert == Convert::kDepthFloat ? 15u
                                                                                                      : UntileCode(hf.format);
-  if (!code || code == 12u) return miss("no GPU load code");
+  if (!code || code == 12u) return nullptr;  // no GPU load code
   const tx::FormatBlock& fb = tx::GetFormatBlock(format);
   const uint32_t bpb = fb.bytes_per_block();
-  if ((bpb != 4 && bpb != 8) || fb.block_width != 1 || fb.block_height != 1) return miss("not 32/64 bpp");
+  if ((bpb != 4 && bpb != 8) || fb.block_width != 1 || fb.block_height != 1) return nullptr;  // not 32/64 bpp
   const tx::GuestLayout layout =
       tx::GetGuestLayout(tx::Dimension::k2DOrStacked, pitch_div_32, w, h, 1, tiled, format, packed, true, 0);
   const uint32_t bpb_log2 = tx::Log2Floor(bpb);
   const uint32_t pitch = layout.base.row_pitch_bytes / bpb;
   ScaledSource src;
-  if (!scaled_lookup_(base, std::max(layout.base.level_data_extent_bytes, 1u), src) || !src.words) {
-    static const char* kWhy[] = {"no scaled source", "no scaled-memory window holds the extent", "?", "?",
-                                 "pages not scaled-current"};
-    if (src.reason == 4) {
-      char why[128];
-      std::snprintf(why, sizeof(why), "pages not scaled-current (scaled %u, unscaled GPU %u, other %u, first at +%X)",
-                    src.pages_scaled, src.pages_gpu, src.pages_other, src.first_bad);
-      return miss(why);
-    }
-    return miss(kWhy[src.reason < 5 ? src.reason : 0]);
-  }
+  if (!scaled_lookup_(base, std::max(layout.base.level_data_extent_bytes, 1u), src) || !src.words) return nullptr;
   const Key key{(uint64_t(tf[0] & 0xFFC00000u) << 32) | (tf[1] & 0xFFFFF4FFu),
                 (uint64_t(tf[2]) << 32) | (tf[5] & 0xFFFFFE00u) | 8u};
   auto it = scaled_entries_.find(key);
@@ -1334,17 +1343,43 @@ void TextureCache::EndFrame(uint64_t frame) {
       scaled_evicted_total_ += dropped;
     }
   }
-  if (!cap_bytes_ || stats_.host_bytes <= cap_bytes_) return;
+  // 0.6.4 (#341): texture pack counters, when they move (at most every 30 s)
+  if ((frame % 1800u) == 0 && (pack_reads_ != pack_logged_reads_ || pack_reuses_ != pack_logged_reuses_) &&
+      (pack_reads_ || pack_reuses_)) {
+    pack_logged_reads_ = pack_reads_;
+    pack_logged_reuses_ = pack_reuses_;
+    uint64_t kept = 0, kept_bytes = 0;
+    for (const auto& [_, sh] : pack_shared_) if (!sh.refs) { ++kept; kept_bytes += sh.bytes; }
+    REXLOG_INFO("gow2_texture_pack: frame {}: {} file(s) read, {} reuse(s) without a read, {} shared texture(s) ({} "
+                "unused, {} MB), {} freed | cache {} of {} MB",
+                frame, pack_reads_, pack_reuses_, pack_shared_.size(), kept, kept_bytes >> 20, pack_freed_,
+                stats_.host_bytes >> 20, cap_bytes_ >> 20);
+  }
+  if (!cap_bytes_) {  // review r1938: no cap - pack textures nothing shows are freed at once (as before sharing)
+    FreeUnusedPacks(0);
+    return;
+  }
+  if (stats_.host_bytes <= cap_bytes_) return;
+  const uint64_t target = cap_bytes_ / 10 * 9;
+  FreeUnusedPacks(target);  // 0.6.4 (#341): pack textures nothing shows go first
+  if (stats_.host_bytes <= target) return;
   std::vector<std::pair<uint64_t, const Key*>> old;
   for (const auto& [key, e] : entries_)
     if (e->texture && e->last_used + 1 < frame) old.push_back({e->last_used, &key});
   std::sort(old.begin(), old.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
-  const uint64_t target = cap_bytes_ / 10 * 9;
   std::vector<Key> evict;
   uint64_t bytes = stats_.host_bytes;
+  std::unordered_map<uint64_t, uint32_t> refs_left;  // a shared pack texture is freed with its last entry
   for (const auto& [used, key] : old) {
     if (bytes <= target) break;
-    bytes -= entries_.at(*key)->TotalHostBytes();
+    const Entry& oe = *entries_.at(*key);
+    if (oe.pack_shared) {
+      auto sh = pack_shared_.find(oe.pack_hash);
+      auto r = refs_left.try_emplace(oe.pack_hash, sh != pack_shared_.end() ? sh->second.refs : 0u).first;
+      if (r->second && --r->second == 0 && sh != pack_shared_.end()) bytes -= std::min(bytes, sh->second.bytes);
+    } else {
+      bytes -= std::min(bytes, oe.TotalHostBytes());
+    }
     evict.push_back(*key);
   }
   if (evict.empty()) return;
@@ -1361,7 +1396,11 @@ void TextureCache::EndFrame(uint64_t frame) {
         ++freed_total_;
       }
       e.overlay_variants.clear();
+      if (e.pack_shared) ReleasePack(e);  // review r1938 (cannot happen now: LoadFromPack clears variants) - kept safe
       e.texture = 0;
+    } else if (e.pack_shared) {  // 0.6.4 (#341): its shared pack texture is freed below once no entry uses it
+      ReleasePack(e);
+      if (stats_.textures) --stats_.textures;
     } else {
       backend_.DestroyTexture(e.texture);  // deferred by the backend until our GPU is past it
       stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
@@ -1380,7 +1419,38 @@ void TextureCache::EndFrame(uint64_t frame) {
     }
     entries_.erase(it);
   }
+  FreeUnusedPacks(target);  // 0.6.4 (#341): the shared pack textures those entries were the last users of
   for (SlotCache& sc : slot_cache_) sc.valid = false;  // they may point at evicted entries
+}
+
+void TextureCache::ReleasePack(Entry& e) {
+  auto sh = pack_shared_.find(e.pack_hash);
+  if (sh != pack_shared_.end() && sh->second.texture == e.texture) {
+    if (sh->second.refs) --sh->second.refs;
+    sh->second.last_used = frame_now_;
+  } else if (e.texture) {
+    backend_.DestroyTexture(e.texture);  // (not the shared one: cannot happen - kept safe)
+  }
+  e.texture = 0;
+  e.pack_shared = false;
+  e.pack_complete = false;
+}
+
+void TextureCache::FreeUnusedPacks(uint64_t target) {
+  std::vector<std::pair<uint64_t, uint64_t>> unused;  // (last used, hash)
+  for (const auto& [hash, sh] : pack_shared_) if (!sh.refs) unused.push_back({sh.last_used, hash});
+  if (unused.empty()) return;
+  std::sort(unused.begin(), unused.end());
+  for (const auto& [used, hash] : unused) {
+    if (target && stats_.host_bytes <= target) break;
+    auto sh = pack_shared_.find(hash);
+    backend_.DestroyTexture(sh->second.texture);  // deferred by the backend until our GPU is past it
+    stats_.host_bytes -= std::min(stats_.host_bytes, sh->second.bytes);
+    stats_.evicted_bytes += sh->second.bytes;
+    ++freed_total_;  // patch 0149
+    ++pack_freed_;
+    pack_shared_.erase(sh);
+  }
 }
 
 // 0.6.2 (GitHub #311): a load that did not complete - the backend dropped a dispatch, copy or upload (D3D12: no command
@@ -1389,6 +1459,7 @@ void TextureCache::EndFrame(uint64_t frame) {
 // D3D12 the previous tenant of a not-zeroed heap range.
 void TextureCache::FailLoad(Entry& e, gpu::TextureHandle tex, bool created, const char* why) {
   e.load_failed = true;
+  e.pack_complete = false;  // texture packs (r95 M1): the next load uploads the file again
   ++stats_.load_failures;
   // Pages already copied to the guest-memory mirror by this load may have been dropped with it: copy them all again.
   e.copied_pages[0].clear();
@@ -1484,7 +1555,8 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   g_swap.Init();
   const uint64_t current_ov_gen = OverlayGeneration();
   uint64_t swap_hash = 0, rex_hash = 0, matched_hash = 0;
-  bool swap_replace = false, swap_dump = false;
+  bool swap_replace = false, swap_dump = false, pack_dump = false;
+  const std::filesystem::path* pack_file = nullptr;  // texture packs
   std::shared_ptr<const std::vector<uint8_t>> swap_overlay_holder;
   const std::vector<uint8_t>* swap_overlay = nullptr;  // job 629
   if ((g_swap.On() || e.has_overlay || e.ov_scale > 1 || !e.overlay_variants.empty()) &&
@@ -1521,6 +1593,26 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     }
     swap_dump = !g_swap.dump_dir.empty() && g_swap.Dumps(w, h) && g_swap.dump_count < 4000 &&
                 g_swap.dumped.insert(swap_hash).second;
+    // Texture packs: a file for this content (not over a prompt overlay or a job-620 replacement), and dumps for pack
+    // makers (not render targets: pages our GPU wrote hold resolves, which change)
+    if (!swap_replace && !swap_overlay) {
+      // r95 M2: not where our GPU wrote the current content (a resolve or memexport, as #315's GpuCurrent tells it):
+      // the CPU bytes hashed above are then stale and may still be those of a texture a pack replaces (pool reuse).
+      // GpuCurrent, not NeverResolved: pages reused later for CPU-loaded textures still get their pack files.
+      bool gpu_now = false;
+      const uint32_t len = std::max(layout.base.level_data_extent_bytes, 1u);
+      for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + len - 1) >> GuestWatch::kPageShift && !gpu_now; ++p)
+        gpu_now = watch_.GpuCurrent(p);
+      if (!gpu_now) pack_file = g_swap.FindPack(rex_hash);
+    }
+    if (!g_swap.pack_dump_dir.empty() && !pack_file && g_swap.pack_dump_count < 50000 &&
+        !g_swap.pack_dumped.count(rex_hash) && w >= 4 && h >= 4) {
+      bool resolved = false;
+      const uint32_t len = std::max(layout.base.level_data_extent_bytes, 1u);
+      for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + len - 1) >> GuestWatch::kPageShift && !resolved; ++p)
+        resolved = !watch_.NeverResolved(p);
+      if (!resolved) pack_dump = g_swap.pack_dumped.insert(rex_hash).second;
+    }
   }
   if (swap_hash) {  // PR117 fix: remember what this content is, so a generation bump needs no rehash to skip it
     e.swap_checked = true;
@@ -1529,12 +1621,19 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     e.swap_checked = false;
     e.prompt_known = false;
   }
+  if (pack_file) {  // texture packs: the pack's file in place of the guest texture, when it fits
+    const uint32_t mip_start = layout.packed_level == 0 && (mip_base || tail_at_base) ? base : mip_base;
+    const uint32_t mip_length = mips > 1 ? std::max(layout.mips_total_extent_bytes, 1u) : 0;
+    if (LoadFromPack(e, tf, *pack_file, rex_hash, w, h, mips, base,
+                     std::max(layout.base.level_data_extent_bytes, 1u), mip_start, mip_length))
+      return;
+  }
   const uint32_t ov_scale = swap_overlay ? OverlayScale(*swap_overlay, w, h) : 1u;  // job 661
   const bool is_prompt_or_overlay =
       swap_overlay != nullptr || !e.overlay_variants.empty() ||
       (swap_hash != 0 && (prompt::IsPromptAtlasOrAlias(swap_hash) || prompt::IsPromptAtlasOrAlias(rex_hash)));
   // job 661: a host texture made bigger for an overlay always reloads on the CPU path (the GPU loads write guest size)
-  const bool swap_cpu = swap_replace || swap_dump || swap_overlay || ov_scale > 1 || is_prompt_or_overlay;
+  const bool swap_cpu = swap_replace || swap_dump || pack_dump || swap_overlay || ov_scale > 1 || is_prompt_or_overlay;
   const bool replacing_existing = e.texture != 0;
   const bool cache_overlay_variants =
       !swap_replace && format == 20 && gd == tx::Dimension::k2DOrStacked && layers == 1 && host_kind == 0 &&
@@ -1604,28 +1703,8 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         layers == 6 && hf.host_bytes == 4));
   // Recreate the host texture when an existing slot changes overlay scale (e.g. 1x <-> 4x prompt atlas) or needs UAV
   // storage it was not created with.
-  if (e.texture && (e.ov_scale != ov_scale || (gpu && !e.gpu_storage))) {
-    for (auto v = e.overlay_variants.begin(); v != e.overlay_variants.end();) {  // PR117 fix: no double destroy
-      if (v->second.texture == e.texture) v = e.overlay_variants.erase(v); else ++v;
-    }
-    backend_.DestroyTexture(e.texture);
-    e.texture = 0;
-    stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
-    e.host_bytes = 0;
-    if (stats_.textures) --stats_.textures;
-    if (e.through_indexed) {
-      auto [a, b] = through_.equal_range(e.through_base);
-      for (auto t = a; t != b; ++t) {
-        if (t->second == &e) {
-          through_.erase(t);
-          break;
-        }
-      }
-      e.through_indexed = false;
-      e.through_ok = false;
-    }
-    for (SlotCache& sc : slot_cache_) sc.valid = false;
-  }
+  // (texture packs: a host texture made from a pack's file has the file's shape - made again for the guest's own)
+  if (e.texture && (e.ov_scale != ov_scale || (gpu && !e.gpu_storage) || e.pack_hash)) DestroyHost(e);
   // Host texture (created once; re-loads write into it).
   bool created_texture = false;  // 0.6.2 (#311): made by this Load (nothing valid in it yet)
   if (!e.texture) {
@@ -1717,8 +1796,10 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     // untile each level there.
     const uint32_t starts[2] = {e.base_start, e.mip_start}, lengths[2] = {e.base_length, e.mip_length};
     const bool is_bc = fb.block_width > 1;  // #202: block-compressed
-    const bool bc_cpu = is_bc && REXCVAR_GET(gow2_renderer_bc_cpu_over_gpu);
-    uint32_t gpu_pages_seen = 0;
+    bool bc_cpu = is_bc && bc_guest_over_mirror_;  // #315: SetBcGuestOverMirror (--gow2_renderer_bc_cpu_over_gpu)
+    uint32_t gpu_pages_seen = 0, guest_pages = 0, page_kinds[5] = {};  // #315: resolve, export, partial, refused, unknown
+    bool readback_failed = false;  // r80 L6
+    const bool kinds_on = is_bc && gpu_page_origin_ && REXCVAR_GET(gow2_renderer_bc_gpu_page_log) > 0;
     if (bc_cpu && before_cpu_load_) {  // pending memexport readbacks land first - only if a page is GPU-written
       bool any = false;
       for (uint32_t r = 0; r < 2 && !any; ++r)
@@ -1726,9 +1807,14 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           for (uint32_t p = starts[r] >> GuestWatch::kPageShift;
                p <= (starts[r] + lengths[r] - 1) >> GuestWatch::kPageShift && !any; ++p)
             any = watch_.GpuCurrent(p);
-      if (any)
+      if (any) {
         for (uint32_t r = 0; r < 2; ++r)
-          if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);
+          if (lengths[r] && !before_cpu_load_(starts[r], lengths[r])) readback_failed = true;
+        if (readback_failed) {  // r80 L6: guest memory lacks the export there - keep the mirror, as with the switch off
+          bc_cpu = false;
+          ++stats_.bc_guest_failed_loads;
+        }
+      }
     }
     for (uint32_t r = 0; r < 2; ++r) {
       if (!lengths[r]) continue;
@@ -1750,7 +1836,10 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           // page that stopped being GPU-current without a CPU write (an exact-range callback: file read next to it,
           // protect-to-writable, decommit, release) while its memexport read-back is still pending holds the
           // PRE-export bytes in guest memory - land that read-back first (no-op without an overlapping one).
-          if (run_ever_gpu && flush_ever_gpu_ && before_cpu_load_) before_cpu_load_(a, b - a);
+          if (run_ever_gpu && flush_ever_gpu_ && before_cpu_load_) {
+            ++stats_.land_export_calls;  // #315
+            before_cpu_load_(a, b - a);
+          }
           backend_.UploadGuestMemory(a, guest_ + a, b - a);
           stats_.gpu_load_bytes += b - a;
         }
@@ -1763,18 +1852,32 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           pv[p - first] = v;
           const bool gpu_page = watch_.GpuCurrent(p);
           if (gpu_page) ++gpu_pages_seen;
+          if (gpu_page && kinds_on) {
+            const uint8_t o = gpu_page_origin_(p);
+            ++page_kinds[o & kGpuPageExportRefused ? 3
+                         : o & kGpuPageExportPartial ? 2
+                         : o & kGpuPageExport ? 1
+                         : o & kGpuPageResolve ? 0 : 4];
+          }
+          if (gpu_page && bc_cpu) ++guest_pages;  // #315: guest bytes go over the mirror's for this page
           if (gpu_page && !bc_cpu) {  // T2: our resolve wrote this page into the mirror; the CPU bytes are older
             flush(p);
             ++stats_.gpu_pages_kept;
             continue;
           }
           if (run == UINT32_MAX) run = p;
-          if (!watch_.NeverResolved(p)) run_ever_gpu = true;
+          // r80 M2: only pages no longer GPU-current take the H2 path (and its counter); bc_cpu's GPU-current pages
+          // already landed their read-backs above.
+          if (!gpu_page && !watch_.NeverResolved(p)) run_ever_gpu = true;
         } else {
           flush(p);
         }
       }
       flush(last + 1);
+    }
+    if (guest_pages) {  // #315 (r80 L3: loads counted from the pages)
+      stats_.bc_guest_pages += guest_pages;
+      ++stats_.bc_guest_loads;
     }
     if (is_bc && gpu_pages_seen) {  // #202 diagnostic
       const int32_t max = std::min(REXCVAR_GET(gow2_renderer_bc_gpu_page_log), 500);
@@ -1783,9 +1886,12 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         const int32_t n = logged.fetch_add(1);
         if (n < max)
           REXLOG_INFO("gow2_bc_gpu_pages: BC texture base {:08X} (+{:X}) mips {:08X} (+{:X}) format {} {}x{}: {} page(s) "
-                      "last written by our GPU (resolve / memexport) - {}{}",
+                      "last written by our GPU (resolve {}, export {}, export of part of the page {}, export draw "
+                      "refused {}, unknown {}) - {}{}{}",
                       e.base_start, e.base_length, e.mip_start, e.mip_length, format, w, h, gpu_pages_seen,
+                      page_kinds[0], page_kinds[1], page_kinds[2], page_kinds[3], page_kinds[4],
                       bc_cpu ? "re-copied from guest memory (bc_cpu_over_gpu)" : "kept from the mirror",
+                      readback_failed ? " (a memexport read-back over it failed)" : "",
                       n + 1 == max ? " - last line (gow2_renderer_bc_gpu_page_log)" : "");
       }
     }
@@ -1901,6 +2007,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     // Green-vine review: also when the pages are no longer GPU-current but our GPU wrote them at some time - an
     // exact-range callback can end GPU-current before the export's read-back has landed.
     if ((any || (ever && flush_ever_gpu_)) && before_cpu_load_) {
+      if (!any) ++stats_.land_export_calls;  // #315: only because the pages were GPU-written once
       // Job 042: pending memexport readbacks over these pages land in guest memory now, before the bytes are read.
       for (uint32_t r = 0; r < 2; ++r)
         if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);
@@ -2050,6 +2157,16 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         f.write(reinterpret_cast<const char*>(scratch_.data()), std::streamsize(scratch_.size()));
         ++g_swap.dump_count;
       }
+      if (pack_dump && level == 0 && u == 0) {  // texture packs: the base level as DDS, named by the pack hash
+        const std::vector<uint8_t> dds = texpack::WriteDds(hf.format, w, h, scratch_.data(), scratch_.size());
+        if (!dds.empty()) {
+          char leaf[64];
+          std::snprintf(leaf, sizeof(leaf), "%016llX_%u_%ux%u.dds", static_cast<unsigned long long>(rex_hash), format, w, h);
+          std::ofstream f{g_swap.pack_dump_path / leaf, std::ios::binary};
+          f.write(reinterpret_cast<const char*>(dds.data()), std::streamsize(dds.size()));
+          ++g_swap.pack_dump_count;
+        }
+      }
       uint32_t up_row_bytes = row_bytes, up_rows = host_h;  // job 661: a bigger host texture gets bigger levels
       const uint64_t active_hash = matched_hash ? matched_hash : swap_hash;
       if (e.ov_scale > 1 && hf.block_compressed && bpb == 16 && !host_3d && u == 0) {
@@ -2090,6 +2207,167 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   ++stats_.uploads;
   if (backend_.TextureLoadDrops() != drops_at_start)  // 0.6.2 (#311)
     FailLoad(e, e.texture, created_texture, "backend dropped part of it");
+}
+
+void TextureCache::DestroyHost(Entry& e) {
+  for (auto v = e.overlay_variants.begin(); v != e.overlay_variants.end();) {  // PR117 fix: no double destroy
+    if (v->second.texture == e.texture) v = e.overlay_variants.erase(v); else ++v;
+  }
+  if (e.pack_shared) ReleasePack(e);  // 0.6.4 (#341): the shared pack texture stays for other entries / a later return
+  else backend_.DestroyTexture(e.texture);
+  e.texture = 0;
+  stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
+  e.host_bytes = 0;
+  if (stats_.textures) --stats_.textures;
+  if (e.through_indexed) {
+    auto [a, b] = through_.equal_range(e.through_base);
+    for (auto t = a; t != b; ++t) {
+      if (t->second == &e) {
+        through_.erase(t);
+        break;
+      }
+    }
+    e.through_indexed = false;
+    e.through_ok = false;
+  }
+  e.pack_hash = 0;
+  e.pack_complete = false;
+  for (SlotCache& sc : slot_cache_) sc.valid = false;
+}
+
+bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesystem::path& file, uint64_t hash, uint32_t w,
+                                uint32_t h, uint32_t mips, uint32_t base_start, uint32_t base_length, uint32_t mip_start,
+                                uint32_t mip_length) {
+  // bad: the reason does not change while the game runs (the hash encodes the guest's size and mips), so the file is not
+  // read again (r95 M1); logged once per hash either way
+  auto refuse = [&](const std::string& why, bool bad) {
+    if (bad) g_swap.pack_bad.insert(hash);
+    if (g_swap.pack_refused.insert(hash).second && g_swap.pack_refused.size() <= 200)
+      REXLOG_WARN("gow2_texture_pack: {:016X} ({}x{}) not replaced by {}: {}", hash, w, h,
+                  texpack::PathToUtf8(file.filename()), why);  // r95 H1: UTF-8, never the ANSI code page
+    return false;
+  };
+  // A signed fetch needs a signed view of the host format: only the guest's own format has one here (per fetch).
+  for (uint32_t c = 0; c < 4; ++c)
+    if (Bits(tf[0], 2 + 2 * c, 2) == 1) return refuse("the game reads it as signed", false);
+  auto arm = [&] {  // watch the guest ranges as for a guest load: other content there changes the hash and reloads
+    e.base_start = base_start;
+    e.base_length = base_length;
+    e.mip_start = mip_start;
+    e.mip_length = mip_length;
+    e.version = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);
+    watch_.Watch(e.base_start, e.base_length);
+    if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
+    (void)PagesChanged(e, false);
+    e.overlay_gen = OverlayGeneration();
+    // r95 M1: not an overlay - a generation bump (prompt style switch) must not read the file again. The swap block in
+    // Load still runs (g_swap.On() while packs exist) and e.pack_hash makes a later guest load replace the texture.
+    e.has_overlay = false;
+    e.through_ok = false;
+  };
+  // r95 M1: the host texture already holds this file, completely: re-arm only (no file read, no upload)
+  if (e.texture && e.pack_hash == hash && e.pack_complete) {
+    arm();
+    return true;
+  }
+  if (g_swap.pack_bad.count(hash)) return false;  // r95 M1: refused before, for good
+  // Review r1938: prompt-style variants left from earlier content here (Load returns before its own variant clean-up when
+  // a pack file is used) go now, as they would for any other content change - a pack entry never has variants.
+  if (!e.overlay_variants.empty()) {
+    for (const auto& [_, var] : e.overlay_variants) {
+      if (var.texture && var.texture != e.texture) {
+        backend_.DestroyTexture(var.texture);
+        stats_.host_bytes -= std::min(stats_.host_bytes, var.host_bytes);
+        if (stats_.textures) --stats_.textures;
+        ++freed_total_;
+      }
+    }
+    e.overlay_variants.clear();
+    for (SlotCache& sc : slot_cache_) sc.valid = false;
+  }
+  // 0.6.4 (#341): another entry (another guest address) already holds this file's texture, complete - share it: no file
+  // read, no upload. Signed fetches were refused above; the shared texture's shape is the file's, as a fresh load's.
+  if (auto sh = pack_shared_.find(hash); sh != pack_shared_.end()) {
+    const bool had_texture = e.texture != 0;
+    if (had_texture) DestroyHost(e);  // (takes it off the counts; a shared one is released, not destroyed)
+    e.texture = sh->second.texture;
+    ++sh->second.refs;
+    sh->second.last_used = frame_now_;
+    e.pack_shared = true;
+    e.format = sh->second.format;
+    e.gpu_storage = false;
+    e.ov_scale = 1;
+    e.host_bytes = 0;  // counted once, with the shared texture
+    if (had_texture) ++stats_.textures;  // (a new entry is counted by Lookup)
+    e.pack_hash = hash;
+    e.pack_complete = true;
+    arm();
+    ++pack_reuses_;
+    return true;
+  }
+  texpack::DdsImage img;
+  std::string why;
+  if (!texpack::ReadDds(file, img, why) || !texpack::FitsGuest(w, h, mips, img, why) || !texpack::FitsUpload(img, why))
+    return refuse(why, true);  // r95 M3: FitsUpload - a level the upload ring refuses would fail and retry 16 times
+  bool created = false;
+  bool counted = true;  // 0.6.4 (#341): e.host_bytes is in stats_ already (false: a new entry, which Lookup counts after Load)
+  if (!e.texture || e.pack_hash != hash) {
+    // r95 L4: the new texture is made before the old one goes, so a failed creation changes nothing (stats included)
+    gpu::TextureDesc td;
+    td.dimension = gpu::TextureDimension::k2D;
+    td.width = img.width;
+    td.height = img.height;
+    td.mips = img.mips;
+    td.format = img.format;
+    td.usage = gpu::kUsageSampled;
+    td.debug_name = "texture pack";
+    const gpu::TextureHandle tex = backend_.CreateTexture(td);
+    if (!tex) return refuse("host texture creation failed", false);
+    const bool replacing_existing = e.texture != 0;
+    if (replacing_existing) DestroyHost(e);
+    e.texture = tex;
+    created = true;
+    e.format = img.format;
+    e.gpu_storage = false;
+    e.ov_scale = 1;
+    e.host_bytes = img.data.size();
+    if (replacing_existing) {  // (Lookup counts a new entry; DestroyHost took the old texture off)
+      ++stats_.textures;
+      stats_.host_bytes += e.host_bytes;
+    }
+    counted = replacing_existing;
+  }
+  e.pack_hash = hash;
+  e.pack_complete = false;
+  arm();
+  const uint64_t drops_at_start = backend_.TextureLoadDrops();
+  for (uint32_t level = 0; level < img.mips; ++level)
+    backend_.UploadTexture(e.texture, level, 0, img.data.data() + img.offsets[level], img.RowBytes(level),
+                           img.Rows(level), 1);
+  stats_.upload_bytes += img.data.size();
+  ++stats_.uploads;
+  if (++g_swap.pack_loaded <= 20)
+    REXLOG_INFO("gow2_texture_pack: {:016X} ({}x{}) replaced: {}x{}, {} level(s), format {}", hash, w, h, img.width,
+                img.height, img.mips, uint32_t(img.format));
+  ++pack_reads_;
+  if (backend_.TextureLoadDrops() != drops_at_start) {
+    FailLoad(e, e.texture, created, "backend dropped part of it");
+    return true;
+  }
+  e.pack_complete = true;
+  // 0.6.4 (#341): complete - from now on the texture belongs to pack_shared_ (this entry its first user). Its bytes move
+  // from the entry to the shared texture: already in the counts unless this is a new entry, which Lookup counts after
+  // Load (with host_bytes, now 0) - those are added here.
+  PackShared& sh = pack_shared_[hash];
+  sh.texture = e.texture;
+  sh.format = e.format;
+  sh.bytes = e.host_bytes;
+  sh.refs = 1;
+  sh.last_used = frame_now_;
+  if (!counted) stats_.host_bytes += e.host_bytes;
+  e.host_bytes = 0;
+  e.pack_shared = true;
+  return true;
 }
 
 uint32_t TextureCache::DropScaledEntries() {

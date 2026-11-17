@@ -21,6 +21,7 @@ extern int g_lastKeyScancode;   // page.cpp
 
 #include <windows.h>
 #include <shellapi.h>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -29,6 +30,7 @@ extern int g_lastKeyScancode;   // page.cpp
 #include <mutex>
 #include <thread>
 #include <functional>
+#include <initializer_list>
 
 void set_message(App &a, const std::string &m, bool bad)
 {
@@ -124,6 +126,7 @@ static bool zip_folder(const std::string &dir, const std::string &zipPath, std::
 }
 // The backup's thread and its result, read by backup_poll() on the UI thread.
 static std::atomic<int> g_backupState{0};   // 0 idle, 1 running, 2 done
+bool backup_running() { return g_backupState.load() == 1; }   // 0.6.4 (review r1945): no save import while a backup zips
 static std::mutex g_backupMutex;
 static std::string g_backupZip, g_backupErr, g_backupDir;
 static int g_backupGame = -1, g_backupFiles = 0;
@@ -243,6 +246,19 @@ static void answered(App &a)
     else if (m.tag == "protonrec" || m.tag == "protonfound") linux_answer(a, m);   // proton049
     else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
     else if (m.tag == "tumismatch") a.joinLobby[m.game].clear();   // 0.6.0: Cancel drops a pending Join
+    else if (m.tag == "foundsaves") {   // 0.6.4: hand-copied saves; Not now, or a done import, then starts the game
+        bool start = true;
+        bool notNow = m.answer != 0;   // (closing the question = Not now)
+        if (m.answer == 0) {
+            const bool refused = backup_running();   // a backup still being made: asked again next time
+            start = import_misplaced_saves(a, m.game);   // review r1946: not done -> no start, its message stays
+            notNow = !start && !refused;   // review r1947: what can't be brought in is not asked about again (no loop)
+        }
+        if (notNow) { a.ini.set("Saves", found_not_now_key(m.game), m.data); a.ini.save(); }
+        if (start) play_start(a, m.game);
+        else a.joinLobby[m.game].clear();
+        a.misplacedAsked[m.game] = false;
+    }
     else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
     else if (m.tag == "socialremove") social_remove_answer(m.answer);   // social step 3
     else if (m.tag == "socialdelete") social_delete_answer(a, m.answer);   // 0.6.0 review: delete the online account
@@ -583,6 +599,56 @@ const char *pad_name(const App &a, const char *x)
     return x;
 }
 
+bool pad_capturing(const App &a) { return ImGui::GetFrameCount() <= a.padCaptureFrame + 1; }
+
+// 0.6.3: a controller button pressed, as the game's runtime names it (SDL's positions: South = A / Cross)
+// r48: only presses in the launcher's own window count (background events are on for the window's other uses); triggers
+// are tracked per pad and forgotten when it is unplugged.
+static std::map<SDL_JoystickID, std::array<bool, 2>> g_padTriggers;
+static void pad_press_event(App &a, const SDL_Event &e, bool focused)
+{
+    if (e.type == SDL_EVENT_GAMEPAD_REMOVED) { g_padTriggers.erase(e.gdevice.which); return; }
+    int b = -1;
+    if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+        switch (e.gbutton.button) {
+        case SDL_GAMEPAD_BUTTON_SOUTH: b = gs::PadA; break;
+        case SDL_GAMEPAD_BUTTON_EAST: b = gs::PadB; break;
+        case SDL_GAMEPAD_BUTTON_WEST: b = gs::PadX; break;
+        case SDL_GAMEPAD_BUTTON_NORTH: b = gs::PadY; break;
+        case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: b = gs::PadLB; break;
+        case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: b = gs::PadRB; break;
+        case SDL_GAMEPAD_BUTTON_LEFT_STICK: b = gs::PadLS; break;
+        case SDL_GAMEPAD_BUTTON_RIGHT_STICK: b = gs::PadRS; break;
+        case SDL_GAMEPAD_BUTTON_BACK: b = gs::PadBack; break;
+        case SDL_GAMEPAD_BUTTON_START: b = gs::PadStart; break;
+        case SDL_GAMEPAD_BUTTON_DPAD_UP: b = gs::PadUp; break;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: b = gs::PadDown; break;
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT: b = gs::PadLeft; break;
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: b = gs::PadRight; break;
+        default: break;   // Guide, paddles, touchpad: the games don't have them
+        }
+    } else if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION &&
+               (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)) {
+        std::array<bool, 2> &down = g_padTriggers[e.gaxis.which];   // a press = past half way, after being let go below a quarter
+        const int t = e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? 0 : 1;
+        if (!down[t] && e.gaxis.value > 16000) { down[t] = true; b = t ? gs::PadRT : gs::PadLT; }
+        else if (down[t] && e.gaxis.value < 8000) down[t] = false;
+    }
+    if (b < 0 || !focused) return;
+    a.padPress = b;
+    a.padPressSeq++;
+}
+
+// r48 / r49: any controller button, trigger or stick still held after the controller layout took a press - as Dear
+// ImGui sees them (its stick and trigger keys go down from its own dead zones), so a resting thumb that would make Dear
+// ImGui repeat a move also keeps the hold. Last frame's state (asked before NewFrame): at most one frame longer.
+static bool any_pad_held()
+{
+    for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadRStickDown; k++)
+        if (ImGui::IsKeyDown((ImGuiKey)k)) return true;
+    return false;
+}
+
 static void refresh_pads(App &a)
 {
     int n = 0;
@@ -671,6 +737,23 @@ static int x360test(int argc, wchar_t **argv)
 }
 
 static bool g_popupLastFrame = false;   // 0.4.6 review: a popup was open at the end of the last frame
+
+// GitHub #331: "CogBox.exe ... Faulting module name: d3d11.dll_unloaded, 0xc0000005" now and then on closing COGBox.
+// SDL's Direct3D 11 renderer loads d3d11.dll / dxgi.dll itself and FreeLibrary's them at the end of
+// SDL_DestroyRenderer (SDL_render_d3d11.c D3D11_ReleaseAll, 3.4.20). Its own objects are released first, but anything
+// else still holding the device or the swap chain then (an overlay or capture tool hooked into Present - Steam, Discord,
+// RTSS / Afterburner, Xbox Game Bar, OBS -, or a driver / runtime thread finishing late) calls into d3d11.dll's code
+// after it has left the process, when it lets go during ExitProcess. Pinned, the renderer's DLLs stay mapped until the
+// process is gone (one mapping; Windows unloads them at exit anyway), so such a late call lands in real code. Only what
+// the renderer actually loaded is pinned (GetModuleHandleEx does not load anything).
+static void pin_render_dlls()
+{
+    for (const wchar_t *dll : { L"d3d11.dll", L"dxgi.dll", L"d3d12.dll" }) {
+        HMODULE h = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, dll, &h);   // fails (harmlessly) when it isn't loaded
+    }
+}
+
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
     {
@@ -726,6 +809,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     SDL_Window *win = SDL_CreateWindow(COGBOX_NAME, ww, wh, SDL_WINDOW_RESIZABLE);
     SDL_Renderer *ren = win ? SDL_CreateRenderer(win, nullptr) : nullptr;
     if (!ren) { MessageBoxA(nullptr, SDL_GetError(), COGBOX_NAME, MB_ICONERROR); return 1; }
+    pin_render_dlls();   // GitHub #331: before anything can hold on to the renderer's device
     SDL_SetRenderVSync(ren, 1);
     SDL_SetWindowMinimumSize(win, (int)(1100 * g_ui), (int)(700 * g_ui));
     g_ui0 = g_ui; g_w0 = std::max(1, ww); g_h0 = std::max(1, wh);   // job 523: the zoom's starting point
@@ -843,6 +927,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED) refresh_pads(a);
             // 0.2.0: the hints follow the device used last (stick movement past half way counts, small drift doesn't)
             if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && abs(e.gaxis.value) > 16000)) a.lastPad = true;
+            pad_press_event(a, e, (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0);   // 0.6.3: the controller layout's "press a button"
             if (e.type == SDL_EVENT_KEY_DOWN) g_lastKeyScancode = (int)e.key.scancode;   // the key's position (page.cpp key capture)
             if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_WHEEL) a.lastPad = false;
             if (e.type == SDL_EVENT_DROP_FILE && e.drop.data) a.dropped.push_back(e.drop.data);
@@ -888,7 +973,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         bool frontOwn = (a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
                          !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) ||   // 0.4.6 review: the player-name box takes the pad
                         (a.screen == SCR_PAGE && a.barSel >= 0 && !a.modal.open);   // also a page's bottom bar (page.cpp)
-        if (!SDL_GetKeyboardFocus() || a.run.proc || frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+        if (a.padCaptureHold) {   // r48: off until the button that was set (or anything else) is let go - r49: 2.5 s at most
+            if (any_pad_held() && ImGui::GetTime() - a.padCaptureHoldAt < 2.5) a.padCaptureFrame = ImGui::GetFrameCount();
+            else a.padCaptureHold = false;
+        }
+        if (!SDL_GetKeyboardFocus() || a.run.proc || frontOwn || pad_capturing(a)) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
         else io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
         { extern int g_padlogFrontOwn; g_padlogFrontOwn = frontOwn ? 1 : 0; }   // COGBOX_PADLOG (front.cpp)
         if (frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
@@ -916,11 +1005,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         }
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
+        if (a.padCaptureActive && pad_capturing(a)) {   // r48: a click while a controller button is awaited only cancels
+            static const ImGuiKey k_mouse[3] = { ImGuiKey_MouseLeft, ImGuiKey_MouseRight, ImGuiKey_MouseMiddle };
+            for (int b = 0; b < 3; b++)
+                if (ImGui::IsMouseClicked(b)) {
+                    ImGui::SetKeyOwner(k_mouse[b], ImHashStr("##padcapclick"), ImGuiInputFlags_LockUntilRelease);
+                    a.padCaptureClickFrame = ImGui::GetFrameCount();
+                }
+        }
         {   // job 523 (Shagg 20:29): F11, or both triggers together, switch fullscreen from any screen
             static bool triggersWere = false;
             const bool triggers = ImGui::IsKeyDown(ImGuiKey_GamepadL2) && ImGui::IsKeyDown(ImGuiKey_GamepadR2);
             if (!a.run.proc && SDL_GetKeyboardFocus() &&
-                (ImGui::IsKeyPressed(ImGuiKey_F11, false) || (triggers && !triggersWere))) set_fullscreen(a, !a.fullscreen);
+                (ImGui::IsKeyPressed(ImGuiKey_F11, false) || (triggers && !triggersWere && !pad_capturing(a)))) set_fullscreen(a, !a.fullscreen);
             triggersWere = triggers;
         }
         const bool quitAskable = !a.run.proc && SDL_GetKeyboardFocus() && a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&

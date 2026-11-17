@@ -58,8 +58,9 @@ REXCVAR_DEFINE_STRING(ue3_ini_bundle_dir, "GearGame\\CookedXenon", "Gears2",
                       "Folder of the Coalesced_*.bin config bundles, relative to the game data root");
 REXCVAR_DEFINE_BOOL(gow_main_menu_exit, true, "ui", "Add Exit Game to the main menu; restart");
 REXCVAR_DEFINE_BOOL(gow2_horde_bots, false, "Gears2",
-                    "GitHub #237 (francoissubke-blip's tip, as Gears 3's --gow3_horde_bots): Back on the Horde scoreboard "
-                    "adds two bots (local Horde)");
+                    "GitHub #237 (francoissubke-blip's tip, as Gears 3's --gow3_horde_bots): Back shows the scoreboard and, in "
+                    "a Horde game this PC hosts, fills the team to five with bots (the game's Friends exec); nothing in "
+                    "Versus, the lobbies or on a client");
 REXCVAR_DEFINE_BOOL(gow2_split_vertical, false, "Gears2",
                     "GitHub #237: the two-player split side by side (eSST_2P_VERTICAL) from the start: Default2PSplitType "
                     "and DesiredSplitscreenType in [Engine.GameViewportClient] of the engine ini (in memory)");
@@ -149,8 +150,14 @@ class OverlayDevice : public rex::filesystem::HostPathDevice {
 // from the last one back, so an added one wins over the game's own for that button). Returns how many were added.
 int AddInputBindings(ue3::ConfigFile& f, const char* key) {
   std::vector<const char*> binds;
+  // Horde bots (0.6.3 fix): the game's own Back command (GBA_Scoreboard) first, so Back keeps the scoreboard, then the
+  // game's unused developer exec GearGameHorde_Base.Friends (disc GearGame export 19411: AddBot until NumPlayers +
+  // NumBots = 5, spawned at once mid-match). It exists only on the Horde GameInfo, so in Versus, the lobbies and on a
+  // client it is an unknown command that does nothing. No NetMode change and no EnableCheats: the old
+  // "Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot 0 | AddBot 0" took a hosted listen-server game offline
+  // and broke matchmaking; AddBot / Friends need neither (PC job 1906, Gears 3 listen-server Horde).
   if (REXCVAR_GET(gow2_horde_bots))
-    binds.push_back("(Name=\"XboxTypeS_Back\",Command=\"Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot 0 3 | AddBot 0 4\")");
+    binds.push_back("(Name=\"XboxTypeS_Back\",Command=\"GBA_Scoreboard | Friends\")");
   if (binds.empty()) return 0;
   const bool wide = f.name.wide;
   ue3::ConfigSection* sec = nullptr;

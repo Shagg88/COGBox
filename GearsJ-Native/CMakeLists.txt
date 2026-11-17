@@ -111,7 +111,7 @@ set(GOWJ_SOURCES
 )
 # ue3/objects.h is Gears 2's (its objects.cpp is built in layer 2 above); only these files get that folder, so this
 # game's own ue3/ headers are not shadowed.
-set_source_files_properties(src/layer3_gowj/adaptive_triggers.cpp src/layer3_gowj/first_person.cpp PROPERTIES
+set_source_files_properties(src/layer3_gowj/adaptive_triggers.cpp src/layer3_gowj/first_person.cpp src/layer3_gowj/cheats.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 if(WIN32)
     add_executable(gowj WIN32 ${GOWJ_SOURCES})
@@ -215,8 +215,8 @@ if(GN_WITH_XESS AND GN_XESS_FOUND)
 endif()
 # Low-latency modes (Gears 2 patches 0135/0136, job 447b 780257d), the same blocks as Gears 2's CMakeLists pointing at
 # its third_party (read-only): NVIDIA Reflex through NVAPI, AMD Anti-Lag 2 (header-only). latency_reflex.cpp comes in
-# with the layer 0 glob and needs SDK patch 35 (rex/frame_hooks.h). cpu_check.cpp also comes in; it stays inactive here
-# (no GN_CPU_LEVEL, as Gears 2 describes).
+# with the layer 0 glob and needs SDK patch 35 (rex/frame_hooks.h). cpu_check.cpp also comes in; the CPU level
+# block below (0.6.4) tells it the level.
 set(GN_NVAPI_DIR ${GN_THIRD_PARTY}/nvapi)
 set(GN_NVAPI_FOUND OFF)
 if(WIN32 AND EXISTS ${GN_NVAPI_DIR}/nvapi.h AND EXISTS ${GN_NVAPI_DIR}/amd64/nvapi64.lib)
@@ -258,8 +258,8 @@ endif()
 #     and layer 0 writes them to LLVM_PROFILE_FILE once, at swap --gow2_pgo_dump_frame (layer 0 patch 0159, GN_PGO_GEN).
 #   GN_PGO=use / iruse: optimised build with the merged profile GN_PGO_PROFILE (.profdata).
 #   GN_PGO=off: normal build.
-#   Not set: uses the stored profile out\pgo\gowj.profdata when it exists (a training job puts it there), else a normal
-#     build. The profile comes from game runs, so it stays in out\ and is never committed.
+#   Not set: a normal build (0.6.4; below). GN_PGO=use with no GN_PGO_PROFILE uses out\pgo\gowj.profdata (a training
+#     job puts it there). The profile comes from game runs, so it stays in out\ and is never committed.
 # GN_PGO / GN_PGO_PROFILE come from the environment, like Gears 2, so they never stick in the CMake cache.
 set(GN_PGO "" CACHE STRING "Profile-guided optimisation: empty/auto, off, gen, use, irgen or iruse")
 set(GN_PGO_PROFILE "" CACHE FILEPATH "Merged .profdata for GN_PGO=use / iruse")
@@ -269,16 +269,40 @@ endif()
 if(DEFINED ENV{GN_PGO_PROFILE})
     set(GN_PGO_PROFILE "$ENV{GN_PGO_PROFILE}")
 endif()
-if(NOT DEFINED ENV{GN_PGO} AND (GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto"))
+# 0.6.4 (Shagg 16 Nov: "We can just do PGO off" - the stored profiles are from 25 Oct, before AVX2 and patch 110, and job
+# 1936's PGO-off Gears 3 ran faster than job 1925's with the profile): no GN_PGO given = a normal build. The next profiles
+# are to be trained after the move to the latest rexglue. GN_PGO=use with no GN_PGO_PROFILE takes the stored one (new in 0.6.4).
+if(GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto")
+    set(GN_PGO "off")
+    message(STATUS "GearsJ-Native: PGO off (the default; GN_PGO=use for a profile-guided build)")
+endif()
+if((GN_PGO STREQUAL "use" OR GN_PGO STREQUAL "iruse") AND GN_PGO_PROFILE STREQUAL "")
     set(gn_pgo_stored "${CMAKE_SOURCE_DIR}/out/pgo/gowj.profdata")
     if(EXISTS "${gn_pgo_stored}")
-        set(GN_PGO "use")
         set(GN_PGO_PROFILE "${gn_pgo_stored}")
-    else()
-        message(STATUS "GearsJ-Native: no stored profile ${gn_pgo_stored} - normal build (no PGO)")
     endif()
 endif()
 # gowj_recomp is the recompiled game code (rexglue_setup_target); there is no layer 1 target in Judgment.
+# 0.6.4 (Shagg: "I want to move to the AVX2 only"): the CPU level, the same as Gears 2's GN_CPU_ARCH block.
+# x86-64-v3 (AVX2 / FMA / BMI2) is the default; empty means the default; x86-64 = the old baseline build. Multiply-adds
+# are never fused (-ffp-contract=off), as the PowerPC code keeps them separate. cpu_check.cpp (patch 0134, from the
+# shared layer 0) is built for the plain baseline so it can show its message on an older CPU, and is told the level;
+# the launcher reads the same 'gn_cpu_level=' text from the exe.
+set(GN_CPU_ARCH "x86-64-v3" CACHE STRING "CPU level for our code and the recompiled code: x86-64-v3 (default, AVX2) or x86-64 (baseline)")
+if(DEFINED ENV{GN_CPU_ARCH})  # a queue job's choice
+    set(GN_CPU_ARCH "$ENV{GN_CPU_ARCH}")
+endif()
+if(GN_CPU_ARCH STREQUAL "")
+    set(GN_CPU_ARCH "x86-64-v3")
+endif()
+message(STATUS "GearsJ-Native: CPU level '${GN_CPU_ARCH}'")
+foreach(gn_t gowj_recomp gowj gn_layer0_xenos gn_layer2_ue3)
+    if(TARGET ${gn_t})
+        target_compile_options(${gn_t} PRIVATE -march=${GN_CPU_ARCH} -ffp-contract=off)
+    endif()
+endforeach()
+set_source_files_properties(${GN_LAYER0_DIR}/cpu_check.cpp PROPERTIES
+    COMPILE_OPTIONS "-march=x86-64" COMPILE_DEFINITIONS "GN_CPU_LEVEL=\"${GN_CPU_ARCH}\"")
 set(gn_pgo_targets gowj_recomp gowj gn_layer0_xenos gn_layer2_ue3)
 set(gn_pgo_gen_flag -fprofile-instr-generate)
 set(gn_pgo_use_flag -fprofile-instr-use)
@@ -300,7 +324,7 @@ if(GN_PGO STREQUAL "gen" OR GN_PGO STREQUAL "irgen")
     message(STATUS "GearsJ-Native: PGO training build (execution counters, ${gn_pgo_gen_flag})")
 elseif(GN_PGO STREQUAL "use" OR GN_PGO STREQUAL "iruse")
     if(NOT EXISTS "${GN_PGO_PROFILE}")
-        message(FATAL_ERROR "GN_PGO=${GN_PGO}: profile '${GN_PGO_PROFILE}' not found")
+        message(FATAL_ERROR "GN_PGO=${GN_PGO}: profile '${GN_PGO_PROFILE}' not found (with no GN_PGO_PROFILE, the stored out/pgo profile is used when it exists)")
     endif()
     # The profile's hash on the command line, so sccache never reuses an object built with an older profile at the
     # same path, and a new profile rebuilds everything it touches.

@@ -200,6 +200,7 @@ Aftermath 3 - outro = Secuelas 3 - final
 Aftermath 4 = Secuelas 4
 Aftermath 5 = Secuelas 5
 DLSS (NVIDIA RTX) = DLSS (NVIDIA RTX)
+DLSS (NVIDIA RTX, experimental) = DLSS (NVIDIA RTX, experimental)
 Not yet in  = Aún no está en
 Fullscreen = Pantalla completa
 Fullscreen (borderless) = Pantalla completa (sin bordes)
@@ -262,6 +263,8 @@ Game's own (smallest) = Del propio juego (la menor)
 Standard (196 MB / Gears 3 200 MB) = Estándar (196 MB / Gears 3 200 MB)
 Large (256 MB) = Grande (256 MB)
 Larger (320 MB, not long-tested) = Más grande (320 MB, sin pruebas largas)
+Texture cache (video memory) = Caché de texturas (memoria de vídeo)
+How much video memory the PC side keeps the game's textures in before the least recently used ones are freed. Texture packs need more: a freed pack texture is read from disk again when it is next drawn, which stutters. Auto: 512 MB; with a texture pack on, 2 GB (1 GB on cards with less than 6 GB). Keep it well under your graphics card's memory. = Cuánta memoria de vídeo usa el lado del PC para las texturas del juego antes de liberar las usadas hace más tiempo. Los paquetes de texturas necesitan más: una textura del paquete liberada se vuelve a leer del disco cuando se dibuja de nuevo, lo que causa tirones. Auto: 512 MB; con un paquete de texturas activo, 2 GB (1 GB en tarjetas con menos de 6 GB). Mantenlo muy por debajo de la memoria de tu tarjeta gráfica.
 Draw distance = Distancia de dibujado
 Original = Original
 Far (1.5x) = Lejos (1.5x)
@@ -1016,8 +1019,7 @@ Controller layout = Distribución del mando
 Southpaw (sticks swapped) = Zurdo (sticks intercambiados)
 A and B swapped = A y B intercambiados
 Bumpers and triggers swapped = Botones superiores y gatillos intercambiados
-Custom (CogBox.ini [Pad] Remap=) = Personalizada (CogBox.ini [Pad] Remap=)
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = Cambia los botones y sticks del mando antes de que el juego los vea, así los iconos de botones del juego siguen mostrando los botones originales. Personalizada: escribe pares src=dst (a b x y lb rb lt rt ls rs back start up down left right, o sticks=swap) en CogBox.ini bajo [Pad] Remap=.
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = Cambia los botones y sticks del mando antes de que el juego los vea, así los iconos de botones del juego siguen mostrando los botones originales. Personalizada: elige en la lista de abajo el botón del mando para cada botón del juego (una distribución para los cuatro juegos, guardada en CogBox.ini bajo [Pad] Remap=).
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = Ahora las actualizaciones de título son obligatorias: cada juego se ejecuta con su último parche de Epic (Gears 2 y 3: TU6, Judgment: TU4, Gears 1: TU5). Las versiones solo de disco ya no son compatibles.
 Two-player split = División para dos jugadores
 Top and bottom (game's) = Arriba y abajo (del juego)
@@ -1143,7 +1145,7 @@ D-pad choose   A pick   B close = Cruceta elegir   A seleccionar   B cerrar
 ICON = ICONO
 BACK = ATRÁS
 Horde bots = Bots en Horda
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Horda local: pulsa Atrás / Vista cuando aparezca por primera vez el marcador de Horda para añadir dos bots (vuelve a pulsar para dos más). Reaparecen en cada oleada. Desactívalo para la campaña y el versus: Atrás también activa el indicador de trucos del juego.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = Atrás / Vista muestra el marcador como siempre y, en una partida de Horda que alojes, además completa tu equipo hasta cinco con bots (reaparecen en cada oleada). No hace nada en Versus, en las salas ni en la partida de otro. Para bots en Versus, usa la opción de bots de la propia sala.
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = Activado
@@ -1334,8 +1336,8 @@ start it once from COGBox to add its pictures. = inícialo una vez desde COGBox 
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = Sensibilidad al apuntar (%)
 Zoom sensitivity (%) = Sensibilidad con zoom (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Velocidad del ratón al apuntar, en porcentaje de la velocidad normal. 100 = sin cambios. Solo con la vista con ratón nativa.
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Velocidad del ratón al hacer zoom con una mira (Longshot, Martillo del Alba), en porcentaje de la velocidad normal. 100 = sin cambios. Solo con la vista con ratón nativa.
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Velocidad del ratón al apuntar, en porcentaje de la velocidad normal. 100: sin cambios. Solo con la vista con ratón nativa.
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Velocidad del ratón al hacer zoom con una mira (Longshot, Martillo del Alba), en porcentaje de la velocidad normal. 100: sin cambios. Solo con la vista con ratón nativa.
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = BORRAR ESTE PERFIL
 DELETE = BORRAR
@@ -1348,7 +1350,7 @@ Paste a path = Pegar una ruta
 Import saves... = Importar partidas...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = Para la experiencia más fluida, estos juegos necesitan las Title Updates indicadas. Consulta el README para más detalles.
 # 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
-The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = Las teclas de trucos de los desarrolladores, F5-F11 en el juego (modo dios, cámara lenta, cámara libre - en Gears 1 volar a través de las paredes - ocultar el HUD, todas las armas). Gears 2: solo en partidas en este PC, nunca en partidas de System Link ni en línea. Gears 3 y Judgment: también en una partida de System Link o en línea que tú alojes, donde la cámara lenta y lo demás afectan a todos los jugadores; úsalas solo en tus propias partidas. Gears 1: aún sin comprobar en partidas de System Link. Los logros y las partidas guardadas son cosa tuya.
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. They do not work in Versus matches - only in the campaign and the wave modes (Horde, Beast, Survival). = Las teclas de trucos de los desarrolladores, F5-F11 en el juego (modo dios, cámara lenta, cámara libre - en Gears 1 volar a través de las paredes - ocultar el HUD, todas las armas). Gears 2: solo en partidas en este PC, nunca en partidas de System Link ni en línea. Gears 3 y Judgment: también en una partida de System Link o en línea que tú alojes, donde la cámara lenta y lo demás afectan a todos los jugadores; úsalas solo en tus propias partidas. Gears 1: aún sin comprobar en partidas de System Link. Los logros y las partidas guardadas son cosa tuya. No funcionan en partidas Versus: solo en la campaña y en los modos de oleadas (Horde, Beast, Survival).
 Not on a Mac (CrossOver). = No en un Mac (CrossOver).
 Vulkan only on Proton / Wine. = Solo Vulkan con Proton / Wine.
 On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = En un Mac (CrossOver) los juegos usan DirectX 12 a través de D3DMetal (Apple Silicon). Vulkan no arranca allí.
@@ -1415,6 +1417,7 @@ Join their game. = Unirse a su partida.
 Set up this game in COGBox to join. = Configura este juego en COGBox para unirte.
 Invite them to the game you are hosting. = Invitarlo a la partida que estás alojando.
 Remove this friend (asks first). = Quitar a este amigo (pregunta antes).
+Take back your friend request. = Retirar tu solicitud de amistad.
 Remove this friend? = ¿Quitar a este amigo?
 Yes, remove = Sí, quitar
 Close the running game first, then press JOIN again. = Cierra primero el juego en marcha y luego pulsa UNIRSE otra vez.
@@ -1503,3 +1506,68 @@ Graphics card = Tarjeta gráfica
 Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = Qué tarjeta gráfica usa el juego en un PC que tiene más de una (los gráficos integrados de un portátil y su tarjeta propia, o dos tarjetas). Automático elige la tarjeta con más memoria de vídeo propia y, entre tarjetas con una cantidad parecida, aquella a la que está conectado tu monitor: la misma tarjeta para DirectX 12 y Vulkan. Elige una tarjeta para usar esa en su lugar. Si la tarjeta elegida ya no está en este PC, se usa Automático.
 (not found - Automatic is used) = (no encontrada - se usa Automático)
 The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = La tarjeta gráfica que elegiste no está ahora en este PC: el juego elige su tarjeta por sí mismo (Automático).
+# 0.6.3 (GitHub #316): the window key
+GAME WINDOW = VENTANA DEL JUEGO
+Windowed / full screen key = Tecla de ventana / pantalla completa
+Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = Cambia la ventana del juego entre ventana y pantalla completa (sin bordes, o exclusiva si la elegiste) en el monitor en el que está, y de vuelta a su tamaño y posición de ventana. Funciona en la ventana del juego en los cuatro juegos, con o sin Teclado y ratón. Para usar otra tecla, añade a extra-args.txt una línea como --bind_cogbox_fullscreen=F12 (el nombre de una tecla, con Alt+, Ctrl+ o Shift+ delante si quieres; None desactiva la tecla).
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = Personalizada (elige abajo)
+Customise... = Personalizar...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = Elige tú mismo el botón del mando para cada botón del juego, partiendo de la distribución elegida arriba.
+Left: the game's buttons. Right: the controller button that does each one. = Izquierda: los botones del juego. Derecha: el botón del mando que hace cada uno.
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = Elige uno de los botones del juego y pulsa el botón del mando que debe hacerlo (Esc cancela). Un botón del mando hace una sola cosa: si ya hacía otra, los dos se intercambian.
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = No hay ningún mando conectado: elige el botón del mando en la lista. Un botón del mando hace una sola cosa: si ya hacía otra, los dos se intercambian.
+Press a button... = Pulsa un botón...
+Nothing = Ninguno
+Swap sticks = Intercambiar sticks
+The left stick moves the camera and the right stick moves you (southpaw). = El stick izquierdo mueve la cámara y el derecho te mueve a ti (zurdo).
+Reset to the game's own = Restablecer la del propio juego
+{1} now does the game's {2}. = {1} ahora hace el {2} del juego.
+{1} does the game's {2} instead. = {1} hace el {2} del juego en su lugar.
+No button does the game's {1} now. = Ningún botón hace ahora el {1} del juego.
+Your earlier custom layout was replaced. = Tu distribución personalizada anterior se ha sustituido.
+Undo Customise = Deshacer Personalizar
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = En CogBox.ini, pero el juego no lo entiende (se conserva, sin espacios ni símbolos):
+Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = Deshace todos los cambios desde Personalizar: vuelve a la distribución elegida antes (y a su línea de CogBox.ini).
+Or choose it from the list. = O elígelo de la lista.
+# 0.6.3 GitHub #245 Xbox trigger rumble (machine-made translation, please check)
+Trigger rumble (Xbox controllers) = Vibración de gatillos (mandos Xbox)
+Xbox One and Series controllers over USB or the Xbox Wireless Adapter (Bluetooth may give none), with Steam Input off for the controller: the motors in the triggers kick with each shot (harder for shotguns and heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while Controller vibration is off, here or in the game's options. While this is on, every Xbox-style controller (Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press the triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in another order, and rarely Windows stops sending controller input until the PC restarts - untick this if a controller misbehaves. PlayStation controllers are not affected. = Mandos Xbox One y Series por USB o con el Adaptador inalámbrico Xbox (por Bluetooth puede que no), con Steam Input desactivado para el mando: los motores de los gatillos dan un golpe con cada disparo (más fuerte con escopetas y armas pesadas) y vibran mientras la motosierra ruge o dispara una ametralladora rotativa o un lanzallamas. Nada mientras la Vibración del mando esté desactivada, aquí o en las opciones del juego. Mientras esté activado, todos los mandos de tipo Xbox (también Xbox 360 y mandos en modo XInput) se leen mediante la entrada sin procesar (raw input) de Windows: hasta la primera pulsación de un botón, los gatillos, el botón Guía y la vibración pueden no funcionar bien, los jugadores en pantalla dividida pueden recibir sus mandos en otro orden y, en raras ocasiones, Windows deja de enviar la entrada de los mandos hasta reiniciar el PC: desmárcalo si un mando se comporta de forma extraña. Los mandos PlayStation no se ven afectados.
+# 0.6.4 Shadow detail (machine-made translation, please check)
+Shadow detail = Detalle de sombras
+Full (original) = Completo (original)
+Balanced = Equilibrado
+Performance = Rendimiento
+Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows. = Menos sombras pequeñas y lejanas para más fotogramas por segundo donde las sombras ralentizan el juego (combates intensos). Las sombras cercanas y grandes, los personajes y las cinemáticas conservan las suyas; el resto se desvanece con el fundido propio del juego. Equilibrado: el doble del tamaño mínimo de sombra del juego. Rendimiento: el triple, y sombras algo más suaves.
+# 0.6.4: the Mods tab's lines ({1}, {2}, {3} are filled in: names and numbers)
+Left out by the game: {1} = Omitido por el juego: {1}
+Texture pack: 1 texture = Paquete de texturas: 1 textura
+Texture pack: {1} textures = Paquete de texturas: {1} texturas
+made for a newer COGBox (mod API {1}; this one has {2}) = hecho para un COGBox más nuevo (API de mods {1}; este tiene {2})
+Select Chapter: Act {1} {2}, chapter {3} = Seleccionar capítulo: Acto {1} {2}, capítulo {3}
+Select Chapter: Act {1} {2}, chapters {3} = Seleccionar capítulo: Acto {1} {2}, capítulos {3}
+(one player) = (un jugador)
+(co-op up to {1}) = (cooperativo hasta {1})
+its chapters' place in Select Chapter shows once the game's files are in = el lugar de sus capítulos en Seleccionar capítulo se verá cuando estén los archivos del juego
+# 0.6.4: saves on the Gameplay tab, hand-copied saves
+SAVES = PARTIDAS GUARDADAS
+Open saves folder = Abrir carpeta de partidas
+Saves copied into the saves folder by hand that the game can't use as they are: {1}. = Partidas copiadas a mano en la carpeta de partidas que el juego no puede usar tal cual: {1}.
+Bring them in = Incorporarlas
+Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken from a profile). What you copied is kept as it was, in a folder beside the saves folder. = Las coloca en su sitio como lo hace Importar partidas (paquetes de Xbox 360 desempaquetados, el progreso del juego tomado de un perfil). Lo que copiaste se conserva tal cual, en una carpeta junto a la carpeta de partidas.
+Saves COGBox can't use yet = Partidas que COGBox aún no puede usar
+Saves were copied into the saves folder by hand, and the game can't use them as they are (another profile's folder, Xbox 360 packages that aren't unpacked, or another layout). = Se copiaron partidas a mano en la carpeta de partidas y el juego no puede usarlas tal cual (carpeta de otro perfil, paquetes de Xbox 360 sin desempaquetar u otra estructura).
+Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, in a folder beside the saves folder. = ¿Incorporarlas ahora? Se colocan en su sitio como con Importar partidas; lo que copiaste se conserva tal cual, en una carpeta junto a la carpeta de partidas.
+Not now = Ahora no
+No saves to bring in were found in the saves folder. = No se encontraron partidas para incorporar en la carpeta de partidas.
+The saves could not be moved (is the game or another program using them?). Nothing was changed. = No se pudieron mover las partidas (¿las está usando el juego u otro programa?). No se cambió nada.
+A backup of the saves is still being made - try again when it's done. = Todavía se está haciendo una copia de seguridad de las partidas; inténtalo de nuevo cuando termine.
+Switch weapon = Cambiar de arma
+Pistol = Pistola
+anti-aliasing only at this render resolution = solo antialiasing con esta resolución de renderizado
+This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = Esta actualización de título se hizo para otra copia del default.xex del juego (otra edición o versión del juego), y lo más probable es que el juego se cierre al iniciar.
+Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = Usa los archivos del juego tal como salen del disco (o tu copia de Games on Demand), con una actualización de título hecha para ellos.
+Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and the host's game picks your team. = Gears 3: ve ahora a Versus > Social > {1}. Su búsqueda de partida encuentra esa partida y el juego del anfitrión elige tu equipo.
+the match's playlist = la lista de juego de la partida
+Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: para elegir COG o Locust, crea Versus > Private y que los demás se unan con el código de sala o Unirse a amigo. En la sala, pulsa Y para cambiar de equipo.
+Join through Gears 3's own matchmaking: the host's game picks your team. = Unirse mediante la búsqueda de partida de Gears 3: el juego del anfitrión elige tu equipo.

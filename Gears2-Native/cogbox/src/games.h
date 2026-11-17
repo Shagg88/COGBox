@@ -17,7 +17,7 @@
 #include "util.h"
 
 // Gears 1 (2006) was added after the others: it is the last index so saved settings / CogBox.ini keep their meaning;
-// the front screen shows the games in release order (game_at_slot / game_slot).
+// the front screen shows the games in release order (game_at_slot).
 enum GameId { G_GEARS2, G_GEARS3, G_JUDGMENT, G_GEARS1, G_COUNT, G_ALL = G_COUNT };
 inline bool game_is_port(int g) { return g >= 0 && g < G_COUNT; }
 
@@ -57,9 +57,8 @@ std::string tested_update_text(int g);
 std::string tested_disc_text(int g);
 int game_by_title_id(uint32_t tid);        // -1 if none of ours
 std::vector<uint32_t> region_title_ids(int g);   // other title IDs of game g's regional discs (none for most)
-// The front screen's order (release order: Gears 1, 2, 3, Judgment): the game in a carousel slot, and a game's slot.
+// The front screen's order (release order: Gears 1, 2, 3, Judgment): the game in a carousel slot.
 int game_at_slot(int slot);
-int game_slot(int g);
 // Title updates required (0.4.0): every game needs its title update - disc-only versions are no longer supported.
 // (Judgment and Gears 1 always did: one build made from the disc and the title update together.)
 inline bool game_update_required(int g) { return g >= 0 && g < G_COUNT; }
@@ -84,7 +83,6 @@ struct GameState {
     Readiness ready = R_NO_PORT;
     bool useUpdate = false;    // Play starts the updated game
     int64_t playSeconds = 0, lastPlayed = 0;
-    std::string versionText() const;           // "Title Update 6" / "Disc version" / ""
     // the exe Play starts: the update build when the update is used and there is one (Judgment has one build for both)
     std::string exe() const { return useUpdate && !portExeTu.empty() ? portExeTu : (portExeDisc.empty() ? portExeTu : portExeDisc); }
 };

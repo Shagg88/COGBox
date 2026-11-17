@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 #include <windows.h>
 #include <atomic>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -18,7 +19,7 @@
 #include "util.h"
 #include "proton.h"   // proton049
 
-#define COGBOX_VERSION "0.6.2"
+#define COGBOX_VERSION "0.6.4"
 #define COGBOX_NAME "COGBox"
 
 namespace gs = cogbox::gears;
@@ -39,6 +40,8 @@ struct InstallJob {
     std::thread th;
 };
 
+struct CrashDumpStatus;   // crash_dump.h
+
 // A game that is running.
 struct Running {
     HANDLE proc = nullptr;
@@ -46,8 +49,8 @@ struct Running {
     int64_t started = 0;
     std::string logDir;
     std::string exe;        // GitHub #194: the port program started (play_poll's missing-DLL check)
-    bool fastCode = true;   // Shagg 10 Nov: the faster build was started (its crashes count towards the fallback)
     bool prepare = false;   // job 641: a "Prepare all shaders" run (the game builds the pack, then exits)
+    std::shared_ptr<CrashDumpStatus> crashDump;   // GitHub #286: the crash minidump watcher (crash_dump.h)
 };
 
 enum Screen { SCR_FRONT, SCR_PAGE, SCR_FABRICATOR };   // Task 12: the FABRICATOR screen (the mod store)
@@ -104,8 +107,23 @@ struct App {
     bool padConnected = false;
     bool lastPad = true;              // 0.2.0: the last input came from a controller (hints follow it), else keyboard / mouse
     std::string joinLobby[G_COUNT];   // social step 3: the next start of this game joins that room code (Join friend)
+    bool misplacedAsked[G_COUNT] = {};  // 0.6.4: the hand-copied saves question was asked for this Play (play.cpp)
     bool tuMismatchOk[G_COUNT] = {};  // TU preflight: "Play anyway" chosen for this game (until the launcher closes)
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
+    // 0.6.3: the Custom controller layout's "press a button" (page.cpp pad_layout_section). padPress = the last controller
+    // button pressed (a gs::PadInput, from SDL's gamepad events; LT / RT past half way), padPressSeq counts the presses.
+    // padCaptureFrame = the last frame the list waited for a press: then and the frame after, the controller's own uses in
+    // the launcher (menu navigation, LB / RB tabs, Start = Play, LT + RT = full screen) are off, so the press only sets.
+    int padPress = -1;
+    unsigned padPressSeq = 0;
+    int padCaptureFrame = -100;
+    // r48: padCaptureActive = a row is waiting now (a mouse click then only cancels: main.cpp takes the click, and
+    // padCaptureClickFrame says which frame); padCaptureHold = after a press is set or the wait ends, padCaptureFrame is
+    // kept fresh while any controller button, trigger or stick is still held, so a held LB / D-pad doesn't work the page
+    bool padCaptureActive = false, padCaptureHold = false;
+    double padCaptureHoldAt = 0;   // r49: when the hold began - it lasts 2.5 s at most (a drifting stick can't keep it on)
+    int padCaptureClickFrame = -100;
+    unsigned saves = 0;   // settings_save calls (the controller layout's Undo lasts until a save)
     bool borderless = false;          // job 523: no title bar (COGBox draws its own minimise / maximise / close)
     bool fullscreen = false;          // job 523: COGBox fills the screen (F11, or LT + RT together)
     bool tuTold[G_COUNT] = {};            // 0.4.6: "Title update needed" said for this game this session (front.cpp, install.cpp)
@@ -129,6 +147,7 @@ bool untested_version(const App &a, int g);
 void report_share(App &a, int g, const std::string &zip, const std::string &what);
 // Job 523: a controller button's name for the connected pad - "A" on Xbox, "Cross" on PlayStation (A B X Y LB RB Back Start).
 const char *pad_name(const App &a, const char *xbox);
+bool pad_capturing(const App &a);   // 0.6.3: the controller layout list is waiting for a button (see App::padCaptureFrame)
 void set_borderless(App &a, bool on);   // job 523: saved in CogBox.ini [Window] Borderless
 void set_fullscreen(App &a, bool on);   // job 523: saved in CogBox.ini [Window] Fullscreen
 void ask(App &a, const std::string &tag, int game, const std::string &title, const std::string &text,
@@ -168,11 +187,19 @@ void social_delete_poll(App &a);              // each frame: finishes DELETE ONL
 void social_rename(App &a, const std::string &name);   // SAVE NAME: the online account takes the new name
 void achievements_reveal_answer(App &a, int answer);
 void env_refresh(App &a, int g);
-bool settings_save(App &a);
+bool settings_save(App &a, int prefer = -1);   // prefer: the game whose page is saved (default: the open page)
 std::vector<std::string> monitor_choices();   // page.cpp: "Default (main screen)", then each screen
 // install.cpp
 void install_start(App &a, const std::string &path, int forGame);
 void import_saves_from(App &a, int game, const std::string &from);   // 0.6.1: page.cpp (Import saves, or a dropped save package)
+// 0.6.4 (Shagg 16 Nov): saves copied into the game's saves folder by hand that the game can't use as they are
+// (save_import::find_misplaced). misplaced_saves: what is there now (cached a few seconds); import_misplaced_saves: brings
+// them in (a message says how it went).
+std::vector<std::filesystem::path> misplaced_saves(App &a, int game);
+bool import_misplaced_saves(App &a, int game);   // false: not done (a message says why)
+// the CogBox.ini [Saves] key that remembers "Not now" for this game and launcher profile
+std::string found_not_now_key(int game);
+bool backup_running();   // main.cpp: "Back up saves" is zipping
 void install_confirmed(App &a);      // the "replace" question answered yes
 bool drop_is_game_or_update(const std::string &folder);          // 0.2.0: a dropped folder COGBox adds as a copy / update
 std::vector<std::string> dlc_packages_in(const std::string &folder);   // 0.2.0: DLC packages in a dropped folder (3 levels)
@@ -197,12 +224,12 @@ struct ModItem {
     std::string problem, campaign;
     std::vector<std::string> notes;
     int64_t fab_mod = 0;   // installed from the Fabricator: its mod id (fabricator.json), else 0
+    uint32_t textures = 0;   // KiltedKernel: texture pack - the DDS files named by texture hash in its folder
 };
 std::string mods_dir(int game);
 std::vector<ModItem> mods_list(App &a, int game);         // in load order
 void mods_set_enabled(App &a, int game, const std::string &folder, bool on);
 void mods_move(App &a, int game, const std::string &folder, int dir);   // -1 up (earlier), +1 down (later, wins)
-std::vector<std::string> mods_enabled_paths(App &a, int game);
 bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err);
 // Unpacks a mod zip into folder (made if missing): the zip's paths as Windows reads them, never outside folder, programs
 // left out, the real inflated bytes counted against the limits (8 GiB, 50 000 files); stripTop takes off a single top
@@ -217,7 +244,6 @@ void mods_remove_tree(const std::wstring &dir);   // only a folder COGBox made i
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);
 // play.cpp
-bool use_normal_code(const App &a, int g);   // play.cpp: the faster build crashed twice -> the normal one
 void play_start(App &a, int g, bool prepare = false);   // prepare: job 641's Prepare all shaders
 void play_poll(App &a);
 void play_answer(App &a, const Modal &m);

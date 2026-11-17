@@ -122,14 +122,22 @@ SocialCall call_for(SocialAction action, const std::string& arg) {
     case SocialAction::SetIcon: return { "POST", "/api/v1/auth/icon", json{ { "icon", arg } }.dump() };
     case SocialAction::DeleteAccount: return { "DELETE", "/api/v1/auth/account", "" };
     case SocialAction::JoinMatch: return { "POST", "/api/v1/matches/" + arg + "/join", "" };
+    case SocialAction::JoinMatchSearch: return { "POST", "/api/v1/matches/" + arg + "/join?via=matchmaking", "" };
     }
     return {};
 }
 
 std::optional<SocialJoin> join_from_answer(int status, const std::string& body) {
-    if (status != 409) return std::nullopt;
+    if (status != 409 && status != 200) return std::nullopt;
     const json j = json::parse(body, nullptr, false);
     SocialJoin out{ game_for_title(str(j, "title_id")), str(j, "room_code") };
+    out.search = str(j, "via") == "matchmaking";
+    if (out.search && j.is_object() && j.contains("playlist") && j["playlist"].is_number_integer()) out.playlist = j["playlist"].get<int>();
+    // 200: only a matchmaking answer ({status:'search'}) is for the launcher - the game was told, a note is shown
+    if (status == 200) {
+        if (!out.search || str(j, "status") != "search") return std::nullopt;
+        out.told = true;
+    }
     if (out.game < 0 || !safe_room_code(out.room_code)) return std::nullopt;
     return out;
 }

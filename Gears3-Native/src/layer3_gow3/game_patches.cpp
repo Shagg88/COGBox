@@ -102,19 +102,22 @@ void Gow3NoDynamicShadows(PPCRegister& r11) {  // after `lwz r11,0x414(r21)` at 
 }
 
 // ---- Picture shape: 21:9, any wider shape, "auto" -------------------------------------------------------------------
-// The game draws a 1280 x H scene with H = 1280 / aspect (even, 320-720), changed at the same sites as the Canary
-// "21:9 Aspect Ratio Ultrawide Patch" (boma) for this XEX, with the view widened exactly (Hor+):
+// The game draws a 1280 x H scene with H = 1280 / aspect (a multiple of 8, 240-720), changed at the same sites as the
+// Canary "21:9 Aspect Ratio Ultrawide Patch" (boma) for this XEX, with the view widened exactly (Hor+):
 //   0x8261BEF0 `lfs f0,0x630(r27)` (the field-of-view factor) -> after it, f0 = the widened factor;
 //   0x8261BE60 `beq cr6,+0x90` -> always taken (ConstrainAspectRatio off);
 //   0x82960C78 `li r11,720` (the scene buffer height, stored to 0x8339242C) -> after it, r11 = H;
-//   0x827C583C `lwz r30,0x242c(r9)` (that height read back for a size check) -> after it, r30 = 720 (as before);
+//   0x827C583C `lwz r30,0x242c(r9)` (that height read back by the scene render targets' sizing, TU6 sub_827D7AA8) ->
+//     left at H since 0.6.3 (GitHub #330; the Canary patch and 0.6.2 forced 720 here, see Gow3UltrawideSizeCheck);
+//   0x827C6CCC `addi r3,r1,260` (scene shared memory block 2 created next) -> its size kept at the 16:9 size, so the
+//     shadow depth texture placed in it still fits (0.6.3, Gow3UltrawideSharedMemory; not in the Canary patch);
 //   0x82BC9D84 `stw r4,0x88(r3)` -> skipped (pillarboxed pre-rendered videos);
 //   the .rdata float at 0x820CDE2C (16:9 = 1.77778) -> the new aspect, written at load.
 // The front buffer becomes 1280 x H (x the resolution scale), shown at its own shape (--gow2_present_frame_aspect):
 // it fills a window of that shape, letterboxed in others. Shapes narrower than 16:9 (16:10, 4:3) stay 16:9: a taller
 // scene buffer may not fit EDRAM [unchecked].
 REXCVAR_DEFINE_BOOL(gow3_ultrawide, false, "Gears3",
-                    "21:9 ultrawide (Canary patch by boma): a 1280x550 picture (x the resolution scale) with a wider "
+                    "21:9 ultrawide (Canary patch by boma): a 1280x552 picture (x the resolution scale) with a wider "
                     "view; fills a 21:9 window or monitor, letterboxed in others. Same as --gow3_aspect=21:9");
 REXCVAR_DEFINE_STRING(gow3_aspect, "", "Gears3",
                       "Picture shape wider than 16:9: '' = the game's 16:9 (or 21:9 with --gow3_ultrawide), 'auto' = "
@@ -126,8 +129,19 @@ REXCVAR_DEFINE_BOOL(gow3_ultrawide_fov_exact, true, "Gears3",
                     "With --gow3_ultrawide: the wider view computed exactly from each camera's field of view (default), "
                     "or Canary's fixed factor 0.0109750 (false; 21:9 only)");
 
+// GitHub #330: before 0.6.3 the scene render targets stayed 1280x720 under a 1280xH picture; the Stats & Awards pages
+// (Scaleform, whose blend effects copy the screen into those targets and draw it back as if they were the screen's
+// size) then drew stacked blue bands. True (the old way) only to compare, or if a very wide shape fails at start-up.
+REXCVAR_DEFINE_BOOL(gow3_aspect_targets_720, false, "Gears3",
+                    "With --gow3_aspect / --gow3_ultrawide: keep the scene render targets at the 16:9 size 1280x720 as "
+                    "the Canary patch does (before 0.6.3). Off = sized for the picture, as the game sizes them at 16:9 "
+                    "(GitHub #330: on, the Stats & Awards pages draw stacked blue bands)");
+
 namespace {
-constexpr uint32_t kCanaryUltrawideHeight = 550;  // Canary's 21:9 scene height
+// Canary's 21:9 scene height is 550; the game rounds its scene render targets up to 8 rows (sub_827D7AA8), so every
+// height here is a multiple of 8 and the targets match the picture exactly (GitHub #330): 550 -> 552.
+constexpr uint32_t kCanaryUltrawideHeight = 552;
+uint32_t SceneRows(double rows) { return std::clamp(uint32_t(std::lround(rows / 8.0)) * 8u, 240u, 720u); }
 
 double ParseAspect(const std::string& v) {  // "21:9", "3440:1440" or "2.4"; 0 when unreadable
   char* end = nullptr;
@@ -158,8 +172,9 @@ uint32_t WideHeight() {
       REXLOG_INFO("gow3_aspect: '{}' = {:.4f}, not wider than 16:9 - the game's 16:9 picture is kept", v, aspect);
       return 0u;
     }
-    // GitHub #293 (0.6.2): down to 240 rows = 48:9 (three 16:9 screens side by side); 320 (4:1) before
-    const uint32_t h = std::clamp(uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u, 240u, 720u);
+    // GitHub #293 (0.6.2): down to 240 rows = 48:9 (three 16:9 screens side by side); 320 (4:1) before.
+    // GitHub #330 (0.6.3): a multiple of 8 rows (was: even), as the game's scene render targets are.
+    const uint32_t h = SceneRows(1280.0 / aspect);
     REXLOG_INFO("gow3_aspect: '{}' = {:.4f} -> scene 1280x{} ({:.4f})", v, aspect, h, 1280.0 / h);
     return h;
   }();
@@ -201,8 +216,50 @@ void Gow3UltrawideSceneHeight(PPCRegister& r11) {  // after `li r11,720` at 0x82
   GOW3_LOG_ONCE("gow3_aspect: scene buffer height {} -> {}", r11.u32, WideHeight());
   r11.u64 = WideHeight();
 }
-void Gow3UltrawideSizeCheck(PPCRegister& r30) {  // after `lwz r30,0x242c(r9)` at 0x827C583C
-  if (Wide()) r30.u64 = 720;
+// After `lwz r30,0x242c(r9)` at 0x827C583C (TU6 `lwz r30,0x2bd8(r9)` at 0x827D7ACC), in the scene render targets'
+// sizing (TU6 sub_827D7AA8, UE3 FSceneRenderTargets::Allocate on Xbox): r29 / r30 = the screen width / height globals,
+// grown into BufferSizeX/Y (+204 / +208, rounded up to 8) when larger, then the targets are made again. At 16:9 the
+// targets are exactly the screen's size, and the game's code relies on that: the Stats & Awards pages (a Scaleform
+// movie) copy the screen into a scene target ~40 times a frame (resolve to a 1280 x BufferSizeY texture) and draw it
+// back with tri-strip quads as if the texture were the screen's size [E: from the band ratios 720/540 and 720/480; the
+// quads' coordinates are not logged]. The Canary patch kept r30 = 720 here, so under a 1280x540 picture each copy
+// came back squeezed to 540/720 of its height: the stacked teal bands of GitHub #330 (job 1905: R1
+// 64:27 / D3D12, R3 1x, R4 Vulkan 8:3 with bands 720/480 apart; R2 16:9 clean). The game's own value (H, a multiple
+// of 8 - WideHeight) keeps targets and picture the same size, as at 16:9. Its post-processing scales by BufferSize
+// itself, so the 3D picture is unchanged.
+void Gow3UltrawideSizeCheck(PPCRegister& r30) {
+  if (!Wide()) return;
+  if (REXCVAR_GET(gow3_aspect_targets_720)) {
+    GOW3_LOG_ONCE("gow3_aspect: scene render targets kept at 1280x720 under the 1280x{} picture "
+                  "(--gow3_aspect_targets_720; GitHub #330)", WideHeight());
+    r30.u64 = 720;
+    return;
+  }
+  // Review r88 L1: log the game's own value each time it changes (a later change re-creates the targets), and say so
+  // when it is not the picture's height. Cheap: the size check runs about once a frame.
+  static std::atomic<uint32_t> last{0};
+  if (last.exchange(r30.u32) != r30.u32) {
+    static std::atomic<int> n{0};
+    if (n.fetch_add(1) < 8)
+      REXLOG_INFO("gow3_aspect: scene render targets sized from screen height {} (picture 1280x{}; 720 before 0.6.3, "
+                  "GitHub #330){}", r30.u32, WideHeight(), r30.u32 == WideHeight() ? "" : " - NOT the picture height");
+  }
+}
+// After `addi r3,r1,260` at 0x827C6CCC (TU6 0x827D8F5C), just before the `bl` to RHICreateSharedMemory (disc
+// sub_82966ED0 / TU6 sub_82977F18) for the scene's shared memory block 2 (GSceneRenderTargets+268) in InitDynamicRHI
+// (disc sub_827C6A20 / TU6 sub_827D8CB0): r5 = its size, max(BufferSize fmt 2, BufferSize fmt 19) = 1280 x
+// align32(BufferSizeY) x 4. The game also creates the 1120x688 whole-scene shadow depth texture (0x302000 bytes) in
+// that block (TU6 call 17), and RHICreateSharedTexture2D (TU6 sub_82977F90) checks that it fits - DbgBreakPoint
+// otherwise. At 16:9 the block is 1280x736x4 = 0x398000; with the targets following a picture under ~616 rows
+// (every shape wider than ~2.08:1) it is smaller, and job 1907 trapped at the first scene render (~25 s in). Keep the
+// 16:9 capacity (the size 0.6.2 allocated) so the targets can follow H (GitHub #330). Block 1 has its own shadow term.
+void Gow3UltrawideSharedMemory(PPCRegister& r5) {
+  if (!Wide() || REXCVAR_GET(gow3_aspect_targets_720)) return;
+  constexpr uint32_t kStock720 = 1280u * 736u * 4u;  // 0x398000
+  if (r5.u32 >= kStock720) return;
+  GOW3_LOG_ONCE("gow3_aspect: scene shared memory block 2 0x{:X} -> 0x{:X} (the 1120x688 shadow depth texture lives "
+                "there; GitHub #330)", r5.u32, kStock720);
+  r5.u64 = kStock720;
 }
 bool Gow3UltrawideVideo(PPCRegister& r4) {  // jump_address_on_true: past `stw r4,0x88(r3)` at 0x82BC9D84
   if (!Wide()) return false;
@@ -399,7 +456,8 @@ REXCVAR_DEFINE_INT32(gow3_tick_floor_fps, 0, "Gears3",
 void Gow3CheckpointStreamTick();        // checkpoint_stream.cpp (GitHub #226)
 void Gow3InstallCheckpointStreamWait();  // checkpoint_stream.cpp
 void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content packages, on the game thread
-void Gow3AdaptiveTriggersTick(bool in_front_end);  // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers)
+void Gow3AdaptiveTriggersTick(bool in_front_end);  // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers /
+                                                   // --pad_trigger_rumble)
 void Gow3FirstPersonTick();  // first_person.cpp (--gow3_first_person)
 
 // Gears 3's path choice (UIScene_PathChoice: "left path / right path") reads the triggers - the left trigger picks the
@@ -618,19 +676,31 @@ void Gow3PathChoiceTick() {
 // Exact cap (GitHub #225 follow-up: 121-123 at a 120 cap): the engine's own wait sleeps whole milliseconds, so a limit
 // of N gave N +- 2. With a player's limit the game thread waits here on the host clock (shared precise limiter) and the
 // engine is told "no limit" - it measured the time before this call, so its own wait would come on top.
-static void Gow3ExactLimit(PPCRegister& f1) {
+// 0.6.3: wait = false for UWorld::ServerTickClients' call (host with remote players): it only reads the value, and a
+// second wait in the same frame halved the player's limit (60 -> 30, 144 -> 72). It gets 0 ("no limit"), exactly what
+// it got in 0.6.2 after the wait (review r62 M1: the limit itself would change its CPU-saturated test).
+// GitHub #313 pace check (xenos::PaceCheck): the engine loop's limiter wait in this frame, ms (game thread only; set to 0
+// by Gow3MaxTickRate for each engine-loop call, read by Gow3NoteTickCall after the original returned).
+static double g_frame_wait_ms = 0.0;
+static void Gow3ExactLimit(PPCRegister& f1, bool wait = true) {
+  if (!wait) { f1.f64 = 0.0; return; }
   static xenos::FrameLimiter limiter;
   GOW3_LOG_ONCE("gow3_max_fps: exact host-side limiter on ({} fps)", f1.f64);
-  limiter.Wait(f1.f64);
+  g_frame_wait_ms = limiter.Wait(f1.f64);
   f1.f64 = 0.0;
 }
 
-// GitHub #313 ("the fps limit stops working in split screen", reporter's game not stated; not reproduced). The limiter
-// lives in Gow3MaxTickRate, which runs only where UEngine::GetMaxTickRate loads MaxSmoothedFrameRate (frame-rate
+// GitHub #313 ("the fps limit stops working in split screen": Gears 2 and 3, a 120 limit, vsync on or off; not
+// reproduced). 0.6.3: the smoothing flag GetMaxTickRate tests (disc 0x8343F7D4, TU6 0x8344FFA4) is written once, at
+// start-up (disc sub_82960BE8), so the count below should stay 0 in split screen too; xenos::PaceCheck (every 10 s with
+// 2+ local players: engine frames, frames shown, limiter waits) tells the other cases apart. The limiter lives in Gow3MaxTickRate, which runs only where UEngine::GetMaxTickRate loads MaxSmoothedFrameRate (frame-rate
 // smoothing on); extras.cpp wraps the whole function. If the game takes another way through it while two players are in
 // (no smoothing -> no hook -> no limit), the two counts below differ. These lines show it in a report: how many engine
 // ticks did not reach the limiter, what the function returned for them, the limit asked, and the number of local players.
 std::atomic<uint32_t> g_tick_hook_hits{0};
+// 0.6.3 host frame-rate halving: the guest return address of the GetMaxTickRate call in progress (set by extras.cpp's
+// wrapper before the original runs; game thread). The ServerTickClients one (gow3_addresses.h) gets no wait / ticks.
+std::atomic<uint32_t> g_tick_caller{0};
 namespace {
 // Local players (Engine.GamePlayers count) or -1. Read-only; class / property lookups are cached and retried 5 s apart.
 int Gow3LocalPlayers() {
@@ -654,7 +724,11 @@ int Gow3LocalPlayers() {
 }  // namespace
 // Game thread, from extras.cpp's GetMaxTickRate wrapper once the original has returned: hits_before = g_tick_hook_hits
 // when the call began, result = the value it returned (0 = no limit left for the engine's own wait).
-void Gow3NoteTickCall(uint32_t hits_before, double result) {
+void Gow3NoteTickCall(uint32_t hits_before, double result, uint32_t caller) {
+  static xenos::TickCallSites sites;
+  const bool server = caller == gow3::addr::kServerTickClientsTickRateRet;
+  sites.Note("gow3_max_fps", caller, !server);
+  if (server) return;  // not an engine tick: the counts below are the engine loop's
   static uint64_t calls = 0, skipped = 0, window_calls = 0, window_skipped = 0, flips = 0;
   static int last_players = -2;
   static bool last_hooked = true;
@@ -662,6 +736,8 @@ void Gow3NoteTickCall(uint32_t hits_before, double result) {
   ++calls, ++window_calls;
   if (!hooked) ++skipped, ++window_skipped;
   const int32_t asked = LiveMaxFps();
+  static xenos::PaceCheck pace;  // GitHub #313: engine frames / frames shown / limiter waits, every 10 s in split screen
+  pace.Tick("gow3_max_fps", asked, hooked ? g_frame_wait_ms : -1.0, XenosSwapCount(), [] { return Gow3LocalPlayers(); });
   // a change between "reached the limiter" and "did not", each way: the first 12 only
   if (hooked != last_hooked && flips < 12) {
     ++flips;
@@ -688,18 +764,24 @@ void Gow3NoteTickCall(uint32_t hits_before, double result) {
 
 void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9B0
   g_tick_hook_hits.fetch_add(1, std::memory_order_relaxed);
-  TickTimeline();
-  Gow3ModChaptersTick();
-  Gow3PathChoiceTick();
-  Gow3SplitLayoutTick();       // GitHub #269
-  Gow3CheckpointStreamTick();  // GitHub #226
-  Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
-  Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
+  // 0.6.3: UWorld::ServerTickClients' call (a host with remote players, every frame after the engine loop's): the same
+  // value, no wait, and none of the per-frame ticks below (they ran twice per frame on a host before).
+  const bool engine_loop = g_tick_caller.load(std::memory_order_relaxed) != gow3::addr::kServerTickClientsTickRateRet;
+  if (engine_loop) {
+    g_frame_wait_ms = 0.0;  // GitHub #313 pace check: set by Gow3ExactLimit when it waits in this frame
+    TickTimeline();
+    Gow3ModChaptersTick();
+    Gow3PathChoiceTick();
+    Gow3SplitLayoutTick();       // GitHub #269
+    Gow3CheckpointStreamTick();  // GitHub #226
+    Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
+    Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
+  }
   const int32_t v = LiveMaxFps();
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)
     f1.f64 = (own <= 0.0 || own > double(m)) ? double(m) : own;
-    if (v != 0) Gow3ExactLimit(f1);
+    if (v != 0) Gow3ExactLimit(f1, engine_loop);
     return;
   }
   const int32_t floor_fps = REXCVAR_GET(gow3_tick_floor_fps);
@@ -710,7 +792,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   GOW3_LOG_ONCE("gow3_max_fps: engine frame-rate limit {} -> {}{}", f1.f64, v < 0 ? std::string("none") : std::to_string(v),
                 v < 0 && floor_fps > 0 ? " (tick floor " + std::to_string(floor_fps) + "/s)" : std::string());
   f1.f64 = v < 0 ? (floor_fps > 0 ? double(floor_fps) : 0.0) : double(v);
-  if (v > 0) Gow3ExactLimit(f1);
+  if (v > 0) Gow3ExactLimit(f1, engine_loop);
 }
 
 // ---- Engine settings through the game's own config (layer 2 --ue3_ini_edits) ----------------------------------------
@@ -1018,7 +1100,7 @@ void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
     REXLOG_INFO("gow3_patch_show_fps: FPS and frame-time display flags set");
   }
   if (Wide()) {
-    const float aspect = WideHeight() == kCanaryUltrawideHeight ? 2.3272f : float(1280.0 / double(WideHeight()));
+    const float aspect = float(1280.0 / double(WideHeight()));  // 0.6.3: the exact shape (Canary's 2.3272 = 1280 / 550)
     WriteGuestFloat(runtime, gow3::addr::kWidescreenAspect, gow3::addr::kWidescreenAspectValue, aspect,
                     "gow3_aspect: widescreen aspect");
     Gow3UltrawideCameraViewportType(runtime, aspect);

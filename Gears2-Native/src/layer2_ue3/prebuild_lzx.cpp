@@ -59,7 +59,6 @@ class BitReader {
     p_ += k;
     return k;
   }
-  bool overrun() const { return p_ > end_; }
 
  private:
   const uint8_t* p_;
@@ -325,5 +324,7 @@ bool PrebuildLzxDecode(const uint8_t* in, size_t in_len, uint8_t* out, size_t ou
   if (needed_padding) *needed_padding = true;
   return true;
 }
+
+const char* PrebuildLzxBuildId() { return __DATE__ " " __TIME__; }
 
 }  // namespace ue3::prebuild

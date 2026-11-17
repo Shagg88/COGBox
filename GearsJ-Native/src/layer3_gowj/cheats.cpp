@@ -13,20 +13,49 @@
 // 0x834B5684, `bctrl` on slot 0); the same sequence in sub_8255CD90 and the DeferredCommands loop sub_82515070 agree.
 // They run on the game thread from our override of UEngine::GetMaxTickRate (sub_8255E200, the function whose
 // `lfs f1,0x4CC(r3)` GowjMaxTickRate hooks; the hook still runs inside the original). Research: r7 (2026-11-14). Our code (MIT).
+//
+// 0.6.3: no cheat command runs in a Versus match (ue3/match_guard.h, asked from the console before every command), including
+// the System Link / online games this PC hosts and local games with bots. Judgment's GearGame package (disc GearGame.xxx,
+// class export table): Engine.GameInfo > GearGame.GearGameMP_Base, whose subclasses are
+//   GearGameTDM_Base (Team Deathmatch) > GearGameTDM_Newb > GearGameFFA_Base (Free-for-All) and GearGameOccupy_Base
+//     (Domination); also under TDM_Base: GearGameKTL_Base > GearGameCTL_Base, GearGameWingman_Base, GearGameHunter;
+//   GearGameRing_Base > GearGameAnnex_Base, GearGameKOTH_Base; GearGameBombDelivery;
+//   GearGameHvB_Base (OverRun, the "hvb" / "overrun" aliases of Coalesced.ini's GameInfoClassAliases: COG vs Locust players);
+//   GearGameWaveBased > GearGameHorde_Base, GearGameSiege_Base (Survival's fortifications);
+//   GearGameHvB_Base > GearGameHvB_Coop_Base (the "survival" alias: waves of AI Locusts against the players).
+// Campaign (GearGameSP_Base > GearGameAID_Base, Declassified too), GearMenuGame and the lobby classes are not under
+// GearGameMP_Base. Not Versus, so cheats as before: everything under GearGameWaveBased and GearGameHvB_Coop_Base.
+#include <atomic>
+
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
 #include <ue3/console.h>
+#include <ue3/match_guard.h>
 
 REXCVAR_DEFINE_BOOL(gowj_cheats, false, "Judgment",
                     "GitHub #264: developer cheats on hotkeys: F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F9 "
                     "free camera, F10 hide the HUD, F11 all weapons and ammo (keys can be changed with --ue3_hotkeys). Also "
-                    "in a System Link / online game this PC hosts (Judgment's own AllowCheats)");
+                    "in a System Link / online game this PC hosts (Judgment's own AllowCheats), but never in a Versus match");
 
 namespace {
 constexpr uint32_t kGEngine = 0x83544E04u;
 constexpr uint32_t kGLog = 0x834B5684u;
+// 0.6.3 (ue3/match_guard.h): the object tables as adaptive_triggers.cpp opens them (TU4: GNames / GObjObjects, Gears 3's layout).
+constexpr uint32_t kGNamesVar = 0x8355A328u;
+constexpr uint32_t kGObjectsVar = 0x8355A368u;
+constexpr const char* kLayout = "32,40,44,52,64,68,60,68,84,104,8,0,1";   // ue3::obj::LayoutText order
+// Cheats run in the campaign (and Declassified), Horde, Survival (HvB_Coop), the wave modes and the front end only - every
+// other game type is Versus, OverRun included (review r41: an allow-list). The party / pre-game lobbies (and the front
+// end, which runs as one): refused.
+constexpr const char* kAllowed[] = {"GearGameSP_Base", "GearGameWaveBased", "GearGameHvB_Coop_Base", "GearMenuGame", nullptr};
+constexpr const char* kDenied[] = {"GearPartyGame_Base", nullptr};
+bool OpenObjects() {
+  ue3::obj::Layout layout;
+  ue3::obj::ParseLayout(kLayout, &layout);
+  return ue3::obj::Init(kGNamesVar, kGObjectsVar, &layout);
+}
 // F7 / F8 are the in-game menu's (achievements, COGBox social), F1-F4 the SDK's / ours: as Gears 2.
 constexpr const char* kDefaultHotkeys =
     "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F9=ToggleDebugCamera;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
@@ -41,10 +70,13 @@ void GowjInstallCheats() {
   target.players_num_offset = 1192;
   target.exec_offset = 60;
   target.exec_vtable_slot = 0;
+  ue3::match::Configure({"Judgment", kAllowed, kDenied, target.engine_global, target.players_data_offset,
+                         target.players_num_offset, &OpenObjects});
+  target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
   if (REXCVAR_GET(gowj_cheats)) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
-    REXLOG_INFO("gowj_cheats: developer cheats on hotkeys");
+    REXLOG_INFO("gowj_cheats: developer cheats on hotkeys (never in a Versus match)");
   } else {
     Ue3ConsoleInstallHotkeys();  // only what --ue3_hotkeys names
   }
@@ -54,10 +86,25 @@ void GowjInstallCheats() {
 // (ctx is left as the original left it, so f1 - its result - is untouched).
 // The override runs with --gowj_cheats on or off; it also drives the DualSense trigger feel (GitHub #245) and the
 // first-person camera.
-void GowjAdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers)
+void GowjAdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers, --pad_trigger_rumble)
 void GowjFirstPersonTick();        // first_person.cpp (--gowj_first_person)
+void GowjPollLoadingMovie(PPCContext& ctx, uint8_t* base);  // game_patches.cpp (GitHub #318, --gowj_loading_fps)
 extern "C" void __imp__sub_8255E200(PPCContext& __restrict ctx, uint8_t* base);
+extern std::atomic<uint32_t> g_gowj_tick_caller;  // game_patches.cpp (0.6.3 host fps)
+bool GowjNoteTickCall(uint32_t caller);            // game_patches.cpp: true = the engine loop's call
 extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
+  // 0.6.3: who asks (the guest return address). A host with remote players asks twice per frame - the engine loop and
+  // UWorld::ServerTickClients; the limiter hook inside the original waits only for the engine loop's call, and the
+  // per-frame work here runs only for it.
+  const uint32_t caller = uint32_t(ctx.lr);
+  g_gowj_tick_caller.store(caller, std::memory_order_relaxed);
+  if (!GowjNoteTickCall(caller)) {
+    __imp__sub_8255E200(ctx, base);
+    return;
+  }
+  // GitHub #318: ask the game whether its loading movie is up BEFORE the original runs, so the loading-screen cap
+  // (decided by the GowjMaxTickRate hook inside it) follows this tick's answer. ctx is restored afterwards.
+  GowjPollLoadingMovie(ctx, base);
   __imp__sub_8255E200(ctx, base);
   Ue3ConsoleRunQueued(ctx, base);
   GowjAdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)

@@ -200,6 +200,7 @@ Aftermath 3 - outro = 여파 3 - 아웃트로
 Aftermath 4 = 여파 4
 Aftermath 5 = 여파 5
 DLSS (NVIDIA RTX) = DLSS (NVIDIA RTX)
+DLSS (NVIDIA RTX, experimental) = DLSS (NVIDIA RTX, 실험적)
 Not yet in  = 아직 지원하지 않음: 
 Fullscreen = 전체 화면
 Fullscreen (borderless) = 전체 화면 (테두리 없음)
@@ -262,6 +263,8 @@ Game's own (smallest) = 게임 자체 (가장 작음)
 Standard (196 MB / Gears 3 200 MB) = 표준 (196 MB / Gears 3 200 MB)
 Large (256 MB) = 큼 (256 MB)
 Larger (320 MB, not long-tested) = 더 큼 (320 MB, 오래 테스트되지 않음)
+Texture cache (video memory) = 텍스처 캐시(비디오 메모리)
+How much video memory the PC side keeps the game's textures in before the least recently used ones are freed. Texture packs need more: a freed pack texture is read from disk again when it is next drawn, which stutters. Auto: 512 MB; with a texture pack on, 2 GB (1 GB on cards with less than 6 GB). Keep it well under your graphics card's memory. = 가장 오래 사용되지 않은 텍스처를 해제하기 전까지 PC 쪽이 게임 텍스처를 보관하는 비디오 메모리 양입니다. 텍스처 팩은 더 많이 필요합니다: 해제된 팩 텍스처는 다음에 그려질 때 디스크에서 다시 읽혀 끊김이 생깁니다. 자동: 512MB. 텍스처 팩 사용 중에는 2GB(6GB 미만 카드는 1GB). 그래픽 카드 메모리보다 충분히 작게 유지하세요.
 Draw distance = 시야 거리
 Original = 원본
 Far (1.5x) = 멀리 (1.5x)
@@ -1016,8 +1019,7 @@ Controller layout = 컨트롤러 배치
 Southpaw (sticks swapped) = 사우스포 (스틱 교체)
 A and B swapped = A와 B 교체
 Bumpers and triggers swapped = 범퍼와 트리거 교체
-Custom (CogBox.ini [Pad] Remap=) = 사용자 지정 (CogBox.ini [Pad] Remap=)
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = 게임이 받기 전에 컨트롤러의 버튼과 스틱을 바꾸므로, 게임 자체의 버튼 안내는 원래 버튼을 그대로 보여 줘요. 사용자 지정: CogBox.ini의 [Pad] 아래 Remap=에 src=dst 쌍 (a b x y lb rb lt rt ls rs back start up down left right 또는 sticks=swap)을 적으세요.
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = 게임이 받기 전에 컨트롤러의 버튼과 스틱을 바꾸므로, 게임 자체의 버튼 안내는 원래 버튼을 그대로 보여 줘요. 사용자 지정: 아래 목록에서 게임의 각 버튼에 쓸 컨트롤러 버튼을 고르세요 (네 게임 모두 같은 배치이며, CogBox.ini의 [Pad] 아래 Remap=에 저장돼요).
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = 이제 타이틀 업데이트가 필요해요: 모든 게임은 Epic의 마지막 패치로 실행돼요 (Gears 2와 3: TU6, Judgment: TU4, Gears 1: TU5). 디스크 전용 버전은 더 이상 지원되지 않아요.
 Two-player split = 2인 화면 분할
 Top and bottom (game's) = 위아래 (게임 기준)
@@ -1143,7 +1145,7 @@ D-pad choose   A pick   B close = 방향 버튼 선택   A 고르기   B 닫기
 ICON = 아이콘
 BACK = 뒤로
 Horde bots = 호드 봇
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = 로컬 호드: 호드 점수판이 처음 나타날 때 뒤로 / 보기 버튼을 누르면 봇 두 명이 추가됩니다(다시 누르면 두 명 더). 봇은 매 웨이브 다시 나타납니다. 캠페인과 대전에서는 꺼 두세요: 뒤로 버튼이 게임의 치트 플래그도 켭니다.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = 뒤로 / 보기 버튼은 평소처럼 점수판을 보여 주고, 직접 호스트하는 호드 게임에서는 팀을 봇으로 5명까지 채웁니다(봇은 웨이브마다 부활합니다). 대전, 로비, 다른 사람의 게임에서는 아무 일도 일어나지 않습니다. 대전에서 봇을 쓰려면 로비의 봇 설정을 사용하세요.
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = 켬
@@ -1334,8 +1336,8 @@ start it once from COGBox to add its pictures. = COGBox에서 한 번 실행하�
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = 조준 감도 (%)
 Zoom sensitivity (%) = 줌 감도 (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 조준 중 마우스 속도(일반 속도 대비 %). 100 = 변경 없음. 네이티브 마우스 시점 전용.
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 스코프 줌 중 마우스 속도(롱샷, 해머 오브 던)(일반 속도 대비 %). 100 = 변경 없음. 네이티브 마우스 시점 전용.
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 조준 중 마우스 속도(일반 속도 대비 %). 100: 변경 없음. 네이티브 마우스 시점 전용.
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 스코프 줌 중 마우스 속도(롱샷, 해머 오브 던)(일반 속도 대비 %). 100: 변경 없음. 네이티브 마우스 시점 전용.
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = 이 프로필 삭제
 DELETE = 삭제
@@ -1348,7 +1350,7 @@ Paste a path = 경로 붙여넣기
 Import saves... = 저장 데이터 가져오기...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = 가장 부드럽게 플레이하려면 이 게임들에 아래 Title Update가 필요합니다. 자세한 내용은 README를 참고하세요.
 # 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
-The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = 개발자 치트 키예요. 게임 중 F5-F11 (갓 모드, 슬로 모션, 자유 카메라 - Gears 1에서는 벽 통과 비행 - HUD 숨기기, 모든 무기). Gears 2: 이 PC의 게임에서만 - System Link나 온라인 게임에서는 절대 안 돼요. Gears 3와 Judgment: 직접 호스트하는 System Link나 온라인 게임에서도 작동하고, 슬로 모션 등은 모든 플레이어에게 영향을 줘요 - 본인 게임에서만 써 주세요. Gears 1: System Link 게임에서는 아직 확인하지 않았어요. 업적과 저장 데이터는 사용자 책임이에요.
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. They do not work in Versus matches - only in the campaign and the wave modes (Horde, Beast, Survival). = 개발자 치트 키예요. 게임 중 F5-F11 (갓 모드, 슬로 모션, 자유 카메라 - Gears 1에서는 벽 통과 비행 - HUD 숨기기, 모든 무기). Gears 2: 이 PC의 게임에서만 - System Link나 온라인 게임에서는 절대 안 돼요. Gears 3와 Judgment: 직접 호스트하는 System Link나 온라인 게임에서도 작동하고, 슬로 모션 등은 모든 플레이어에게 영향을 줘요 - 본인 게임에서만 써 주세요. Gears 1: System Link 게임에서는 아직 확인하지 않았어요. 업적과 저장 데이터는 사용자 책임이에요. 대전(Versus) 매치에서는 작동하지 않습니다. 캠페인과 웨이브 모드(Horde, Beast, Survival)에서만 작동합니다.
 Not on a Mac (CrossOver). = Mac(CrossOver)에서는 안 돼요.
 Vulkan only on Proton / Wine. = Proton / Wine에서는 Vulkan만 돼요.
 On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = Mac(CrossOver)에서는 게임이 D3DMetal(Apple Silicon)을 통해 DirectX 12로 실행돼요. Vulkan은 시작되지 않아요.
@@ -1416,6 +1418,7 @@ Join their game. = 친구의 게임에 참가합니다.
 Set up this game in COGBox to join. = 참가하려면 COGBox에서 이 게임을 설정하세요.
 Invite them to the game you are hosting. = 내가 호스트하는 게임에 초대합니다.
 Remove this friend (asks first). = 이 친구를 삭제합니다(먼저 묻습니다).
+Take back your friend request. = 보낸 친구 요청을 취소합니다.
 Remove this friend? = 이 친구를 삭제할까요?
 Yes, remove = 예, 삭제
 Close the running game first, then press JOIN again. = 먼저 실행 중인 게임을 닫은 다음 참가를 다시 누르세요.
@@ -1504,3 +1507,68 @@ Graphics card = 그래픽 카드
 Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = 그래픽 카드가 둘 이상인 PC(노트북의 내장 그래픽과 별도 카드, 또는 카드 두 장)에서 게임이 사용할 카드를 정합니다. 자동은 전용 비디오 메모리가 가장 많은 카드를 고르고, 메모리가 비슷한 카드끼리라면 모니터가 연결된 카드를 고릅니다(DirectX 12와 Vulkan에서 같은 카드). 카드를 선택하면 대신 그 카드를 사용합니다. 선택한 카드가 이 PC에 더 이상 없으면 자동이 사용됩니다.
 (not found - Automatic is used) = (찾을 수 없음 - 자동 사용)
 The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = 선택한 그래픽 카드가 현재 이 PC에 없습니다 - 게임이 카드를 직접 고릅니다(자동).
+# 0.6.3 (GitHub #316): the window key
+GAME WINDOW = 게임 창
+Windowed / full screen key = 창 / 전체 화면 전환 키
+Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = 게임 창이 있는 모니터에서 창 모드와 전체 화면(테두리 없음, 또는 선택한 경우 독점) 사이를 전환하고, 돌아갈 때는 이전 창 크기와 위치로 되돌립니다. 네 게임 모두의 게임 창에서 키보드와 마우스 사용 여부와 관계없이 작동합니다. 다른 키를 쓰려면 extra-args.txt에 --bind_cogbox_fullscreen=F12 같은 줄을 추가하세요(키 이름이며, 원하면 앞에 Alt+, Ctrl+, Shift+를 붙일 수 있고, None은 키를 끕니다).
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = 사용자 지정 (아래에서 선택)
+Customise... = 사용자 지정...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = 위에서 고른 배치에서 시작해, 게임의 각 버튼에 쓸 컨트롤러 버튼을 직접 고르세요.
+Left: the game's buttons. Right: the controller button that does each one. = 왼쪽: 게임의 버튼. 오른쪽: 그 버튼을 누르는 컨트롤러 버튼.
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = 게임의 버튼을 하나 고른 다음, 그 역할을 할 컨트롤러 버튼을 누르세요 (Esc로 취소). 컨트롤러 버튼 하나는 한 가지 역할만 해요: 이미 다른 역할이 있었다면 둘이 서로 바뀌어요.
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = 연결된 컨트롤러가 없어요 - 목록에서 컨트롤러 버튼을 고르세요. 컨트롤러 버튼 하나는 한 가지 역할만 해요: 이미 다른 역할이 있었다면 둘이 서로 바뀌어요.
+Press a button... = 버튼을 누르세요...
+Nothing = 없음
+Swap sticks = 스틱 교체
+The left stick moves the camera and the right stick moves you (southpaw). = 왼쪽 스틱으로 카메라를, 오른쪽 스틱으로 이동해요 (사우스포).
+Reset to the game's own = 게임 자체 배치로 되돌리기
+{1} now does the game's {2}. = 이제 {1} 버튼이 게임의 {2} 역할을 해요.
+{1} does the game's {2} instead. = 대신 {1} 버튼이 게임의 {2} 역할을 해요.
+No button does the game's {1} now. = 이제 게임의 {1} 역할을 하는 버튼이 없어요.
+Your earlier custom layout was replaced. = 이전 사용자 지정 배치가 바뀌었어요.
+Undo Customise = 사용자 지정 되돌리기
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = CogBox.ini에 있지만 게임이 이해하지 못하는 부분 (공백과 기호를 빼고 남겨 둠):
+Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = 사용자 지정 이후의 모든 변경을 되돌려요: 그 전에 고른 배치(와 CogBox.ini의 줄)로 돌아가요.
+Or choose it from the list. = 또는 목록에서 고르세요.
+# 0.6.3 GitHub #245 Xbox trigger rumble (machine-made translation, please check)
+Trigger rumble (Xbox controllers) = 트리거 진동 (Xbox 컨트롤러)
+Xbox One and Series controllers over USB or the Xbox Wireless Adapter (Bluetooth may give none), with Steam Input off for the controller: the motors in the triggers kick with each shot (harder for shotguns and heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while Controller vibration is off, here or in the game's options. While this is on, every Xbox-style controller (Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press the triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in another order, and rarely Windows stops sending controller input until the PC restarts - untick this if a controller misbehaves. PlayStation controllers are not affected. = USB 또는 Xbox 무선 어댑터로 연결한 Xbox One 및 Series 컨트롤러(블루투스에서는 안 될 수 있어요), 해당 컨트롤러의 Steam Input이 꺼져 있을 때: 사격할 때마다 트리거 안의 모터가 짧게 튕기고(샷건과 중화기는 더 강하게), 전기톱이 돌거나 미니건이나 화염방사기를 쏘는 동안 진동해요. 컨트롤러 진동이 꺼져 있으면(여기서든 게임 옵션에서든) 아무 일도 없어요. 켜져 있는 동안에는 모든 Xbox 방식 컨트롤러(Xbox 360과 XInput 모드 컨트롤러 포함)를 Windows Raw Input으로 읽어요. 첫 버튼 입력 전까지 트리거, 가이드 버튼, 진동이 제대로 동작하지 않을 수 있고, 화면 분할에서 플레이어에게 컨트롤러가 다른 순서로 배정될 수 있으며, 드물게 Windows가 PC를 다시 시작할 때까지 컨트롤러 입력을 보내지 않을 수 있어요. 컨트롤러가 이상하게 동작하면 이 옵션을 끄세요. PlayStation 컨트롤러에는 영향이 없어요.
+# 0.6.4 Shadow detail (machine-made translation, please check)
+Shadow detail = 그림자 디테일
+Full (original) = 전체(원본)
+Balanced = 균형
+Performance = 성능
+Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows. = 그림자 때문에 게임이 느려지는 곳(치열한 전투)에서 프레임 속도를 높이기 위해 작고 먼 그림자를 줄입니다. 가깝고 큰 그림자, 캐릭터와 컷신의 그림자는 그대로 유지되고, 나머지는 게임 자체의 페이드로 사라집니다. 균형: 게임 최소 그림자 크기의 2배. 성능: 3배, 그리고 그림자가 약간 더 부드러워집니다.
+# 0.6.4: the Mods tab's lines ({1}, {2}, {3} are filled in: names and numbers)
+Left out by the game: {1} = 게임에서 제외됨: {1}
+Texture pack: 1 texture = 텍스처 팩: 텍스처 1개
+Texture pack: {1} textures = 텍스처 팩: 텍스처 {1}개
+made for a newer COGBox (mod API {1}; this one has {2}) = 더 새로운 COGBox용 (모드 API {1}, 이 버전은 {2})
+Select Chapter: Act {1} {2}, chapter {3} = 챕터 선택: {1}막 {2}, 챕터 {3}
+Select Chapter: Act {1} {2}, chapters {3} = 챕터 선택: {1}막 {2}, 챕터 {3}
+(one player) = (1인용)
+(co-op up to {1}) = (최대 {1}인 협동)
+its chapters' place in Select Chapter shows once the game's files are in = 챕터 선택에서의 위치는 게임 파일이 준비되면 표시됩니다
+# 0.6.4: saves on the Gameplay tab, hand-copied saves
+SAVES = 세이브
+Open saves folder = 세이브 폴더 열기
+Saves copied into the saves folder by hand that the game can't use as they are: {1}. = 세이브 폴더에 직접 복사되어 게임이 그대로는 사용할 수 없는 세이브: {1}개
+Bring them in = 가져오기
+Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken from a profile). What you copied is kept as it was, in a folder beside the saves folder. = 세이브 가져오기와 같은 방식으로 제자리에 넣습니다(Xbox 360 패키지는 풀고, 게임 진행 상황은 프로필에서 가져옴). 복사한 파일은 세이브 폴더 옆 폴더에 그대로 보관됩니다.
+Saves COGBox can't use yet = COGBox가 아직 사용할 수 없는 세이브
+Saves were copied into the saves folder by hand, and the game can't use them as they are (another profile's folder, Xbox 360 packages that aren't unpacked, or another layout). = 세이브가 세이브 폴더에 직접 복사되었지만 게임이 그대로는 사용할 수 없습니다(다른 프로필의 폴더, 풀지 않은 Xbox 360 패키지 또는 다른 구조).
+Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, in a folder beside the saves folder. = 지금 가져올까요? 세이브 가져오기와 같은 방식으로 제자리에 넣으며, 복사한 파일은 세이브 폴더 옆 폴더에 그대로 보관됩니다.
+Not now = 나중에
+No saves to bring in were found in the saves folder. = 세이브 폴더에서 가져올 세이브를 찾지 못했습니다.
+The saves could not be moved (is the game or another program using them?). Nothing was changed. = 세이브를 옮기지 못했습니다(게임이나 다른 프로그램이 사용 중인가요?). 아무것도 바뀌지 않았습니다.
+A backup of the saves is still being made - try again when it's done. = 세이브 백업을 아직 만드는 중입니다. 끝난 뒤 다시 시도하세요.
+Switch weapon = 무기 전환
+Pistol = 권총
+anti-aliasing only at this render resolution = 이 렌더 해상도에서는 안티에일리어싱만
+This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = 이 타이틀 업데이트는 게임의 다른 default.xex(게임의 다른 판 또는 다른 출시본)용으로 만들어져, 게임이 시작할 때 충돌할 가능성이 큽니다.
+Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = 디스크에서 꺼낸 그대로의 게임 파일(또는 Games on Demand 사본)과 그에 맞는 타이틀 업데이트를 사용하세요.
+Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and the host's game picks your team. = Gears 3: 지금 Versus > Social > {1}(으)로 가세요. 매치메이킹이 그 매치를 찾고, 호스트의 게임이 팀을 정합니다.
+the match's playlist = 매치의 플레이리스트
+Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: COG 또는 Locust를 고르려면 Versus > Private을 호스트하고 다른 플레이어는 방 코드나 친구 참가로 들어오게 하세요. 로비에서 Y를 눌러 팀을 바꿀 수 있습니다.
+Join through Gears 3's own matchmaking: the host's game picks your team. = Gears 3의 매치메이킹으로 참가: 호스트의 게임이 팀을 정합니다.

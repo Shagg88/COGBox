@@ -68,7 +68,7 @@ std::string presence_text(const SocialFriend& f);
 bool valid_tag(const std::string& tag);
 
 enum class SocialAction { Add, Accept, Decline, Block, Remove, Join, Invite, InviteAccept, InviteDecline, Rename, SetIcon, DeleteAccount,
-                         JoinMatch };
+                         JoinMatch, JoinMatchSearch };
 // A profile picture name from the server that is safe to look up under <COGBox>: icons/<8 hex digits>/<1-6 digits>.png
 // (anything else - a path, "..", another file type - is drawn as the letter).
 bool safe_icon_name(const std::string& name);
@@ -82,10 +82,17 @@ SocialCall call_for(SocialAction action, const std::string& arg);
 
 // After Join or an invite's Accept: the server answers 409 with the lobby when that game is not running here (the
 // launcher starts it with --net_join_lobby=<room code>); 200 means the running game was told. Game index as above.
+// 0.6.4 (Gears 3, JoinMatchSearch): the server may instead have the game find the match with its own matchmaking
+// (SDK patch 112): search = true, with the match's playlist; told = the running game was told (200, nothing to start).
 struct SocialJoin {
     int game = -1;
     std::string room_code;
+    bool search = false;
+    int playlist = -1;
+    bool told = false;
 };
+// The start option a Join puts in App::joinLobby for a matchmaking join: "prefer:" + the room code (play.cpp).
+inline constexpr const char* kPreferLobbyPrefix = "prefer:";
 std::optional<SocialJoin> join_from_answer(int status, const std::string& body);
 // The server's {"error": "..."} text, "" when there is none.
 std::string server_error(const std::string& body);

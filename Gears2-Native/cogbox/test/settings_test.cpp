@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <set>
 #include <sstream>
@@ -47,10 +48,16 @@ std::string exe_needle(const std::string& alias, int g) {
                                       "Judgment weapon feel for DualSense pads", "Gears 1 weapon feel for DualSense pads" };
         return adt[g];
     }
+    if (alias == "trr") {   // 0.6.3 (GitHub #245): each game's trigger pulses (Xbox impulse triggers)
+        static const char* trr[4] = { "Gears 2 trigger pulses for Xbox pads", "Gears 3 trigger pulses for Xbox pads",
+                                      "Judgment trigger pulses for Xbox pads", "Gears 1 trigger pulses for Xbox pads" };
+        return trr[g];
+    }
     return alias;
 }
 std::string rt_needle(const std::string& a) {
     if (a == "adt") return "DualSense adaptive triggers: games that support it";   // GitHub #245 (SDK patch 98)
+    if (a == "trr") return "Xbox impulse triggers: games that support it";        // 0.6.3, GitHub #245 (SDK patch 104)
     return a == "vs" ? "d3d12_present_vsync" : a == "lat" ? "d3d12_max_frame_latency" : a;
 }
 std::string file_name(const std::string& a) {
@@ -179,6 +186,15 @@ const char* const k_builtin[] = {
     "game=0;cards=NVIDIA GeForce RTX 4090;GraphicsCard=NVIDIA GeForce RTX 4090",                        // older exe: greyed, not sent
     "game=0;exe=gpucard;cards=NVIDIA GeForce RTX 3080/NVIDIA GeForce RTX 3080 Ti;GraphicsCard=NVIDIA GeForce RTX 3080",   // name inside another's: a note
     "game=1;exe=gpucard;cards=AMD Radeon(TM) Graphics/AMD Radeon RX 7900 XTX;GraphicsCard=  AMD Radeon RX 7900 XTX  ",   // the name is trimmed
+    // 0.6.3 (GitHub #245): Trigger rumble (Xbox controllers) - sent with the runtime's patch 104 and the game's trigger pulses
+    "game=0;TriggerRumble=1;exe=trr;rt=trr",                                   // Gears 2: sent
+    "game=1;TriggerRumble=1;AdaptiveTriggers=1;exe=trr,adt;rt=trr,adt",       // Gears 3: both trigger options sent
+    "game=2;TriggerRumble=1;exe=trr;rt=trr",                                   // Judgment: sent
+    "game=3;TriggerRumble=1;exe=trr;rt=trr",                                   // Gears 1: sent
+    "game=1;TriggerRumble=1;exe=trr",                                          // runtime without patch 104: greyed, not sent
+    "game=1;TriggerRumble=1;rt=trr",                                           // exe without trigger pulses: greyed, not sent
+    "game=1;TriggerRumble=1;exe=trr;rt=trr;Vibration=0",                       // Controller vibration off: greyed, not sent
+    "game=1;TriggerRumble=1;exe=trr;rt=trr;wine=1",                            // Proton / Wine: greyed, not sent
 };
 
 std::string random_case(std::mt19937& r) {
@@ -265,6 +281,21 @@ int summary() {
         if (st2.view(Game::Gears3, e).i("Fov") != 110 || st2.view(Game::Gears2, e).i("Fov") != 90) { std::cout << "FAIL per-game memory\n"; ++fails; }
         std::cout << "--- ini after a Gears 3 save ---\n" << ini;
     }
+    // GitHub #316: the window-mode key shown on the Controls tab: Alt+Return unless extra-args.txt changes it
+    {
+        Environment e;
+        auto key = [&](std::vector<std::string> lines) { e.extra_args_lines = std::move(lines); return window_key(e); };
+        const std::pair<std::vector<std::string>, const char*> want[] = {
+            { {}, "Alt+Return" },
+            { { "# --bind_cogbox_fullscreen=F11", "--gow2_cheats=true" }, "Alt+Return" },   // a comment, another switch
+            { { "--bind_cogbox_fullscreen=F12" }, "F12" },
+            { { "  --bind_cogbox_fullscreen=\"Ctrl+Shift+F11\"  " }, "Ctrl+Shift+F11" },
+            { { "--bind_cogbox_fullscreen=F10", "--bind_cogbox_fullscreen=None" }, "None" },   // the last line wins
+            { { "--bind_cogbox_fullscreen=" }, "None" } };
+        for (const auto& w : want)
+            if (key(w.first) != w.second) { std::cout << "FAIL window key, want " << w.second << " got " << key(w.first) << "\n"; ++fails; }
+        if (std::string(kWindowKeyDefault) != "Alt+Return") { std::cout << "FAIL window key default\n"; ++fails; }
+    }
     // Achievements part 4: the popup settings are on their own tab, with these labels
     {
         const std::pair<const char*, const char*> want[] = {
@@ -298,11 +329,48 @@ int summary() {
             std::cout << "FAIL languages not on the copy (" << (miss ? "missing" : "present") << ")\n"; ++fails;
         }
     }
-    {   // cg050: the -normal exe's name; no user option any more (Shagg 10 Nov: automatic fallback in the launcher)
-        if (normal_code_exe("C:\\COGBox\\Gears2\\port-tu6\\gow2.exe") != "C:\\COGBox\\Gears2\\port-tu6\\gow2-normal.exe" ||
-            std::string(normal_code_exe_name(Game::Judgment)) != "gowj-normal.exe") { std::cout << "FAIL normal-code exe name\n"; ++fails; }
-        if (find_option(Game::Gears3, "FastCode")) { std::cout << "FAIL FastCode should not be a user option\n"; ++fails; }
+    {   // cg050: "Faster game code" is no user option; 0.6.3: no -normal exe or crash fallback either (one build per game)
+        for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
+            if (find_option(g, "FastCode")) { std::cout << "FAIL FastCode should not be a user option\n"; ++fails; }
     }
+    // KiltedKernel: texture packs - the enabled mods that hold pack textures (r95 L1: only those), the one loaded last
+    // first, and only for a game exe that has the option; none at all without such a mod
+    for (int cap = 0; cap <= 1; ++cap)
+        for (int packs = 0; packs <= 1; ++packs) {
+            Environment e; e.update_ready = true;
+            e.cap.exe_has = [cap](const std::string& n) { return cap || n != "gow2_texture_pack_dirs"; };
+            e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+            e.mods = { "C:/G/mods/A", "C:/G/mods/B", "C:/G/mods/C" };
+            if (packs) e.texture_pack_mods = { "C:/G/mods/A", "C:/G/mods/C" };
+            Store st; Settings s = st.view(Game::Gears3, e);
+            const std::vector<std::string> a = build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr);
+            std::string got;
+            for (const std::string& x : a) if (x.rfind("--gow2_texture_pack_dirs=", 0) == 0) got = x;
+            const std::string want = "--gow2_texture_pack_dirs=\"C:/G/mods/C;C:/G/mods/A\"";
+            if (cap && packs ? got != want : !got.empty()) { std::cout << "FAIL texture pack folders (" << got << ")\n"; ++fails; }
+        }
+    // 0.6.4 (GitHub #341): the texture cache - Auto sends nothing (512) without a texture pack and 2048 with one; a size
+    // other than 512 is sent as picked; nothing for an exe without the cvar
+    for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
+        for (int cap = 0; cap <= 1; ++cap)
+            for (int packs = 0; packs <= 1; ++packs)
+                for (int pick = 0; pick <= 4; ++pick)
+                for (unsigned vram : { 0u, 4096u, 5900u, 8192u }) {
+                    Environment e; e.update_ready = true; e.vram_mb = vram;
+                    e.cap.exe_has = [cap](const std::string& n) { return cap || n != "gow2_renderer_texture_cache_mb"; };
+                    e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+                    if (packs) { e.mods = { "C:/G/mods/A" }; e.texture_pack_mods = { "C:/G/mods/A" }; }
+                    Store st; Settings s = st.view(g, e);
+                    s.set("TexCache", pick);
+                    const std::vector<std::string> a = build_args(g, Version::TitleUpdate, s, e, nullptr);
+                    std::string got;
+                    for (const std::string& x : a) if (x.rfind("--gow2_renderer_texture_cache_mb=", 0) == 0) got = x;
+                    static const int k_mb[5] = { 0, 512, 1024, 2048, 4096 };
+                    const int mb = pick ? k_mb[pick] : packs ? (vram >= 5800 ? 2048 : 1024) : 512;
+                    const std::string want = cap && mb != 512 ? "--gow2_renderer_texture_cache_mb=" + std::to_string(mb) : "";
+                    if (got != want) { std::cout << "FAIL texture cache (game " << int(g) << ", cap " << cap << ", packs " << packs
+                                                 << ", pick " << pick << ", vram " << vram << "): '" << got << "'\n"; ++fails; }
+                }
     // social step 3: with the multiplayer server enabled the games start online; without, none of it
     for (int on = 0; on <= 1; ++on) {
         Environment e; e.update_ready = true;
@@ -432,6 +500,259 @@ int summary() {
         for (const std::string& x : a)
             if (x.find("_first_person") != std::string::npos) { ++n; ok = ok && x == want; }
         if (n != (*want ? 1 : 0) || !ok) { std::cout << "FAIL first person for game " << static_cast<int>(g) << "\n"; ++fails; }
+    }
+    // 0.6.3: the Custom controller layout editor - CogBox.ini [Pad] Remap= read as the runtime reads pad_remap (SDK patch 55),
+    // written back with only the moved buttons; a controller button taken by another game button swaps with it
+    {
+        auto bad = [&](const std::string& what) { std::cout << "FAIL pad layout: " << what << "\n"; ++fails; };
+        PadMap id;
+        if (format_pad_remap(id) != "" || !parse_pad_remap("").same_layout(id) || !parse_pad_remap("").unknown.empty()) bad("empty");
+        if (pad_input_from_token("LB") != PadLB || pad_input_from_token("Start") != PadStart || pad_input_from_token("l3") != -1) bad("names");
+        for (int i = 0; i < kPadInputs; ++i)
+            if (pad_input_from_token(pad_input_token(i)) != i || !pad_input_label(i)) bad(std::string("token ") + pad_input_token(i));
+        // the presets read back as written (pairs in the list's order) and send what they always sent
+        const char* want[4] = { "", "sticks=swap", "a=b,b=a", "lb=lt,rb=rt,lt=lb,rt=rb" };
+        for (int l = 0; l < 4; ++l) {
+            const PadMap m = parse_pad_remap(pad_layout_preset(l));
+            if (format_pad_remap(m) != want[l] || !m.unknown.empty()) bad(std::string("preset ") + std::to_string(l));
+        }
+        {
+            const PadMap m = parse_pad_remap(pad_layout_preset(3));
+            if (m.to[PadLB] != PadLT || m.to[PadLT] != PadLB || m.to[PadRB] != PadRT || m.to[PadRT] != PadRB || m.to[PadA] != PadA) bad("preset 3 map");
+        }
+        // hand-written: any case, spaces, empty parts, identity pairs, the last pair for a button wins, unknown parts kept
+        {
+            const PadMap m = parse_pad_remap(" A = B , b=a,,x=x, Sticks=Swap, y=lb, y=rt, l3=a, a=, up=down=left, foo ");
+            if (m.to[PadA] != PadB || m.to[PadB] != PadA || m.to[PadX] != PadX || m.to[PadY] != PadRT || !m.sticks_swapped) bad("hand-written map");
+            if (m.unknown != std::vector<std::string>({ "l3=a", "a=", "up=down=left", "foo" })) bad("unknown parts");
+            const std::string f = format_pad_remap(m);
+            if (f != "a=b,b=a,y=rt,sticks=swap,l3=a,a=,up=down=left,foo") bad("hand-written format: " + f);
+            const PadMap again = parse_pad_remap(f);   // round trip: same layout, same text the second time
+            if (!again.same_layout(m) || again.unknown != m.unknown || format_pad_remap(again) != f) bad("round trip");
+            // what the runtime is given (build_args) reads as the same layout
+            if (!parse_pad_remap(pad_remap_clean(f)).same_layout(m)) bad("clean");
+        }
+        // two controller buttons on one game button, a game button with none: shown and kept
+        {
+            const PadMap m = parse_pad_remap("a=b");
+            if (pad_sources(m, PadB) != std::vector<int>({ PadA, PadB }) || !pad_sources(m, PadA).empty()) bad("sources");
+            if (format_pad_remap(m) != "a=b") bad("many to one format");
+        }
+        // assigning: B pressed for the game's A swaps A and B; again is no change; back again is the game's own
+        {
+            PadMap m;
+            PadAssign r = pad_assign(m, PadA, PadB);
+            if (!r.changed || r.took_from != PadB || r.swapped != PadA || r.left_empty || format_pad_remap(m) != "a=b,b=a") bad("swap A B");
+            if (pad_assign(m, PadA, PadB).changed || format_pad_remap(m) != "a=b,b=a") bad("same again");
+            r = pad_assign(m, PadA, PadA);
+            if (!r.changed || r.took_from != PadB || r.swapped != PadB || format_pad_remap(m) != "") bad("swap back: " + format_pad_remap(m));
+            // a chain: LT for the game's RB (RB takes LT), then RT for the game's LT (RB, which did LT, takes RT): one button each
+            pad_assign(m, PadRB, PadLT);
+            pad_assign(m, PadLT, PadRT);
+            for (int i = 0; i < kPadInputs; ++i) if (pad_sources(m, i).size() != 1) bad(std::string("chain ") + pad_input_token(i));
+            if (format_pad_remap(m) != "rb=rt,lt=rb,rt=lt") bad("chain format: " + format_pad_remap(m));
+            // sticks stay as they are
+            PadMap s2 = parse_pad_remap("sticks=swap");
+            pad_assign(s2, PadX, PadY);
+            if (!s2.sticks_swapped || format_pad_remap(s2) != "x=y,y=x,sticks=swap") bad("sticks kept");
+        }
+        // from a hand-written layout where the game's A has no button: taking the only button of the game's B leaves B empty
+        {
+            PadMap m = parse_pad_remap("a=b");                         // A and B both press B; nothing presses A
+            PadAssign r = pad_assign(m, PadA, PadB);                   // B for the game's A: the game's B keeps A
+            if (!r.changed || r.swapped != -1 || r.left_empty || format_pad_remap(m) != "a=b,b=a") bad("fill the empty one");
+            PadMap n = parse_pad_remap("a=b,b=x");                     // nothing presses A or B... A presses B, B presses X
+            r = pad_assign(n, PadY, PadA);                             // A for the game's Y: the game's B has no button, nor had Y another
+            if (!r.changed || r.took_from != PadB || r.swapped != PadY || n.to[PadY] != PadB) bad("swap into a moved layout");
+            PadMap e = parse_pad_remap("a=b,y=b");                     // the game's A: no button; the game's Y: no button
+            r = pad_assign(e, PadA, PadX);                             // X for A: the game's X had only X, and A had none to give
+            if (!r.changed || !r.left_empty || r.swapped != -1 || !pad_sources(e, PadX).empty()) bad("left empty");
+        }
+        if (pad_assign(id, -1, PadA).changed || pad_assign(id, PadA, kPadInputs).changed) bad("out of range");
+        // build_args: Custom sends the saved text cleaned (no spaces), a preset its own text, Game's own nothing
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        auto remap_arg = [&](int layout, const std::string& ini) {
+            Environment env = e; env.pad_remap = ini;
+            Store st; Settings s = st.view(Game::Gears2, env);
+            s.set("PadLayout", layout);
+            std::string out;
+            for (const std::string& x : build_args(Game::Gears2, Version::TitleUpdate, s, env, nullptr))
+                if (x.rfind("--pad_remap=", 0) == 0) out = x;
+            return out;
+        };
+        if (remap_arg(4, " a = b, b = a ") != "--pad_remap=a=b,b=a" || remap_arg(1, "x=y") != "--pad_remap=sticks=swap" ||
+            remap_arg(0, "x=y") != "" || remap_arg(4, "") != "" || remap_arg(3, "") != "--pad_remap=lb=lt,lt=lb,rb=rt,rt=rb") bad("build_args");
+        const Option* o = find_option(Game::Gears2, "PadLayout");
+        if (!o || o->scope != Scope::Shared || o->choices.size() != 5 || o->choices[4] != "Custom (choose below)") bad("option");
+    }
+    // 0.6.3 (reviews r49 / r50): Shared values edited on one page go to every page before a save (sync_shared). The r50 case:
+    // Gears 3's page has unsaved Shared edits while Gears 2's in-game menu changes others and saves - both are kept; on the
+    // same option the page being saved (Gears 2) wins. PerGame values stay on their own page.
+    {
+        Environment envs[kGameCount];
+        for (Environment& e : envs) e.update_ready = true;
+        Store st;
+        Settings pages[kGameCount];
+        for (int g = 0; g < kGameCount; ++g) { pages[g] = st.view(static_cast<Game>(g), envs[g]); st.commit(static_cast<Game>(g), pages[g], envs[g]); }
+        const int G2 = static_cast<int>(Game::Gears2), G3 = static_cast<int>(Game::Gears3), GJ = static_cast<int>(Game::Judgment);
+        const int fs3 = pages[G3].i("Fullscreen"), fs2 = pages[G2].i("Fullscreen");
+        // Gears 3 (open page, unsaved): Vibration off, a graphics card, Extra dead zone 2, its own display mode
+        pages[G3].set("Vibration", 0); pages[G3].t["GraphicsCard"] = "NVIDIA GeForce RTX 4090"; pages[G3].set("DeadZone", 2);
+        pages[G3].set("Fullscreen", fs3 == 0 ? 1 : 0);
+        // Gears 2 (in-game menu, then Restart to apply): mouse sensitivity and Extra dead zone 4
+        pages[G2].set("Sens", 1.2); pages[G2].set("DeadZone", 4);
+        bool dirty[kGameCount] = {}; dirty[G2] = dirty[G3] = true;
+        bool changed[kGameCount] = {};
+        sync_shared(st, envs, pages, dirty, G2, changed);
+        auto bad = [&](const std::string& w) { std::cout << "FAIL sync_shared: " << w << "\n"; ++fails; };
+        for (int g : { G2, G3, GJ }) {
+            if (pages[g].i("Vibration") != 0 || pages[g].f("Sens") != 1.2 || pages[g].str("GraphicsCard") != "NVIDIA GeForce RTX 4090")
+                bad("edits of both pages on game " + std::to_string(g));
+            if (pages[g].i("DeadZone") != 4) bad("the saved page wins on game " + std::to_string(g));
+        }
+        if (pages[G2].i("Fullscreen") != fs2 || pages[G3].i("Fullscreen") == fs3) bad("PerGame value moved");
+        if (!changed[G2] || !changed[G3] || !changed[GJ]) bad("changed flags");
+        bool again[kGameCount] = {};
+        sync_shared(st, envs, pages, dirty, G2, again);
+        for (bool c : again) if (c) bad("second sync changed something");
+        st.commit(Game::Gears2, pages[G2], envs[G2]); st.commit(Game::Gears3, pages[G3], envs[G3]);   // either order keeps it
+        const Settings g1 = st.view(Game::Gears1, envs[static_cast<int>(Game::Gears1)]);
+        if (g1.i("Vibration") != 0 || g1.f("Sens") != 1.2 || g1.i("DeadZone") != 4) bad("store after both commits");
+        // nothing unsaved: nothing moves
+        bool none[kGameCount] = {};
+        Settings fresh[kGameCount];
+        for (int g = 0; g < kGameCount; ++g) fresh[g] = st.view(static_cast<Game>(g), envs[g]);
+        fresh[G3].set("Sens", 0.3);   // not dirty: not an edit to share
+        sync_shared(st, envs, fresh, none, G3, changed);
+        if (fresh[G2].f("Sens") != 1.2) bad("a page that isn't dirty was shared");
+    }
+    // review r51: the cases r50 / r51 left out - Monitor's clamp, an edit changed back, a text conflict between two unsaved
+    // pages, and a save from a page with no unsaved edits
+    {
+        const int G2 = static_cast<int>(Game::Gears2), G3 = static_cast<int>(Game::Gears3), GJ = static_cast<int>(Game::Judgment),
+                  G1 = static_cast<int>(Game::Gears1);
+        auto bad = [&](const std::string& w) { std::cout << "FAIL sync_shared (r51): " << w << "\n"; ++fails; };
+        struct World { Environment envs[kGameCount]; Store st; Settings pages[kGameCount]; bool dirty[kGameCount] = {};
+                       bool changed[kGameCount] = {}; };
+        auto world = [&](int screens, double monitor) {   // every page saved, nothing unsaved
+            auto w = std::make_unique<World>();
+            for (Environment& e : w->envs) { e.update_ready = true; e.screen_count = screens; }
+            for (int g = 0; g < kGameCount; ++g) {
+                w->pages[g] = w->st.view(static_cast<Game>(g), w->envs[g]);
+                w->pages[g].set("Monitor", monitor);
+                w->st.commit(static_cast<Game>(g), w->pages[g], w->envs[g]);
+            }
+            return w;
+        };
+        // 1. Monitor 3 saved on 3 screens, then a screen goes: Gears 2's unsaved page still holds 3 (view now shows 2) -
+        //    not an edit, so Judgment's Monitor 1 is kept when Gears 2 saves
+        {
+            auto w = world(3, 3);
+            for (Environment& e : w->envs) e.screen_count = 2;
+            w->pages[G2].set("Sens", 0.7); w->dirty[G2] = true;   // dirty for another reason
+            w->pages[GJ].set("Monitor", 1); w->dirty[GJ] = true;
+            sync_shared(w->st, w->envs, w->pages, w->dirty, G2, w->changed);
+            for (int g = 0; g < kGameCount; ++g)
+                if (w->pages[g].i("Monitor") != 1 || w->pages[g].f("Sens") != 0.7) bad("Monitor clamp on game " + std::to_string(g));
+            w->st.commit(Game::Gears2, w->pages[G2], w->envs[G2]);
+            if (w->st.view(Game::Gears3, w->envs[G3]).i("Monitor") != 1) bad("Monitor clamp: store after the save");
+        }
+        // 1b. (r51 #3) a Monitor edit copied to a game whose screen count is lower gets that game's clamp
+        {
+            auto w = world(3, 0);
+            w->envs[G1].screen_count = 2;
+            w->pages[G3].set("Monitor", 3); w->dirty[G3] = true;
+            sync_shared(w->st, w->envs, w->pages, w->dirty, G3, w->changed);
+            if (w->pages[G2].i("Monitor") != 3 || w->pages[G1].i("Monitor") != 2) bad("Monitor clamp when copied");
+            bool again[kGameCount] = {};
+            sync_shared(w->st, w->envs, w->pages, w->dirty, G3, again);
+            for (bool c : again) if (c) bad("Monitor clamp: second sync changed something");
+        }
+        // 2. the page being saved changes Extra dead zone and back: not an edit, so Gears 3's unsaved 2 is kept (by design)
+        {
+            auto w = world(1, 0);
+            const int dz = w->pages[G2].i("DeadZone"), other = dz == 2 ? 3 : 2;
+            w->pages[G2].set("DeadZone", dz + 1); w->pages[G2].set("DeadZone", dz); w->pages[G2].set("Sens", 0.7);
+            w->dirty[G2] = true;
+            w->pages[G3].set("DeadZone", other); w->dirty[G3] = true;
+            sync_shared(w->st, w->envs, w->pages, w->dirty, G2, w->changed);
+            for (int g = 0; g < kGameCount; ++g)
+                if (w->pages[g].i("DeadZone") != other || w->pages[g].f("Sens") != 0.7) bad("reverted edit on game " + std::to_string(g));
+        }
+        // 3. two unsaved pages with different graphics cards: the page being saved wins either way round
+        for (int prefer : { G3, GJ }) {
+            auto w = world(1, 0);
+            w->pages[G3].t["GraphicsCard"] = "Card A"; w->dirty[G3] = true;
+            w->pages[GJ].t["GraphicsCard"] = "Card B"; w->dirty[GJ] = true;
+            sync_shared(w->st, w->envs, w->pages, w->dirty, prefer, w->changed);
+            const std::string want = prefer == G3 ? "Card A" : "Card B";
+            for (int g = 0; g < kGameCount; ++g)
+                if (w->pages[g].str("GraphicsCard") != want) bad("text conflict, prefer " + std::to_string(prefer) + ", game " + std::to_string(g));
+        }
+        // 4. saved from Gears 2, which has no unsaved edits: the other pages' edits still reach it; on a conflict the later
+        //    game wins (Judgment after Gears 3)
+        {
+            auto w = world(1, 0);
+            const int vib = w->pages[G2].i("Vibration");
+            w->pages[G3].set("Vibration", vib ? 0 : 1); w->pages[G3].t["GraphicsCard"] = "Card A"; w->dirty[G3] = true;
+            w->pages[GJ].t["GraphicsCard"] = "Card B"; w->dirty[GJ] = true;
+            sync_shared(w->st, w->envs, w->pages, w->dirty, G2, w->changed);
+            if (w->pages[G2].i("Vibration") == vib || w->pages[G2].str("GraphicsCard") != "Card B" || !w->changed[G2])
+                bad("save from a page with no edits");
+            if (w->pages[G3].str("GraphicsCard") != "Card B") bad("no edits on the saved page: game order");
+        }
+    }
+    // 0.6.3 (GitHub #245): Trigger rumble (Xbox controllers) - Shared, off by default, on the Controls tab; sent only with
+    // the runtime's pad_trigger_rumble (SDK patch 104) and the game's trigger pulses, not under Wine / Proton, and not while
+    // Controller vibration is off; one setting for all four games.
+    {
+        auto bad = [&](const std::string& w) { std::cout << "FAIL TriggerRumble: " << w << "\n"; ++fails; };
+        static const char* pulses[kGameCount] = { "Gears 2 trigger pulses for Xbox pads", "Gears 3 trigger pulses for Xbox pads",
+                                                  "Judgment trigger pulses for Xbox pads", "Gears 1 trigger pulses for Xbox pads" };
+        for (int g = 0; g < kGameCount; ++g) {
+            const Game game = static_cast<Game>(g);
+            const Option* o = find_option(game, "TriggerRumble");
+            if (!o || o->scope != Scope::Shared || o->def != 0 || o->tab != Tab::Controls || o->kind != Kind::Bool ||
+                o->label != "Trigger rumble (Xbox controllers)")
+                { bad("option on game " + std::to_string(g)); continue; }
+            // rt: the runtime has patch 104; exe: this game's pulses (or another game's); wine; vibration; the value
+            auto sent = [&](bool rt, int exe_game, bool wine, bool vibration, bool value) {
+                Environment e; e.update_ready = true; e.wine = wine;
+                const std::string needle = exe_game >= 0 ? pulses[exe_game] : "";
+                e.cap.exe_has = [needle](const std::string& n) { return !needle.empty() && n == needle; };
+                e.cap.runtime_has = [rt](const std::string& n) { return rt && n == "Xbox impulse triggers: games that support it"; };
+                e.cap.file_next_to_exe = [](const std::string&) { return false; };
+                Store st; Settings s = st.view(game, e);
+                s.set("Vibration", vibration ? 1 : 0);
+                if (value) s.set("TriggerRumble", 1);
+                int n = 0;
+                for (const std::string& x : build_args(game, effective_version(game, s, e), s, e, nullptr))
+                    if (x == "--pad_trigger_rumble=true") ++n;
+                    else if (x.find("pad_trigger_rumble") != std::string::npos) n += 100;   // any other form: wrong
+                return n;
+            };
+            const std::string gs = " (game " + std::to_string(g) + ")";
+            if (sent(true, g, false, true, true) != 1) bad("not sent" + gs);
+            if (sent(true, g, false, true, false) != 0) bad("sent while off (the default)" + gs);
+            if (sent(false, g, false, true, true) != 0) bad("sent to a runtime without patch 104" + gs);
+            if (sent(true, -1, false, true, true) != 0) bad("sent to an exe without trigger pulses" + gs);
+            if (sent(true, (g + 1) % kGameCount, false, true, true) != 0) bad("another game's needle accepted" + gs);
+            if (sent(true, g, true, true, true) != 0) bad("sent under Wine / Proton" + gs);
+            if (sent(true, g, false, false, true) != 0) bad("sent with Controller vibration off" + gs);
+        }
+        // Shared: ticked on Gears 3's page, every game's page has it after the save
+        Environment envs[kGameCount];
+        for (Environment& e : envs) e.update_ready = true;
+        Store st;
+        Settings g3 = st.view(Game::Gears3, envs[static_cast<int>(Game::Gears3)]);
+        g3.set("TriggerRumble", 1);
+        st.commit(Game::Gears3, g3, envs[static_cast<int>(Game::Gears3)]);
+        for (int g = 0; g < kGameCount; ++g)
+            if (st.view(static_cast<Game>(g), envs[g]).i("TriggerRumble") != 1) bad("not shared to game " + std::to_string(g));
+        Store st2; st2.load_ini(st.save_ini());
+        if (st2.view(Game::Gears1, envs[static_cast<int>(Game::Gears1)]).i("TriggerRumble") != 1) bad("ini round trip");
     }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;

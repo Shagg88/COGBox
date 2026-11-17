@@ -284,6 +284,17 @@ void Ini::clear_section(const std::string &sec)
     }
 }
 
+void Ini::remove_section(const std::string &sec)
+{
+    std::string cur;
+    bool in = false;
+    for (size_t i = 0; i < lines.size();) {
+        if (is_section(lines[i], &cur)) in = ieq(cur, sec);
+        if (in) lines.erase(lines.begin() + i);
+        else i++;
+    }
+}
+
 // ---- Windows' own boxes ---------------------------------------------------------------------------------------------
 // 0.6.2 review R7: under Wine (Proton, CrossOver) ShellExecute opens a folder or a local file in Wine's own Explorer or
 // Notepad. Wine's winebrowser turns a Windows path (Z:\home\..., or one in the prefix) into its Linux / Mac path and

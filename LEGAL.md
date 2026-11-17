@@ -111,7 +111,7 @@ creators' work, not COGBox's.
 If you believe something in the COGBox project infringes your rights, or you have any other legal concern, please
 contact us first. We'd much rather fix things quickly and in good faith.
 
-- **Email:** `[CONTACT EMAIL - Shagg to set up, e.g. a dedicated cogbox.legal@... address]`
+- **Email:** shagg.dev88@gmail.com
 - **Or:** open a ticket on the project's GitHub page (<https://github.com/Shagg88/COGBox>) saying only
   that you have a legal concern and how to reach you. Please don't post private details publicly.
 
