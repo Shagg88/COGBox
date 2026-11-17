@@ -1,4 +1,17 @@
 // Layer 0 (game-free): see xenos/renderer/shader_cache.h. Our code (MIT).
+#ifdef _WIN32   // job 1969: GetThreadTimes / GetProcessTimes / GetSystemTimes for the warm-up's CPU line
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#ifndef PSAPI_VERSION
+#define PSAPI_VERSION 2   // GetProcessMemoryInfo from kernel32 (K32...): no psapi.lib
+#endif
+#include <psapi.h>
+#endif
 #include <xenos/renderer/shader_cache.h>
 
 #include <xenos/dev_tools.h>
@@ -1039,15 +1052,50 @@ bool ShaderCache::SpirvAsync() { return g_spv_async.load(); }
 // Job 1962 (Gears 3 Vulkan warm-up 34 s with every module a store hit, D3D12 8.4 s for the same shaders): where the time
 // goes, summed over all threads (thread time, not wall time), logged at the end of the warm-up.
 struct WarmSplit {
-  std::atomic<uint64_t> decode_ns{0}, dxbc_ns{0}, key_ns{0}, get_ns{0}, convert_ns{0}, optimise_ns{0}, put_ns{0};
+  std::atomic<uint64_t> decode_ns{0}, dxbc_ns{0}, key_ns{0}, get_ns{0}, convert_ns{0}, optimise_ns{0}, put_ns{0}, copy_ns{0};
   std::atomic<uint64_t> dxbc_bytes{0}, spv_bytes{0}, items{0}, hits{0}, converted{0};
   void Reset() {
-    for (auto* a : {&decode_ns, &dxbc_ns, &key_ns, &get_ns, &convert_ns, &optimise_ns, &put_ns, &dxbc_bytes, &spv_bytes,
+    for (auto* a : {&decode_ns, &dxbc_ns, &key_ns, &get_ns, &convert_ns, &optimise_ns, &put_ns, &copy_ns, &dxbc_bytes, &spv_bytes,
                     &items, &hits, &converted})
       a->store(0);
   }
 };
 static WarmSplit g_warm_split;
+// Job 1969: the same DXBC work took 457 s of thread time on Vulkan and 118 s on D3D12 (same 233 MB out). These tell
+// "slower" from "starved": the workers' own CPU time, the whole process's and the whole system's busy time, over the
+// warm-up's translation (FILETIME = 100 ns units; windows.h is included at the top of the file for these).
+#ifdef _WIN32
+static uint64_t Ft(const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; }
+static uint64_t ThreadCpu100ns(uint64_t* kernel = nullptr) {
+  FILETIME c, e, k, u;
+  if (!GetThreadTimes(GetCurrentThread(), &c, &e, &k, &u)) return 0;
+  if (kernel) *kernel = Ft(k);
+  return Ft(k) + Ft(u);
+}
+// page faults so far / peak working set / private bytes, MB (0 when unknown)
+static void ProcessMemory(uint64_t* faults, double* peak_ws_mb, double* private_mb) {
+  PROCESS_MEMORY_COUNTERS_EX m{};
+  m.cb = sizeof(m);
+  if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&m), sizeof(m))) return;
+  *faults = m.PageFaultCount, *peak_ws_mb = double(m.PeakWorkingSetSize) / 1048576.0, *private_mb = double(m.PrivateUsage) / 1048576.0;
+}
+static uint64_t ProcessCpu100ns() {
+  FILETIME c, e, k, u;
+  return GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u) ? Ft(k) + Ft(u) : 0;
+}
+static bool SystemTimes100ns(uint64_t* idle, uint64_t* total) {   // total = kernel (includes idle) + user
+  FILETIME i, k, u;
+  if (!GetSystemTimes(&i, &k, &u)) return false;
+  *idle = Ft(i), *total = Ft(k) + Ft(u);
+  return true;
+}
+#else
+static uint64_t ThreadCpu100ns(uint64_t* kernel = nullptr) { if (kernel) *kernel = 0; return 0; }
+static void ProcessMemory(uint64_t*, double*, double*) {}
+static uint64_t ProcessCpu100ns() { return 0; }
+static bool SystemTimes100ns(uint64_t*, uint64_t*) { return false; }
+#endif
+static std::atomic<uint64_t> g_warm_worker_cpu{0}, g_warm_worker_kernel{0};
 static thread_local bool t_warm_split = false;   // set by the warm-up's workers only
 static uint64_t NsSince(std::chrono::steady_clock::time_point t0) {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
@@ -1092,8 +1140,10 @@ static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program,
         if (split) g_warm_split.put_ns += NsSince(tq);
       }
       if (split) g_warm_split.spv_bytes += sv.words.size() * 4;
+      tq = std::chrono::steady_clock::now();
       dt.bytecode.resize(sv.words.size() * 4);
       std::memcpy(dt.bytecode.data(), sv.words.data(), dt.bytecode.size());
+      if (split) g_warm_split.copy_ns += NsSince(tq);
     } else {
       dt.ok = false;
       dt.unsupported = "SPIR-V conversion: " + sv.error;
@@ -1386,7 +1436,18 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     const ucode::DecodeOptions decode_options = DecodeOptions();
     std::atomic<size_t> next{0};
     g_warm_split.Reset();
+    g_warm_worker_cpu = 0;
+    g_warm_worker_kernel = 0;
+    uint64_t faults0 = 0;
+    double peak0 = 0, priv0 = 0;
+    ProcessMemory(&faults0, &peak0, &priv0);
+    const uint64_t proc0 = ProcessCpu100ns();
+    uint64_t sys_idle0 = 0, sys_total0 = 0;
+    const bool sys_ok = SystemTimes100ns(&sys_idle0, &sys_total0);
+    const auto wall0 = std::chrono::steady_clock::now();
     auto worker = [&]() {
+      uint64_t kern0 = 0;
+      const uint64_t cpu0 = ThreadCpu100ns(&kern0);
       t_warm_split = true;
       for (size_t i; (i = next.fetch_add(1)) < items.size();) {
         const Item& it = items[i];
@@ -1410,20 +1471,41 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
         made[i].s = std::move(s);
         made[i].ms = MsSince(tm);
       }
+      uint64_t kern1 = 0;
+      g_warm_worker_cpu += ThreadCpu100ns(&kern1) - cpu0;
+      g_warm_worker_kernel += kern1 - kern0;
     };
     std::vector<std::thread> threads;
     for (uint32_t i = 1; i < n; ++i) threads.emplace_back(worker);
     worker();
     for (auto& t : threads) t.join();
     t_warm_split = false;
+    {
+      const double wall_ms = MsSince(wall0);
+      const double proc_ms = double(ProcessCpu100ns() - proc0) / 1e4;
+      uint64_t sys_idle1 = 0, sys_total1 = 0;
+      double busy_pct = -1.0;
+      if (sys_ok && SystemTimes100ns(&sys_idle1, &sys_total1) && sys_total1 > sys_total0)
+        busy_pct = 100.0 * (1.0 - double(sys_idle1 - sys_idle0) / double(sys_total1 - sys_total0));
+      uint64_t faults1 = 0;
+      double peak1 = 0, priv1 = 0;
+      ProcessMemory(&faults1, &peak1, &priv1);
+      REXLOG_INFO("gow2_renderer: shader warm-up CPU: {:.0f} ms wall, the {} workers {:.0f} ms CPU ({:.0f} ms of it in the "
+                  "kernel), the whole game {:.0f} ms CPU ({:.0f} ms outside the workers), the PC {:.0f}% busy ({} logical "
+                  "CPUs) | page faults {} | private memory {:.0f} -> {:.0f} MB, peak working set {:.0f} MB",
+                  wall_ms, n, double(g_warm_worker_cpu.load()) / 1e4, double(g_warm_worker_kernel.load()) / 1e4, proc_ms,
+                  proc_ms - double(g_warm_worker_cpu.load()) / 1e4, busy_pct, std::thread::hardware_concurrency(),
+                  faults1 - faults0, priv0, priv1, peak1);
+    }
     const auto ms = [](const std::atomic<uint64_t>& a) { return double(a.load()) / 1e6; };
     REXLOG_INFO("gow2_renderer: shader warm-up split ({} threads, {} shaders, thread ms summed): decode+analyse {:.0f}, "
                 "DXBC {:.0f} ({:.1f} MB), store key {:.0f}, store read {:.0f} ({} hits), SPIR-V convert {:.0f} ({}), "
-                "optimise {:.0f}, store write {:.0f}; SPIR-V {:.1f} MB",
+                "optimise {:.0f}, store write {:.0f}, SPIR-V copy {:.0f}; SPIR-V {:.1f} MB",
                 n, g_warm_split.items.load(), ms(g_warm_split.decode_ns), ms(g_warm_split.dxbc_ns),
                 double(g_warm_split.dxbc_bytes.load()) / 1048576.0, ms(g_warm_split.key_ns), ms(g_warm_split.get_ns),
                 g_warm_split.hits.load(), ms(g_warm_split.convert_ns), g_warm_split.converted.load(),
-                ms(g_warm_split.optimise_ns), ms(g_warm_split.put_ns), double(g_warm_split.spv_bytes.load()) / 1048576.0);
+                ms(g_warm_split.optimise_ns), ms(g_warm_split.put_ns), ms(g_warm_split.copy_ns),
+                double(g_warm_split.spv_bytes.load()) / 1048576.0);
   }
   r.translate_ms = MsSince(t2);
   const auto t3 = std::chrono::steady_clock::now();
