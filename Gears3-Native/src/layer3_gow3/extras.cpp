@@ -32,12 +32,16 @@
 #include <ue3/auto_cheats.h>
 #include <ue3/console.h>
 #include <ue3/match_guard.h>
+#include <ue3/settings_dump.h>
 
 #include "gow3_addresses.h"
 
 #include <atomic>
 #include <string>
 
+REXCVAR_DEFINE_BOOL(ue3_dump_settings, false, "Gears3",
+                    "Diagnostic (DLC light research): log the names of the online session properties and contexts "
+                    "(every Settings class's PropertyMappings / LocalizedSettingsMappings) once, 45 s after start");
 REXCVAR_DEFINE_BOOL(gow3_cheats, false, "Gears3",
                     "Developer cheats on (never in a Versus match), with the keys F9 free camera (photo mode), F10 freeze "
                     "the world, F11 hide / show the HUD (keys can be changed with --ue3_hotkeys). Needs the patched script "
@@ -94,6 +98,7 @@ void Gow3InstallExtras() {
   } else {
     Ue3ConsoleInstallHotkeys();  // only what --ue3_hotkeys names
   }
+  if (REXCVAR_GET(ue3_dump_settings)) ue3::settings_dump::Start("Gears 3", &OpenObjects, 45);   // reads only
   if (REXCVAR_GET(gow3_unlock_mutators)) {
     AddPackagePatch(kMutatorsPatch);
     REXLOG_INFO("gow3_unlock_mutators: every mutator unlocked");
