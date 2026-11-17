@@ -12,7 +12,7 @@ index 669c381..f2d5a2e 100644
        xeXamEnumerate(handle, flags, buffer, buffer_length,
                       !overlapped.guest_address() ? &dummy : nullptr, overlapped.guest_address());
 diff --git a/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp b/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp
-index fc4ba3d..8fea317 100644
+index fc4ba3d..2e06af3 100644
 --- a/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp
 +++ b/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp
 @@ -177,7 +177,10 @@ u32 XMAInitializeContext_entry(mapped_void context_ptr, ppc_ptr_t<XMA_CONTEXT_IN
@@ -27,6 +27,15 @@ index fc4ba3d..8fea317 100644
    context.subframe_decode_count = context_init->subframe_decode_count;
    context.is_stereo = context_init->channel_count & 1;   // patch 80: the channel count is 0-based, only bit 0
    context.sample_rate = context_init->sample_rate;
+@@ -343,7 +346,7 @@ u32 XMADisableContext_entry(mapped_void context_ptr, u32 wait) {
+ }
+ 
+ // COGBox patch 80 (Edge 9906014): waits until the decoder isn't working on the context. Was a loop that always ended at
+-// once (work_buffer_ptr is never set), so a game could reuse a context the decoder was still reading.
++// once (it tested work_buffer_ptr, which was never set then), so a game could reuse a context the decoder was still reading.
+ u32 XMABlockWhileInUse_entry(mapped_void context_ptr) {
+   static_cast<audio::AudioSystem*>(REX_KERNEL_STATE()->emulator()->audio_system())
+       ->xma_decoder()
 diff --git a/src/kernel/xboxkrnl/xboxkrnl_threading.cpp b/src/kernel/xboxkrnl/xboxkrnl_threading.cpp
 index 57fd161..27c426d 100644
 --- a/src/kernel/xboxkrnl/xboxkrnl_threading.cpp
@@ -84,10 +93,10 @@ index 57fd161..27c426d 100644
      return;
    }
 diff --git a/src/system/xthread.cpp b/src/system/xthread.cpp
-index 3d2e992..043648e 100644
+index 3d2e992..9d49af9 100644
 --- a/src/system/xthread.cpp
 +++ b/src/system/xthread.cpp
-@@ -1023,10 +1023,11 @@ X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable, uint64_t in
+@@ -1023,10 +1023,12 @@ X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable, uint64_t in
    int64_t timeout_ticks = interval;
    uint32_t timeout_ms;
    if (timeout_ticks > 0) {
@@ -96,10 +105,11 @@ index 3d2e992..043648e 100644
 -    assert_always();
 -    timeout_ms = 0;
 +    // Absolute time, based on January 1, 1601. COGBox patch 113 (Canary 391816907): wait for the time left until it (was:
-+    // an assert, then 0 = returned at once); a time that has passed returns at once.
++    // an assert, then 0 = returned at once); a time that has passed returns at once. Rounded UP to whole ms (review r113:
++    // a due time under 1 ms away still sleeps, not the zero-delay backoff path).
 +    uint64_t now = chrono::Clock::QueryGuestSystemTime();
 +    uint64_t due = static_cast<uint64_t>(timeout_ticks);
-+    timeout_ms = due > now ? uint32_t(std::min<uint64_t>((due - now) / 10000, 0xFFFFFFFEull)) : 0;
++    timeout_ms = due > now ? uint32_t(std::min<uint64_t>((due - now + 9999) / 10000, 0xFFFFFFFEull)) : 0;
    } else if (timeout_ticks < 0) {
      // Relative time.
      timeout_ms = uint32_t(-timeout_ticks / 10000);  // Ticks -> MS
