@@ -299,7 +299,12 @@ inline int GateLocalOnly() {
   const uint32_t game = world ? obj::Read32(world + uint32_t(s.off_game)) : 0;
   if (!world) return 1;
   if (!game) return 2;   // a client in someone else's game (the engine refuses cheats there too)
-  return OnlyLocalPlayers(game, local) ? 0 : 2;
+  if (OnlyLocalPlayers(game, local)) return 0;
+  static uint32_t said_world = 0;   // game thread (the console's gate); once per level
+  if (said_world != world)
+    REXLOG_INFO("Cheat keys are off while another PC's player is in the game ({})", s.spec.game);
+  said_world = world;
+  return 2;
 }
 
 // The console target's enable_cheats (Gears 2's cheat keys): EnableCheats for player 1 as above. false = no player yet.
