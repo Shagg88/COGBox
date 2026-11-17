@@ -1594,3 +1594,8 @@ Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = �
 Gears 1 and 2: games on this PC only. = Gears 1 和 2：仅限此电脑上的游戏。
 Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 和 Judgment：也包括你主持的系统链接或在线游戏 - 请只在你自己的游戏中使用。
 Achievements and saves are your own business. = 成就和存档后果自负。
+# GitHub #353: recent players (machine-made; corrections welcome)
+RECENT PLAYERS = 最近的玩家
+Played with you recently = 最近和你一起玩过
+Played {1} with you recently = 最近和你一起玩过 {1}
+Send a friend request. = 发送好友请求。

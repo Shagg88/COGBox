@@ -55,6 +55,18 @@ std::optional<SocialLists> parse_friends(const std::string& body) {
     return out;
 }
 
+std::vector<SocialRecent> parse_recent(const std::string& body) {   // GitHub #353
+    std::vector<SocialRecent> out;
+    const json j = json::parse(body, nullptr, false);
+    if (!j.is_object() || !j.contains("recent") || !j["recent"].is_array()) return out;
+    for (const json& r : j["recent"]) {
+        if (!r.is_object()) continue;
+        SocialRecent x{ str(r, "uuid"), str(r, "tag"), str(r, "icon"), upper(str(r, "title_id")) };
+        if (!x.uuid.empty() && valid_tag(x.tag) && out.size() < 20) out.push_back(x);
+    }
+    return out;
+}
+
 std::vector<SocialInvite> parse_invites(const std::string& body) {
     std::vector<SocialInvite> out;
     const json j = json::parse(body, nullptr, false);

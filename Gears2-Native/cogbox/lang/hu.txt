@@ -1601,3 +1601,8 @@ Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = C
 Gears 1 and 2: games on this PC only. = Gears 1 és 2: csak az ezen a PC-n futó játékokban.
 Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 és Judgment: az általad vezetett System Link vagy online játékban is - kérlek, csak a saját játékaidban használd.
 Achievements and saves are your own business. = Az achievementek és a mentések a te dolgod.
+# GitHub #353: recent players (machine-made; corrections welcome)
+RECENT PLAYERS = LEGUTÓBBI JÁTÉKOSOK
+Played with you recently = Nemrég játszott veled
+Played {1} with you recently = Nemrég játszott veled: {1}
+Send a friend request. = Barátkérés küldése.

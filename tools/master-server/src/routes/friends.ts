@@ -114,6 +114,22 @@ export const friendRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: 
     return { status: 'removed' };
   });
 
+  // GitHub #353: the players this one recently played with (their games connected), so a tag seen in a match can be
+  // added. Not friends already, no request either way, nobody blocked either way, newest first, at most 20.
+  fastify.get('/recent', async (req, reply) => {
+    const u = me(req, reply);
+    if (!u) return reply;
+    const l = listFor(db, u.uuid);
+    const known = new Set([...l.friends, ...l.incoming, ...l.outgoing].map((r) => r.uuid));
+    const blocked = db.prepare(`SELECT 1 FROM friends WHERE status = 'blocked' AND
+                                ((user_uuid = ? AND friend_uuid = ?) OR (user_uuid = ? AND friend_uuid = ?))`);
+    const recent = registry.recentFor(u.uuid)
+      .filter((r) => r.uuid !== u.uuid && !known.has(r.uuid) && exists(r.uuid) && !blocked.get(u.uuid, r.uuid, r.uuid, u.uuid))
+      .slice(0, 20)
+      .map((r) => ({ ...refOf(r.uuid), title_id: r.titleId ?? '', at: r.at }));
+    return { recent };
+  });
+
   // Join friend: the caller's game is told the room code (409 with it when that game is not running: the launcher
   // then starts the game with --net_join_lobby).
   fastify.post<{ Params: { uuid: string } }>('/:uuid/join', async (req, reply) => {

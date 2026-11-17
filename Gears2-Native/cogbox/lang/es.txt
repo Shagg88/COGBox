@@ -1593,3 +1593,8 @@ Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = S
 Gears 1 and 2: games on this PC only. = Gears 1 y 2: solo en partidas en este PC.
 Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 y Judgment: también en una partida System Link u online que alojes - úsalo solo en tus propias partidas.
 Achievements and saves are your own business. = Los logros y las partidas guardadas son cosa tuya.
+# GitHub #353: recent players (machine-made; corrections welcome)
+RECENT PLAYERS = JUGADORES RECIENTES
+Played with you recently = Jugó contigo hace poco
+Played {1} with you recently = Jugó a {1} contigo hace poco
+Send a friend request. = Enviar una solicitud de amistad.

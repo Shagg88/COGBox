@@ -48,6 +48,36 @@ export class Registry {
     return !!mine && (mine.has(b) || [...mine].some((x) => this.contacts.get(x)?.has(b)));
   }
 
+  // GitHub #353: players this one's game exchanged connection details with (a match's other players), newest first,
+  // for the Social "Recent players" list - so their tags can be added as friends. In memory only (a restart forgets
+  // them), at most RECENT_MAX a player, for RECENT_MS.
+  private met = new Map<string, Map<string, { at: number; titleId?: string }>>();
+  static readonly RECENT_MS = 24 * 3600_000;
+  static readonly RECENT_MAX = 30;
+  noteMet(a: string, b: string, titleId?: string): void {
+    if (a === b) return;
+    const at = this.now();
+    for (const [x, y] of [[a, b], [b, a]]) {
+      let m = this.met.get(x);
+      if (!m) { m = new Map(); this.met.set(x, m); }
+      m.delete(y);   // re-inserted: a Map keeps insertion order, so the oldest is first
+      m.set(y, { at, titleId });
+      while (m.size > Registry.RECENT_MAX) m.delete(m.keys().next().value as string);
+    }
+  }
+  recentFor(uuid: string): { uuid: string; at: number; titleId?: string }[] {
+    const m = this.met.get(uuid);
+    if (!m) return [];
+    const now = this.now();
+    const out: { uuid: string; at: number; titleId?: string }[] = [];
+    for (const [other, e] of m) {
+      if (now - e.at > Registry.RECENT_MS) m.delete(other);
+      else out.push({ uuid: other, at: e.at, titleId: e.titleId });
+    }
+    if (!m.size) this.met.delete(uuid);
+    return out.sort((x, y) => y.at - x.at);
+  }
+
   // Returns the socket this one replaced, if any (the caller closes it).
   add(uuid: string, role: Role, socket: WebSocket, titleId?: string, region?: string): WebSocket | undefined {
     const e = this.entries.get(uuid) ?? {};
