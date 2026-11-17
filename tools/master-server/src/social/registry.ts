@@ -54,8 +54,10 @@ export class Registry {
   private met = new Map<string, Map<string, { at: number; titleId?: string }>>();
   static readonly RECENT_MS = 24 * 3600_000;
   static readonly RECENT_MAX = 30;
-  // A meeting is noted only when both games have sent each other their connection details (review r353: one message to
-  // a public host is not a match - anyone may send that). from>to -> time of the first direction, for HALF_MS.
+  // A meeting is noted only when both games have sent each other their connection details within HALF_MS (review r353):
+  // a game that is gone or never answers leaves nothing. (A public host's game answers any guest's offer by itself, so
+  // a stranger's offer to a public host still counts - acceptable: that host's tag is public through lobby search.)
+  // from>to -> time of the first direction.
   private half = new Map<string, number>();
   static readonly HALF_MS = 5 * 60_000;
   private notes = 0;
@@ -81,13 +83,14 @@ export class Registry {
     }
   }
   // A deleted account leaves every list at once (PRIVACY.md); its uuid could otherwise be claimed again and see them.
+  // (every list is scanned: the two sides' lists drop entries separately at RECENT_MAX, so they are not mirrors - review
+  // r353b; deletions are rare)
   forgetMet(uuid: string): void {
-    for (const other of this.met.get(uuid)?.keys() ?? []) {
-      const m = this.met.get(other);
-      m?.delete(uuid);
-      if (m && !m.size) this.met.delete(other);
-    }
     this.met.delete(uuid);
+    for (const [other, m] of this.met) {
+      m.delete(uuid);
+      if (!m.size) this.met.delete(other);
+    }
     for (const k of [...this.half.keys()]) if (k.startsWith(`${uuid}>`) || k.endsWith(`>${uuid}`)) this.half.delete(k);
   }
   noteMet(a: string, b: string, titleId?: string): void {
