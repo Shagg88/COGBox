@@ -86,6 +86,7 @@ void Gow3InstallExtras() {
   // PC hosts, as Gears 3's cheats always were.
   ue3::cheats::Configure({"Gears 3", true, false, REXCVAR_GET(gow3_cheats), target.engine_global,
                           target.players_data_offset, target.players_num_offset, "GearPawn"});
+  ue3::cheats::SetKeysOn(REXCVAR_GET(gow3_cheats));   // F11 = ToggleHUD: Hide the HUD leaves it a say
   if (REXCVAR_GET(gow3_cheats)) {
     AddPackagePatch(kCheatsPatch);
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);

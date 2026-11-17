@@ -8,8 +8,9 @@
 //  - god mode:  Controller.bGodMode, the flag the engine's own "God" command sets (Pawn.InGodMode reads it). Written
 //    directly, so it needs no cheat manager - it works where the game's AllowCheats says no (Gears 3 with Title Update 6,
 //    whose script package we leave unpatched) - and it is only ever turned on, never toggled.
-//  - hide HUD:  the player controller's HUD.bShowHUD, the flag "ToggleHUD" flips. Written directly, once per HUD (each
-//    level's new HUD), so F11 (ToggleHUD, with the cheat keys) can still show it.
+//  - hide HUD:  the player controller's HUD.bShowHUD, the flag "ToggleHUD" flips. Written directly and kept off (a cutscene
+//    shows the HUD again when it ends - PlayerController.SetCinematicMode). With the cheat keys on (F11 = ToggleHUD) it is
+//    hidden only for a new HUD and when a cutscene ends, so F11 can still show it in between.
 //  - speed:     WorldInfo.TimeDilation (and GameInfo.GameSpeed), as "Slomo" sets them, whenever the game runs at its normal
 //    speed (1.0) - the game's own slow-motion moments are left alone and the choice comes back after them.
 //  - weapons:   the engine's "AllWeapons" and "AllAmmo" commands (they give items, which only the game's script can do), once
@@ -69,18 +70,20 @@ constexpr uint8_t kNmStandalone = 0, kNmListenServer = 2;
 
 struct PlayerState {
   uint32_t god_pc = 0, hud = 0;                 // the controller god mode was set on / the HUD hidden once
-  uint32_t made_mgr_pc = 0;                     // the controller whose cheat manager this code made (Gears 2 flip)
+  uint32_t made_mgr_pc = 0, made_mgr_world = 0;  // the controller whose cheat manager this code made (Gears 2 flip), its world
+  bool was_cinematic = false;                    // PlayerController.bCinematicMode at the last check
   uint32_t pawn_done = 0, pawn_seen = 0;        // weapons given to / first seen
   std::chrono::steady_clock::time_point seen_at{};   // when pawn_seen appeared
 };
 struct State {
   Spec spec{};
   std::atomic<bool> ready{false}, failed{false}, started{false};
+  bool keys = false;                            // the game's cheat keys are on (F11 = ToggleHUD): see "hide HUD"
   // offsets (-1: this game has no such property) and bool masks
   int off_actor = -1, off_world = -1, off_pawn = -1, off_god = -1, off_hud = -1, off_cheat = -1, off_show = -1;
   int off_game = -1, off_td = -1, off_netmode = -1, off_numplayers = -1, off_travelling = -1, off_speed = -1, off_inv = -1;
-  int off_inf = -1;
-  uint32_t mask_god = 0, mask_show = 0, mask_inf = 0, infantry = 0;
+  int off_inf = -1, off_cine = -1, off_players_only = -1;
+  uint32_t mask_god = 0, mask_show = 0, mask_inf = 0, mask_cine = 0, mask_players_only = 0, infantry = 0, pc_class = 0;
   // game thread only
   PlayerState player[kMaxPlayers];
   uint32_t speed_world = 0, remote_world = 0, nomgr_logged = 0;
@@ -148,10 +151,13 @@ inline void Resolve() {
     s.mask_god = obj::BoolMask(controller, "bGodMode");
     s.off_hud = obj::PropertyOffset(pcls, "myHUD");
     s.off_cheat = obj::PropertyOffset(pcls, "CheatManager");
+    s.off_cine = obj::PropertyOffset(pcls, "bCinematicMode"), s.mask_cine = obj::BoolMask(pcls, "bCinematicMode");
+    s.pc_class = pcls;
     if (hud) s.off_show = obj::PropertyOffset(hud, "bShowHUD"), s.mask_show = obj::BoolMask(hud, "bShowHUD");
     s.off_game = obj::PropertyOffset(world, "Game");
     s.off_td = obj::PropertyOffset(world, "TimeDilation");
     s.off_netmode = obj::PropertyOffset(world, "NetMode");
+    s.off_players_only = obj::PropertyOffset(world, "bPlayersOnly"), s.mask_players_only = obj::BoolMask(world, "bPlayersOnly");
     s.off_numplayers = obj::PropertyOffset(game, "NumPlayers");
     s.off_travelling = obj::PropertyOffset(game, "NumTravellingPlayers");
     s.off_speed = obj::PropertyOffset(game, "GameSpeed");
@@ -162,6 +168,8 @@ inline void Resolve() {
     if (!s.mask_god) s.off_god = -1;
     if (!s.mask_show) s.off_show = -1;
     if (!s.mask_inf) s.off_inf = -1;
+    if (!s.mask_cine) s.off_cine = -1;
+    if (!s.mask_players_only) s.off_players_only = -1;
     REXLOG_INFO("auto cheats ({}): ready (Controller.bGodMode +{} mask {:X}, PlayerController.myHUD +{} .CheatManager +{}, "
                 "HUD.bShowHUD +{}, WorldInfo.TimeDilation +{} .NetMode +{}, GameInfo.NumPlayers +{} .NumTravellingPlayers +{} "
                 ".GameSpeed +{}, Pawn.InvManager +{}, InventoryManager.bInfiniteAmmo +{}, infantry {} {})",
@@ -216,7 +224,7 @@ inline bool EnsureCheatManager(PPCContext& ctx, uint8_t* base, int i, uint32_t p
   const bool ran = Ue3ConsoleExecNow(ctx, base, i, "EnableCheats", &handled);
   if (flip) obj::Write8(nm_at, nm);
   const bool made = obj::Read32(pc + uint32_t(s.off_cheat)) != 0;
-  if (made && flip && i < kMaxPlayers) s.player[i].made_mgr_pc = pc;   // undone if another PC's player joins
+  if (made && flip && i < kMaxPlayers) s.player[i].made_mgr_pc = pc, s.player[i].made_mgr_world = world;   // undone on a remote join
   if (ran && (made || s.nomgr_logged != pc)) {
     REXLOG_INFO("auto cheats ({}): EnableCheats for player {} - cheat manager {} (NetMode {}{})", s.spec.game, i + 1,
                 made ? "made" : "NOT made (the game's AllowCheats said no)", unsigned(nm),
@@ -235,11 +243,15 @@ inline void UndoForRemote(uint32_t world, uint32_t game, int local) {
     const uint32_t pc = ControllerOf(i);
     if (pc && p.god_pc == pc && s.off_god >= 0 && BitOn(pc, s.off_god, s.mask_god)) SetBit(pc, s.off_god, s.mask_god, false), any = true;
     p.god_pc = 0;
-    if (pc && p.made_mgr_pc == pc && s.off_cheat >= 0 && obj::Read32(pc + uint32_t(s.off_cheat))) {
-      obj::Write32(pc + uint32_t(s.off_cheat), 0);   // the engine's garbage collector frees the object
+    // the controller the manager was made for - not ControllerOf(i), which is the debug camera's while F9's free camera is
+    // on; only while still in that world (a level change frees the old controller) and still a player controller
+    const uint32_t m = p.made_mgr_pc;
+    if (m && p.made_mgr_world == world && s.off_cheat >= 0 && (!s.pc_class || obj::IsA(m, s.pc_class)) &&
+        obj::Read32(m + uint32_t(s.off_cheat))) {
+      obj::Write32(m + uint32_t(s.off_cheat), 0);   // the engine's garbage collector frees the object
       any = true;
     }
-    p.made_mgr_pc = 0;
+    p.made_mgr_pc = p.made_mgr_world = 0;
     p.pawn_done = p.pawn_seen = 0;
   }
   if (s.speed_set != 1.0f && s.speed_world == world && s.off_td >= 0 && ReadF(world + uint32_t(s.off_td)) == s.speed_set) {
@@ -248,6 +260,9 @@ inline void UndoForRemote(uint32_t world, uint32_t game, int local) {
     any = true;
   }
   s.speed_set = 1.0f;
+  // F10's freeze (PlayersOnly) is not for a game with another PC's player in it either
+  if (s.off_players_only >= 0 && BitOn(world, s.off_players_only, s.mask_players_only))
+    SetBit(world, s.off_players_only, s.mask_players_only, false), any = true;
   if (s.remote_world != world)
     REXLOG_INFO("auto cheats ({}): another PC's player is in this game - the launcher's cheats are off here{}", s.spec.game,
                 any ? " (god mode, speed and the cheat manager put back)" : "");
@@ -256,6 +271,8 @@ inline void UndoForRemote(uint32_t world, uint32_t game, int local) {
 }  // namespace detail
 
 inline void Configure(const Spec& spec) { detail::S().spec = spec; }
+// The game's cheat keys are on (F11 = ToggleHUD): Hide the HUD then leaves F11 a say (see "hide HUD" at the top).
+inline void SetKeysOn(bool on) { detail::S().keys = on; }
 // Gears 2 with the cheat keys: start the lookup now, so the keys' EnableCheats can use it (no launcher cheat on: Tick
 // would never start it).
 inline void Prepare() { detail::StartResolve(); }
@@ -326,11 +343,15 @@ inline void Tick(PPCContext& ctx, uint8_t* base) {
     }
     if (REXCVAR_GET(ue3_cheat_hide_hud) && s.off_hud >= 0 && s.off_show >= 0) {
       const uint32_t hud = obj::Read32(pc + uint32_t(s.off_hud));
-      if (hud && hud != p.hud) {   // once per HUD: F11 (ToggleHUD) can show it again
+      const bool cine = s.off_cine >= 0 && BitOn(pc, s.off_cine, s.mask_cine);
+      const bool cutscene_ended = p.was_cinematic && !cine;
+      p.was_cinematic = cine;
+      // kept hidden; with the cheat keys only for a new HUD and after a cutscene (F11 can show it in between)
+      if (hud && !cine && (!s.keys || hud != p.hud || cutscene_ended) && BitOn(hud, s.off_show, s.mask_show)) {
         SetBit(hud, s.off_show, s.mask_show, false);
-        REXLOG_INFO("auto cheats ({}): HUD hidden (player {})", s.spec.game, i + 1);
-        p.hud = hud;
+        if (hud != p.hud) REXLOG_INFO("auto cheats ({}): HUD hidden (player {})", s.spec.game, i + 1);
       }
+      if (hud) p.hud = hud;
     }
     // weapons: on-foot pawns only (a turret or vehicle the player sits in is a pawn too)
     const bool infantry = !s.infantry || obj::IsA(pawn, s.infantry);

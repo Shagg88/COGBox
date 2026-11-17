@@ -78,6 +78,7 @@ void GowjInstallCheats() {
   // GitHub #342: the launcher's cheats - also in a game this PC hosts (Judgment's own AllowCheats returns True)
   ue3::cheats::Configure({"Judgment", true, false, true, target.engine_global, target.players_data_offset,
                           target.players_num_offset, "GearPawn"});
+  ue3::cheats::SetKeysOn(REXCVAR_GET(gowj_cheats));   // F11 = ToggleHUD: Hide the HUD leaves it a say
   if (REXCVAR_GET(gowj_cheats)) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
     REXLOG_INFO("gowj_cheats: developer cheats on hotkeys (never in a Versus match)");

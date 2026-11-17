@@ -72,6 +72,7 @@ void Gow1InstallCheats() {
   // GitHub #342: the launcher's cheats - only while every player is on this PC (Gears 1's AllowCheats: standalone games)
   ue3::cheats::Configure({"Gears 1", false, false, true, target.engine_global, target.players_data_offset,
                           target.players_num_offset, "WarPawn"});
+  ue3::cheats::SetKeysOn(cheats);   // F11 = ToggleHUD: Hide the HUD leaves it a say
   if (cheats) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
     REXLOG_INFO("gow1_cheats: developer cheats on hotkeys (never in a Versus match)");

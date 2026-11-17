@@ -81,6 +81,7 @@ void Gow2InstallCheats() {
   // EnableCheats on the menus' solo listen server
   ue3::cheats::Configure({"Gears 2", false, true, true, target.engine_global, target.players_data_offset,
                           target.players_num_offset, "GearPawn"});
+  ue3::cheats::SetKeysOn(cheats);   // F11 = ToggleHUD: Hide the HUD leaves it a say
   if (cheats) ue3::cheats::Prepare();   // the keys' EnableCheats uses the lookup even with no launcher cheat on
   if (cheats) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
