@@ -42,6 +42,7 @@ void Gow3InstallExtras();       // extras.cpp: --gow3_cheats, --gow3_unlock_muta
 void Gow3InstallFirstPerson();  // first_person.cpp: --gow3_first_person (its hotkey)
 void Gow3InstallModChapters();  // mod_chapters.cpp: mods' campaign chapters and content packages
 void Gow3InstallSquadCatchUp();  // squad_catch_up.cpp: the SquadCatchUp adapter ([Campaign] in a mod.ini)
+void Gow3InstallHordeBotCharacters();  // horde_bot_characters.cpp: --gow3_horde_bot_characters, --gow3_log_bot_classes
 void Gow3InstallKismetTraceIfRequested();  // kismet_trace.cpp: developer mode, --mod_kismet_trace
 void Gow3InstallPropLogIfRequested();      // prop_log.cpp: developer mode, --mod_log_props
 REXCVAR_DECLARE(bool, gow3_mute_unfocused);  // extras.cpp
@@ -75,6 +76,7 @@ class Gow3App : public rex::ReXApp {
     // before the level and its paused start, so test runs with cheats sat on PAUSED)
     Ue3InstallScriptInputIfRequested(runtime(), gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar);  // developer mode: --cogbox_input_script (ue3/script_input.h)
     Gow3InstallMainMenuExitIfRequested();  // Exit Game: front-end tracking, before the game opens a level
+    Gow3InstallHordeBotCharacters();       // --gow3_horde_bot_characters / --gow3_log_bot_classes (horde_bot_characters.cpp)
     Gow3InstallUnlocks();      // GitHub #174: --gow3_unlock_insane (base disc build)
     Gow3InstallModChapters();  // mods' chapters 32-49 and content packages (mod_chapters.cpp), after their config
     Gow3InstallSquadCatchUp();

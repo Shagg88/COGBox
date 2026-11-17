@@ -1753,7 +1753,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (isG3) {
         if (scale > 1) a.push_back("--gow2_renderer_resolution_scale_threshold=1120");
 
-        if (avail("HordeBots") && on("HordeBots")) a.push_back("--gow3_horde_bots=true");   // GitHub #89
+        if (avail("HordeBots") && on("HordeBots")) {
+            a.push_back("--gow3_horde_bots=true");   // GitHub #89
+            // 0.6.5 (Discord: four Horde bots all Marcus): bots added mid-match load the character they're named after
+            if (cap_exe(env, "gow3_horde_bot_characters")) a.push_back("--gow3_horde_bot_characters=true");
+        }
         // GitHub #105: the depth-of-field chain's half-size targets (pitch 640) follow the scale despite the threshold
         if (scale > 1 && avail("DofScale") && on("DofScale")) a.push_back("--gow2_renderer_resolution_scale_pitches=640");
         a.push_back("--gow2_renderer_memexport=true");

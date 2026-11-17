@@ -423,6 +423,21 @@ int summary() {
             if (on ? !all : any) { std::cout << "FAIL net rates for game " << static_cast<int>(g) << " (" << (on ? "on" : "off") << ")\n"; ++fails; }
         }
     }
+    for (int has = 0; has < 2; ++has) {   // 0.6.5: Horde bots on Gears 3 also send the bot-characters fix when gow3.exe has it
+        Environment e; e.update_ready = true;
+        if (has) e.cap.exe_has = [](const std::string&) { return true; };
+        else e.cap.exe_has = [](const std::string& k) { return k != "gow3_horde_bot_characters"; };
+        e.cap.runtime_has = [](const std::string&) { return true; }; e.cap.file_next_to_exe = e.cap.runtime_has;
+        Store st; Settings s = st.view(Game::Gears3, e);
+        s.set("HordeBots", 1);
+        const std::vector<std::string> a = build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr);
+        const bool hb = std::find(a.begin(), a.end(), "--gow3_horde_bots=true") != a.end();
+        const bool hc = std::find(a.begin(), a.end(), "--gow3_horde_bot_characters=true") != a.end();
+        if (!hb || hc != (has == 1)) { std::cout << "FAIL horde bot characters: exe has it " << has << ", bots " << hb << ", characters " << hc << "\n"; ++fails; }
+        s.set("HordeBots", 0);
+        const std::vector<std::string> b = build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr);
+        if (std::find(b.begin(), b.end(), "--gow3_horde_bot_characters=true") != b.end()) { std::cout << "FAIL horde bot characters sent with Horde bots off\n"; ++fails; }
+    }
     {   // 0.6.5: a gow1.exe without --gow1_no_aspect_lock keeps the option off (it would letterbox)
         Environment e; e.update_ready = true;
         e.cap.exe_has = [](const std::string& k) { return k != "gow1_no_aspect_lock"; };
