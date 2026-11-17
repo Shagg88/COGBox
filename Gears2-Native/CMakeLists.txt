@@ -18,6 +18,7 @@ include(cmake/rexglue.cmake)
 add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/achievements_data.cpp
     src/layer0_xenos/achievements_export.cpp
+    src/layer0_xenos/window_icon.cpp
     src/layer0_xenos/achievements_popup_logic.cpp
     src/layer0_xenos/achievements_browser_model.cpp
     src/layer0_xenos/achievements_browser.cpp

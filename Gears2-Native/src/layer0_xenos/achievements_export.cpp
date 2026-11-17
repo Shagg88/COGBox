@@ -6,6 +6,7 @@
 #include <cstring>
 #include <vector>
 #include <xenos/achievements_data.h>
+#include <xenos/window_icon.h>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -56,6 +57,7 @@ xenos::ach::Unlocks XenosUnlocksFromRuntime(rex::Runtime* runtime) {
 }
 
 void XenosExportAchievements(rex::Runtime* runtime) {
+  xenos::window_icon::TakeFromRuntime(runtime);  // GitHub #355: the window's icon, with or without --cogbox_dir
   const std::string dir = REXCVAR_GET(cogbox_dir);
   if (dir.empty() || !runtime || !runtime->kernel_state()) return;
   auto* kernel = runtime->kernel_state();
