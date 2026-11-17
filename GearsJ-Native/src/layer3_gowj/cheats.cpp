@@ -31,12 +31,13 @@
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
+#include <ue3/auto_cheats.h>
 #include <ue3/console.h>
 #include <ue3/match_guard.h>
 
 REXCVAR_DEFINE_BOOL(gowj_cheats, false, "Judgment",
-                    "GitHub #264: developer cheats on hotkeys: F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F9 "
-                    "free camera, F10 hide the HUD, F11 all weapons and ammo (keys can be changed with --ue3_hotkeys). Also "
+                    "GitHub #264 / #342: the developers' cheat keys: F9 free camera, F10 freeze the world, F11 hide / show "
+                    "the HUD (keys can be changed with --ue3_hotkeys; god mode, weapons, speed: --ue3_cheat_*). Also "
                     "in a System Link / online game this PC hosts (Judgment's own AllowCheats), but never in a Versus match");
 
 namespace {
@@ -57,8 +58,8 @@ bool OpenObjects() {
   return ue3::obj::Init(kGNamesVar, kGObjectsVar, &layout);
 }
 // F7 / F8 are the in-game menu's (achievements, COGBox social), F1-F4 the SDK's / ours: as Gears 2.
-constexpr const char* kDefaultHotkeys =
-    "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F9=ToggleDebugCamera;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
+// GitHub #342: god mode, weapons and slow motion are the launcher's own options now (ue3/auto_cheats.h).
+constexpr const char* kDefaultHotkeys = "F9=ToggleDebugCamera;F10=PlayersOnly;F11=ToggleHUD";
 }  // namespace
 
 // OnPostSetup. Without --gowj_cheats only what --ue3_hotkeys / --ue3_exec name runs.
@@ -74,6 +75,9 @@ void GowjInstallCheats() {
                          target.players_num_offset, &OpenObjects});
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
+  // GitHub #342: the launcher's cheats - also in a game this PC hosts (Judgment's own AllowCheats returns True)
+  ue3::cheats::Configure({"Judgment", true, false, true, target.engine_global, target.players_data_offset,
+                          target.players_num_offset});
   if (REXCVAR_GET(gowj_cheats)) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
     REXLOG_INFO("gowj_cheats: developer cheats on hotkeys (never in a Versus match)");
@@ -107,6 +111,7 @@ extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
   GowjPollLoadingMovie(ctx, base);
   __imp__sub_8255E200(ctx, base);
   Ue3ConsoleRunQueued(ctx, base);
+  ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   GowjAdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   GowjFirstPersonTick();        // --gowj_first_person (first_person.cpp; off: one flag test)
 }

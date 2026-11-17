@@ -1576,3 +1576,25 @@ Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and 
 the match's playlist = плейлист матча
 Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: чтобы выбрать COG или Locust, создайте Versus > Private, а остальные пусть войдут по коду комнаты или через «Присоединиться к другу». В лобби нажмите Y, чтобы сменить команду.
 Join through Gears 3's own matchmaking: the host's game picks your team. = Войти через поиск игры Gears 3: игра хоста выберет вашу команду.
+# GitHub #342: the cheats that are simply on (machine-made; corrections welcome)
+God mode = Режим бога
+All weapons and ammo = Всё оружие и патроны
+Game speed = Скорость игры
+Normal = Обычная
+Slow motion (3/4) = Замедление (3/4)
+Slow motion (1/2) = Замедление (1/2)
+Slow motion (1/4) = Замедление (1/4)
+Hide the HUD = Скрыть HUD
+Cheat keys (F9-F11) = Клавиши читов (F9-F11)
+CHEATS = ЧИТЫ
+Cheat: you take no damage. = Чит: вы не получаете урона.
+Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn. = Чит: всё оружие и полный боезапас, выдаются снова при каждом начале уровня, контрольной точке и возрождении.
+Cheat: the whole game runs slower (in a game you host, for every player). = Чит: вся игра идёт медленнее (в игре, где вы хост, - для всех игроков).
+The game's own slow-motion moments still play as made. = Собственные моменты замедления в игре остаются такими, как задумано.
+No HUD while you play - for screenshots and videos. = Без HUD во время игры - для скриншотов и видео.
+With Cheat keys on, F11 shows it again. = Если клавиши читов включены, F11 снова его показывает.
+The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show the HUD. = Клавиши разработчиков в игре: F9 свободная камера (Gears 1: полёт сквозь стены), F10 заморозить мир, F11 скрыть / показать HUD.
+Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = Только в кампании и волновых режимах (Орда, Зверь, Выживание) - никогда в Versus.
+Gears 1 and 2: games on this PC only. = Gears 1 и 2: только в играх на этом ПК.
+Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 и Judgment: также в игре по System Link или онлайн, где вы хост, - пожалуйста, только в своих играх.
+Achievements and saves are your own business. = Достижения и сохранения - ваше дело.

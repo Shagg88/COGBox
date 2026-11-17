@@ -40,6 +40,18 @@ REXCVAR_DEFINE_STRING(ue3_exec, "", GN_UE3_CONSOLE_GROUP,
 REXCVAR_DEFINE_STRING(ue3_exec_at, "", GN_UE3_CONSOLE_GROUP,
                       "Scripted console commands, '<game tick>:<command>,...' or '<seconds>s:<command>,...' counted from "
                       "the first engine tick (tests)");
+// GitHub #342 (next update): the cheats the player picks in the launcher, simply on - no keys. Read by ue3/auto_cheats.h
+// (each game's cheats.cpp), which applies them whenever a player (or a new level's player) exists, never in Versus.
+REXCVAR_DEFINE_BOOL(ue3_cheat_god, false, GN_UE3_CONSOLE_GROUP,
+                    "GitHub #342: god mode, on whenever a player exists (campaign and wave modes; never in Versus)");
+REXCVAR_DEFINE_BOOL(ue3_cheat_weapons, false, GN_UE3_CONSOLE_GROUP,
+                    "GitHub #342: all weapons and full ammo (AllWeapons, AllAmmo) each time the player gets a new body "
+                    "(level start, checkpoint, respawn); infinite ammo where the game has it");
+REXCVAR_DEFINE_DOUBLE(ue3_cheat_speed, 1.0, GN_UE3_CONSOLE_GROUP,
+                      "GitHub #342: game speed (1 = normal, 0.5 = half speed slow motion; 0.1-1), set whenever the game "
+                      "runs at its normal speed (the game's own slow-motion moments are left alone)");
+REXCVAR_DEFINE_BOOL(ue3_cheat_hide_hud, false, GN_UE3_CONSOLE_GROUP,
+                    "GitHub #342: the HUD hidden whenever a player exists");
 
 namespace {
 std::mutex g_mutex;
@@ -96,14 +108,14 @@ bool Ue3ConsoleIsDisplaySetting(const std::string& command) {
 }
 
 namespace {
-// Runs one command through GamePlayers(0)'s FExec::Exec; false if the engine isn't ready (no player yet).
-bool ExecNow(PPCContext& ctx, uint8_t* base, const std::string& command, bool* handled) {
+// Runs one command through GamePlayers(index)'s FExec::Exec; false if the engine isn't ready (no such player yet).
+bool ExecNow(PPCContext& ctx, uint8_t* base, const std::string& command, bool* handled, int index = 0) {
   const Ue3ConsoleTarget& t = g_target;
   const uint32_t engine = Load32(base, t.engine_global);
   if (!engine) return false;
   const uint32_t count = Load32(base, engine + t.players_num_offset), data = Load32(base, engine + t.players_data_offset);
-  if (int32_t(count) <= 0 || !data) return false;
-  const uint32_t player = Load32(base, data);
+  if (int32_t(count) <= index || index < 0 || !data) return false;
+  const uint32_t player = Load32(base, data + 4u * uint32_t(index));
   if (!player) return false;
   const uint32_t self = player + t.exec_offset;
   const uint32_t vtable = Load32(base, self);
@@ -133,6 +145,12 @@ bool ExecNow(PPCContext& ctx, uint8_t* base, const std::string& command, bool* h
   return true;
 }
 }  // namespace
+
+bool Ue3ConsoleExecNow(PPCContext& ctx, uint8_t* base, int player, const std::string& command, bool* handled) {
+  bool ignored = false;
+  if (!g_have_target) return false;
+  return ExecNow(ctx, base, command, handled ? handled : &ignored, player);
+}
 
 void Ue3ConsoleSetTarget(const Ue3ConsoleTarget& target) {
   g_target = target;
@@ -220,7 +238,9 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
         continue;
       }
     }
-    if (g_target.before_each && *g_target.before_each) {
+    if (g_target.enable_cheats) {   // GitHub #342: Gears 2's EnableCheats (ue3/auto_cheats.h)
+      if (!g_target.enable_cheats(ctx, base)) return;  // no player yet: keep it queued
+    } else if (g_target.before_each && *g_target.before_each) {
       bool ignored = false;
       if (!ExecNow(ctx, base, g_target.before_each, &ignored)) return;  // no player yet: keep it queued
     }

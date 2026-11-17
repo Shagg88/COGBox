@@ -1572,3 +1572,25 @@ Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and 
 the match's playlist = 매치의 플레이리스트
 Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: COG 또는 Locust를 고르려면 Versus > Private을 호스트하고 다른 플레이어는 방 코드나 친구 참가로 들어오게 하세요. 로비에서 Y를 눌러 팀을 바꿀 수 있습니다.
 Join through Gears 3's own matchmaking: the host's game picks your team. = Gears 3의 매치메이킹으로 참가: 호스트의 게임이 팀을 정합니다.
+# GitHub #342: the cheats that are simply on (machine-made; corrections welcome)
+God mode = 무적 모드
+All weapons and ammo = 모든 무기와 탄약
+Game speed = 게임 속도
+Normal = 보통
+Slow motion (3/4) = 슬로 모션 (3/4)
+Slow motion (1/2) = 슬로 모션 (1/2)
+Slow motion (1/4) = 슬로 모션 (1/4)
+Hide the HUD = HUD 숨기기
+Cheat keys (F9-F11) = 치트 키 (F9-F11)
+CHEATS = 치트
+Cheat: you take no damage. = 치트: 피해를 입지 않습니다.
+Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn. = 치트: 모든 무기와 가득 찬 탄약. 레벨 시작, 체크포인트, 리스폰 때마다 다시 지급됩니다.
+Cheat: the whole game runs slower (in a game you host, for every player). = 치트: 게임 전체가 느려집니다 (내가 호스트하는 게임에서는 모든 플레이어에게).
+The game's own slow-motion moments still play as made. = 게임 자체의 슬로 모션 장면은 원래대로 재생됩니다.
+No HUD while you play - for screenshots and videos. = 플레이 중 HUD 없음 - 스크린샷과 영상용.
+With Cheat keys on, F11 shows it again. = 치트 키를 켜면 F11로 다시 표시합니다.
+The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show the HUD. = 게임 안의 개발자 키: F9 자유 카메라 (Gears 1: 벽을 통과해 날기), F10 세계 정지, F11 HUD 숨기기 / 표시.
+Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = 캠페인과 웨이브 모드 (호드, 비스트, 서바이벌)에서만 - 대전에서는 절대 안 됩니다.
+Gears 1 and 2: games on this PC only. = Gears 1과 2: 이 PC의 게임에서만.
+Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3와 Judgment: 내가 호스트하는 시스템 링크나 온라인 게임에서도 - 내 게임에서만 사용해 주세요.
+Achievements and saves are your own business. = 도전 과제와 저장 파일은 본인 책임입니다.

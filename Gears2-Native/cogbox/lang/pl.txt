@@ -1569,3 +1569,25 @@ Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and 
 the match's playlist = playlista meczu
 Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: aby wybrać COG lub Locust, hostuj Versus > Private, a inni niech dołączą kodem pokoju lub przez Dołącz do znajomego. W lobby naciśnij Y, aby zmienić drużynę.
 Join through Gears 3's own matchmaking: the host's game picks your team. = Dołącz przez wyszukiwanie meczu w Gears 3: gra hosta wybierze twoją drużynę.
+# GitHub #342: the cheats that are simply on (machine-made; corrections welcome)
+God mode = Tryb boga
+All weapons and ammo = Cała broń i amunicja
+Game speed = Prędkość gry
+Normal = Normalna
+Slow motion (3/4) = Zwolnione tempo (3/4)
+Slow motion (1/2) = Zwolnione tempo (1/2)
+Slow motion (1/4) = Zwolnione tempo (1/4)
+Hide the HUD = Ukryj HUD
+Cheat keys (F9-F11) = Klawisze kodów (F9-F11)
+CHEATS = KODY
+Cheat: you take no damage. = Kod: nie otrzymujesz obrażeń.
+Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn. = Kod: cała broń i pełna amunicja, dawane ponownie na początku każdego poziomu, w punkcie kontrolnym i po odrodzeniu.
+Cheat: the whole game runs slower (in a game you host, for every player). = Kod: cała gra działa wolniej (w grze, którą hostujesz, dla wszystkich graczy).
+The game's own slow-motion moments still play as made. = Własne momenty zwolnionego tempa w grze pozostają takie, jak je stworzono.
+No HUD while you play - for screenshots and videos. = Brak HUD podczas gry - do zrzutów ekranu i nagrań.
+With Cheat keys on, F11 shows it again. = Przy włączonych klawiszach kodów F11 pokazuje go z powrotem.
+The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show the HUD. = Klawisze twórców w grze: F9 wolna kamera (Gears 1: latanie przez ściany), F10 zamrożenie świata, F11 ukryj / pokaż HUD.
+Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = Tylko w kampanii i trybach falowych (Horda, Bestia, Przetrwanie) - nigdy w Versus.
+Gears 1 and 2: games on this PC only. = Gears 1 i 2: tylko w grach na tym PC.
+Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 i Judgment: także w grze System Link lub online, którą hostujesz - używaj ich tylko we własnych grach.
+Achievements and saves are your own business. = Osiągnięcia i zapisy to twoja sprawa.

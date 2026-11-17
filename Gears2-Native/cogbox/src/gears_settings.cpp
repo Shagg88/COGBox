@@ -565,13 +565,28 @@ std::vector<Option> make_options(Game g) {
              "(they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus "
              "use the lobby's own bot setting.", 0),
         "hordebots");
-    add(make("Cheats", "Cheats (hotkeys F5-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
-             "The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - "
-             "hide the HUD, all weapons). "
-             "Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a "
-             "System Link or online game you host, where slow motion and the rest affect every player - please keep them "
-             "to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business."
-             " They do not work in Versus matches - only in the campaign and the wave modes (Horde, Beast, Survival).", 327), "cheats");
+    // GitHub #342 (Shagg 16 Nov: "the F keys are stupid"): the cheats you pick are simply on - no keys. The game applies
+    // them whenever you have a body, again after every level start, checkpoint and respawn (ue3/auto_cheats.h), never in
+    // Versus. The text shared by the four options' tips:
+#define CHEAT_RULES " Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. Gears 1 and 2: games on " \
+                    "this PC only. Gears 3 and Judgment: also a System Link or online game you host - please keep it to " \
+                    "your own games. Achievements and saves are your own business."
+    add(make("CheatGod", "God mode", Tab::Gameplay, Kind::Bool, SH, 0,
+             "Cheat: you take no damage." CHEAT_RULES, 0), "cheatauto");
+    add(make("CheatWeapons", "All weapons and ammo", Tab::Gameplay, Kind::Bool, SH, 0,
+             "Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn." CHEAT_RULES, 0),
+        "cheatweapons");
+    add(choice("CheatSpeed", "Game speed", Tab::Gameplay, SH, { "Normal", "Slow motion (3/4)", "Slow motion (1/2)",
+               "Slow motion (1/4)" }, 0,
+               "Cheat: the whole game runs slower (in a game you host, for every player). The game's own slow-motion "
+               "moments still play as made." CHEAT_RULES, 0), "cheatauto");
+    add(make("CheatHud", "Hide the HUD", Tab::Gameplay, Kind::Bool, SH, 0,
+             "No HUD while you play - for screenshots and videos. With Cheat keys on, F11 shows it again." CHEAT_RULES, 0),
+        "cheatauto");
+    add(make("Cheats", "Cheat keys (F9-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
+             "The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / "
+             "show the HUD." CHEAT_RULES, 327), "cheats");
+#undef CHEAT_RULES
     add(make("Mutators", "Unlock all mutators", Tab::Gameplay, Kind::Bool, SH, 0,
              "Every mutator (gameplay modifier) available from the start. Writes nothing to your profile.", 328), "mutators");
     // First-person camera (Gears 3, Gears 2, Judgment; layer3 first_person.cpp): the game's own camera moved to the
@@ -818,6 +833,11 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "aspect43") {   // 0.4.9: SDK patch 70; Gears 1's video-mode code is not checked yet
         if (g == Game::Gears1) return no(not_yet(gi, "not checked yet"));
         if (!cap_rt(env, "video_mode_widescreen")) return no(not_yet(gi, "needs the next runtime (SDK patch 70)"));
+    } else if (f == "cheatauto" || f == "cheatweapons") {   // GitHub #342: console.cpp's --ue3_cheat_* (a long literal: cap_exe)
+        if (!cap_exe(env, "GitHub #342: the HUD hidden whenever a player exists")) return no(not_yet(gi, "needs its next build"));
+        // all weapons needs the game's cheat manager: Gears 3 only makes one with its patched script package (below)
+        if (f == "cheatweapons" && g == Game::Gears3 && ver == Version::TitleUpdate && env.update_ready)
+            return no("Gears 3: not with Title Update 6 yet (it shows a dirty-disc error with it).");
     } else if (f == "cheats" && (g == Game::Gears2 || g == Game::Judgment || g == Game::Gears1)) {   // GitHub #264: --gow2_cheats / --gowj_cheats / --gow1_cheats (no package patch, so no TU check)
         // the option's description, a long literal (a short name can be built a few letters at a time - cap_exe)
         if (!cap_exe(env, "GitHub #264: developer cheats on hotkeys")) return no(not_yet(gi, "needs its next build"));
@@ -1924,6 +1944,14 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (on("Cheats")) a.push_back(g == Game::Gears2 ? "--gow2_cheats=true" : g == Game::Judgment ? "--gowj_cheats=true" :
                                   g == Game::Gears1 ? "--gow1_cheats=true" : "--gow3_cheats=true");   // #264: Gears 2, Judgment, Gears 1 too
     if (on("Mutators")) a.push_back("--gow3_unlock_mutators=true");
+    // GitHub #342: the cheats that are simply on (console.cpp --ue3_cheat_*, every game)
+    if (on("CheatGod")) a.push_back("--ue3_cheat_god=true");
+    if (on("CheatWeapons")) a.push_back("--ue3_cheat_weapons=true");
+    if (avail("CheatSpeed") && s.i("CheatSpeed") > 0) {
+        static const char* const k_speed[4] = { "1", "0.75", "0.5", "0.25" };
+        a.push_back(std::string("--ue3_cheat_speed=") + k_speed[std::max(0, std::min(3, s.i("CheatSpeed")))]);
+    }
+    if (on("CheatHud")) a.push_back("--ue3_cheat_hide_hud=true");
     if (kOfferFirstPerson && on("FirstPerson")) a.push_back(g == Game::Gears2 ? "--gow2_first_person=true" : g == Game::Judgment ? "--gowj_first_person=true" :
                                        "--gow3_first_person=true");
     // PS1 873-898: the game's own engine settings through --ue3_ini_edits

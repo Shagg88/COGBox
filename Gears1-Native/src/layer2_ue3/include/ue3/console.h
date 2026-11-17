@@ -30,6 +30,9 @@ struct Ue3ConsoleTarget {
   // made per player controller, and only while Engine.GameInfo.AllowCheats says yes (a standalone game: never a System
   // Link / online host or client).
   const char* before_each = "";
+  // GitHub #342: when set, called instead of before_each (Gears 2: EnableCheats, with the game's solo listen server seen as
+  // standalone for that one call - ue3/auto_cheats.h). false: no player yet (the command stays queued).
+  bool (*enable_cheats)(PPCContext& ctx, uint8_t* base) = nullptr;
   // 0.6.3: asked before every queued command that is not one of the launcher's own display settings (see
   // Ue3ConsoleIsDisplaySetting): 0 = run it, 1 = keep it queued (the game state is not readable yet), 2 = drop it (cheats
   // are refused: Versus matches - ue3/match_guard.h). Empty: always run.
@@ -45,6 +48,9 @@ void Ue3ConsoleInstallHotkeys(const std::string& defaults = std::string());
 bool Ue3ConsoleIsDisplaySetting(const std::string& command);
 // Thread-safe; runs on the next Ue3ConsoleRunQueued.
 void Ue3ConsoleQueue(const std::string& command);
+// GitHub #342: runs one command now through GamePlayers(player)'s Exec (game thread only, no gate, no queue); false when that
+// player does not exist yet. *handled: the engine knew the command.
+bool Ue3ConsoleExecNow(PPCContext& ctx, uint8_t* base, int player, const std::string& command, bool* handled);
 // Game thread only (layer 3's override of a once-per-frame engine function, after the original): runs what is queued.
 // Leaves `ctx` as it found it.
 void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base);

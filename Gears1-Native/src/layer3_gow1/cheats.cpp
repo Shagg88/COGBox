@@ -24,13 +24,14 @@
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
+#include <ue3/auto_cheats.h>
 #include <ue3/console.h>
 #include <ue3/match_guard.h>
 
 REXCVAR_DEFINE_BOOL(gow1_cheats, false, "Gears1",
-                    "GitHub #264: developer cheats on hotkeys (never in a Versus match): F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F9 "
-                    "fly through walls (on / off), F10 hide the HUD, F11 all weapons and ammo (keys can be changed with "
-                    "--ue3_hotkeys)");
+                    "GitHub #264 / #342: the developers' cheat keys (never in a Versus match): F9 fly through walls (on / "
+                    "off), F10 freeze the world, F11 hide / show the HUD (keys can be changed with --ue3_hotkeys; god mode, "
+                    "weapons, speed: --ue3_cheat_*)");
 
 namespace {
 constexpr uint32_t kGEngine = 0x82FCDD50u;
@@ -48,8 +49,9 @@ bool OpenObjects() {
   ue3::obj::ParseLayout(kLayout, &layout);
   return ue3::obj::Init(kGNamesVar, kGObjectsVar, &layout);
 }
-constexpr const char* kDefaultHotkeys =
-    "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F9=Ghost|Walk;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
+// GitHub #342: god mode, weapons and slow motion are the launcher's own options now (ue3/auto_cheats.h). PlayersOnly was
+// checked on the PC (jobs 1818, 1819).
+constexpr const char* kDefaultHotkeys = "F9=Ghost|Walk;F10=PlayersOnly;F11=ToggleHUD";
 }  // namespace
 
 // OnPostSetup. Without --gow1_cheats only what --ue3_hotkeys / --ue3_exec name runs, and nothing enables cheats.
@@ -67,6 +69,9 @@ void Gow1InstallCheats() {
                          target.players_num_offset, &OpenObjects});
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
+  // GitHub #342: the launcher's cheats - only while every player is on this PC (Gears 1's AllowCheats: standalone games)
+  ue3::cheats::Configure({"Gears 1", false, false, true, target.engine_global, target.players_data_offset,
+                          target.players_num_offset});
   if (cheats) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
     REXLOG_INFO("gow1_cheats: developer cheats on hotkeys (never in a Versus match)");
@@ -82,5 +87,6 @@ extern "C" void __imp__sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base);
 extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
   __imp__sub_8222A6E0(ctx, base);
   Ue3ConsoleRunQueued(ctx, base);
+  ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   Gow1AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
 }

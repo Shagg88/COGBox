@@ -114,7 +114,9 @@ set(GOWJ_SOURCES
 set_source_files_properties(src/layer3_gowj/adaptive_triggers.cpp src/layer3_gowj/first_person.cpp src/layer3_gowj/cheats.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 if(WIN32)
-    add_executable(gowj WIN32 ${GOWJ_SOURCES})
+    # GitHub #355: the game's own window / taskbar icon (res/gowj.rc; SDL takes the exe's first icon)
+    enable_language(RC)
+    add_executable(gowj WIN32 ${GOWJ_SOURCES} res/gowj.rc)
 else()
     add_executable(gowj ${GOWJ_SOURCES})
 endif()

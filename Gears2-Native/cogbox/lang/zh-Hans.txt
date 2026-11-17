@@ -1572,3 +1572,25 @@ Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and 
 the match's playlist = 该比赛的播放列表
 Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3：想选择 COG 或 Locust，请主持 Versus > Private，让其他玩家用房间代码或“加入好友”进入。在大厅中按 Y 切换队伍。
 Join through Gears 3's own matchmaking: the host's game picks your team. = 通过 Gears 3 自己的匹配加入：由主机的游戏为你分配队伍。
+# GitHub #342: the cheats that are simply on (machine-made; corrections welcome)
+God mode = 无敌模式
+All weapons and ammo = 所有武器和弹药
+Game speed = 游戏速度
+Normal = 正常
+Slow motion (3/4) = 慢动作 (3/4)
+Slow motion (1/2) = 慢动作 (1/2)
+Slow motion (1/4) = 慢动作 (1/4)
+Hide the HUD = 隐藏 HUD
+Cheat keys (F9-F11) = 作弊按键 (F9-F11)
+CHEATS = 作弊
+Cheat: you take no damage. = 作弊：你不会受到伤害。
+Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn. = 作弊：所有武器和满弹药，每次关卡开始、检查点和重生时都会重新给予。
+Cheat: the whole game runs slower (in a game you host, for every player). = 作弊：整个游戏变慢（在你主持的游戏中，对所有玩家生效）。
+The game's own slow-motion moments still play as made. = 游戏自带的慢动作时刻仍按原样播放。
+No HUD while you play - for screenshots and videos. = 游戏时不显示 HUD - 用于截图和视频。
+With Cheat keys on, F11 shows it again. = 开启作弊按键时，F11 可重新显示。
+The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show the HUD. = 游戏内的开发者按键：F9 自由镜头（Gears 1：穿墙飞行），F10 冻结世界，F11 隐藏 / 显示 HUD。
+Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = 仅限战役和波次模式（部落、野兽、生存）- 对战中绝不可用。
+Gears 1 and 2: games on this PC only. = Gears 1 和 2：仅限此电脑上的游戏。
+Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 和 Judgment：也包括你主持的系统链接或在线游戏 - 请只在你自己的游戏中使用。
+Achievements and saves are your own business. = 成就和存档后果自负。

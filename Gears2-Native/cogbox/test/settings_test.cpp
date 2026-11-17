@@ -42,6 +42,7 @@ std::string exe_needle(const std::string& alias, int g) {
     if (alias == "aspect") return "gow3_aspect";
     if (alias == "edits") return "'file|section|~=old>new'";
     if (alias == "avx") return "gn_cpu_level=x86-64-v";
+    if (alias == "chx") return "GitHub #342: the HUD hidden whenever a player exists";   // console.cpp's --ue3_cheat_* (#342)
     if (alias == "adt") return g == 0 ? "Gears 2 weapon feel for DualSense pads" : "Gears 3 weapon feel for DualSense pads";   // GitHub #245
     if (alias == "adtg") {   // GitHub #245: each game's own needle (Judgment, Gears 1 too)
         static const char* adt[4] = { "Gears 2 weapon feel for DualSense pads", "Gears 3 weapon feel for DualSense pads",
@@ -172,6 +173,12 @@ const char* const k_builtin[] = {
     "game=0;AdaptiveTriggers=1;rt=adt",           // Gears 2 exe without the weapon table: greyed, not sent
     "game=2;AdaptiveTriggers=1;exe=adt;rt=adt",   // Judgment exe without its own weapon table (Gears 3's needle): not sent
     "game=2;AdaptiveTriggers=1;exe=adtg;rt=adt",  // GitHub #245, Judgment: sent
+    // GitHub #342: the cheats that are simply on - sent when the exe has them; Gears 3 TU6: all weapons greyed (no cheat manager)
+    "game=0;exe=chx;CheatGod=1;CheatWeapons=1;CheatSpeed=2;CheatHud=1;Cheats=1",
+    "game=1;upd=1;exe=chx;CheatGod=1;CheatWeapons=1;CheatSpeed=3;CheatHud=1",
+    "game=2;exe=chx;CheatGod=1;CheatSpeed=1",
+    "game=3;exe=chx;CheatWeapons=1;CheatHud=1",
+    "game=3;CheatGod=1;CheatWeapons=1;CheatSpeed=2",   // an exe without them: greyed, nothing sent
     "game=2;AdaptiveTriggers=1;exe=adtg",         // Judgment, runtime without patch 98: greyed, not sent
     "game=3;AdaptiveTriggers=1;exe=adtg;rt=adt",  // GitHub #245, Gears 1: sent
     "game=3;AdaptiveTriggers=1;rt=adt",           // Gears 1 exe without the weapon table: greyed, not sent

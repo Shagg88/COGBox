@@ -30,15 +30,16 @@
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
+#include <ue3/auto_cheats.h>
 #include <ue3/console.h>
 #include <ue3/match_guard.h>
 
 #include "gow2_addresses.h"
 
 REXCVAR_DEFINE_BOOL(gow2_cheats, false, "Gears2",
-                    "GitHub #264: developer cheats on hotkeys, in games on this PC only (never System Link / online), and "
-                    "never in a Versus match (campaign and Horde only): F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F9 free camera, F10 hide the HUD, F11 all weapons "
-                    "and ammo (keys can be changed with --ue3_hotkeys)");
+                    "GitHub #264 / #342: the developers' cheat keys, in games on this PC only (never System Link / online), and "
+                    "never in a Versus match (campaign and Horde only): F9 free camera, F10 freeze the world, F11 hide / show the "
+                    "HUD (keys can be changed with --ue3_hotkeys). God mode, weapons, speed and a hidden HUD are --ue3_cheat_*");
 
 namespace {
 #if defined(GOW2_TU6) && GOW2_TU6
@@ -49,8 +50,9 @@ constexpr uint32_t kGEngine = 0x8312327Cu;
 constexpr uint32_t kGLog = 0x830CF548u;
 #endif
 // F7 (achievements) and F8 (COGBox social) are the in-game menu's; F1-F4 the SDK's / ours.
-constexpr const char* kDefaultHotkeys =
-    "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F9=ToggleDebugCamera;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
+// GitHub #342: god mode, weapons and slow motion are the launcher's own options now (ue3/auto_cheats.h, always on when
+// picked); the keys keep what only makes sense on a key.
+constexpr const char* kDefaultHotkeys = "F9=ToggleDebugCamera;F10=PlayersOnly;F11=ToggleHUD";
 // 0.6.3 (ue3/match_guard.h): cheats run in the campaign, Horde and the front end only - every other game type is Versus
 // (review r41: an allow-list, so a mode nobody listed is refused). The party / pre-game lobbies: refused.
 constexpr const char* kAllowed[] = {"GearGameSP_Base", "GearGameHorde_Base", "GearMenuGame", nullptr};
@@ -68,11 +70,16 @@ void Gow2InstallCheats() {
   target.exec_offset = 60;           // as Gears 3
   target.exec_vtable_slot = 0;
   const bool cheats = REXCVAR_GET(gow2_cheats);
-  if (cheats) target.before_each = "EnableCheats";
+  // GitHub #342: EnableCheats with the solo campaign's listen server seen as standalone for the call (ue3/auto_cheats.h)
+  if (cheats) target.enable_cheats = &ue3::cheats::EnableForConsole;
   ue3::match::Configure({"Gears 2", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
+  // GitHub #342: the launcher's cheats - only while every player in the game is on this PC (Gears 2's own rule), and
+  // EnableCheats on the menus' solo listen server
+  ue3::cheats::Configure({"Gears 2", false, true, true, target.engine_global, target.players_data_offset,
+                          target.players_num_offset});
   if (cheats) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
     REXLOG_INFO("gow2_cheats: developer cheats on hotkeys (standalone games only: the game's own AllowCheats; never in Versus)");
@@ -106,6 +113,7 @@ extern "C" void GOW2_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
   Gow2NoteTickCall(caller);
   if (caller == gow2::addr::kServerTickClientsTickRateRet) return;
   Ue3ConsoleRunQueued(ctx, base);
+  ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   Gow2AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   Gow2FirstPersonTick();        // --gow2_first_person (first_person.cpp; off: one flag test)
 }

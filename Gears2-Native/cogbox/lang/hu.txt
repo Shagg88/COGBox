@@ -1579,3 +1579,25 @@ Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and 
 the match's playlist = a mérkőzés játéklistája
 Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: ha a COG vagy a Locust oldalt szeretnéd választani, indíts Versus > Private mérkőzést, és a többiek szobakóddal vagy Barát csatlakozással lépjenek be. A váróban az Y gombbal válthatsz csapatot.
 Join through Gears 3's own matchmaking: the host's game picks your team. = Csatlakozás a Gears 3 saját keresésével: a házigazda játéka választja ki a csapatodat.
+# GitHub #342: the cheats that are simply on (machine-made; corrections welcome)
+God mode = Isten mód
+All weapons and ammo = Minden fegyver és lőszer
+Game speed = Játéksebesség
+Normal = Normál
+Slow motion (3/4) = Lassítás (3/4)
+Slow motion (1/2) = Lassítás (1/2)
+Slow motion (1/4) = Lassítás (1/4)
+Hide the HUD = HUD elrejtése
+Cheat keys (F9-F11) = Csalás billentyűk (F9-F11)
+CHEATS = CSALÁSOK
+Cheat: you take no damage. = Csalás: nem sebződsz.
+Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn. = Csalás: minden fegyver és teli lőszer, újra minden pálya kezdetén, ellenőrzőpontnál és újraéledéskor.
+Cheat: the whole game runs slower (in a game you host, for every player). = Csalás: az egész játék lassabban fut (az általad vezetett játékban minden játékosnak).
+The game's own slow-motion moments still play as made. = A játék saját lassított pillanatai úgy maradnak, ahogy készültek.
+No HUD while you play - for screenshots and videos. = Nincs HUD játék közben - képernyőképekhez és videókhoz.
+With Cheat keys on, F11 shows it again. = Bekapcsolt csalás billentyűkkel az F11 újra megjeleníti.
+The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show the HUD. = A fejlesztők billentyűi a játékban: F9 szabad kamera (Gears 1: repülés falakon át), F10 a világ megállítása, F11 HUD elrejtése / megjelenítése.
+Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = Csak a kampányban és a hullámos módokban (Horde, Beast, Survival) - Versusban soha.
+Gears 1 and 2: games on this PC only. = Gears 1 és 2: csak az ezen a PC-n futó játékokban.
+Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 és Judgment: az általad vezetett System Link vagy online játékban is - kérlek, csak a saját játékaidban használd.
+Achievements and saves are your own business. = Az achievementek és a mentések a te dolgod.
