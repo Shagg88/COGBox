@@ -154,7 +154,7 @@ const char* const k_builtin[] = {
     "game=0",
     "game=0;upd=1;Version=0;Resolution=2;AAMode=3;gpus=NVIDIA GeForce RTX 4080;files=dlss,fsr;exe=fif,ups,reflex,mute,edits;rt=vs,lat;SceneMode=2;FrameCap=7;Vsync=1;hz=144;LowLag=1;Mute=1;SkipLogos=1;Trilinear=1",
     "game=0;Resolution=4;AAMode=3;gpus=AMD Radeon RX 7900 XTX;exe=fif,al2;LowLag=1;FrameCap=4;Fullscreen=2;Monitor=2;screens=2;HDR=1;PaperWhite=250;Peak=1400;Mnk=1;Sens=1.3",
-    "game=0;Fov=115;MotionBlur=0;DoF=0;Shake=2;DeadZone=2;Vibration=0;WindowSize=3;Players=1;FpsMode=1;Pool=0;Aniso=0;extra=--gow2_frame_times={LOG}\\ft.csv|# comment| --foo=1 |",
+    "game=0;Fov=115;MotionBlur=0;DoF=0;Shake=2;DeadZoneL=10;DeadZoneR=10;Vibration=0;WindowSize=3;Players=1;FpsMode=1;Pool=0;Aniso=0;extra=--gow2_frame_times={LOG}\\ft.csv|# comment| --foo=1 |",
     "game=0;upd=1;Version=1;LowLag=0;exe=fif,fg;rt=vs,lat;FrameCap=2;Vsync=1;hz=60;FrameGen=1;files=fgdll;FpsMode=3",
     "game=0;AAMode=2;FrameCap=4;Vsync=1;hz=0;rt=vs;Pool=3;DrawDist=2;MipFade=1;Ultrawide=1;gpus=Microsoft Basic Display Adapter",
     "game=1",
@@ -169,7 +169,7 @@ const char* const k_builtin[] = {
     "game=2;upd=1;SkipLogos=1;Pool=1;FpsMode=3;FrameCap=7;Ultrawide=1",
     "game=2;Pool=3;FrameCap=2;Vsync=1;rt=vs;hz=165;FrameGen=1;exe=fg,fif,mute;files=fgdll;Mute=1;LowLag=1;gpus=Intel(R) UHD Graphics/NVIDIA GeForce GTX 1080",
     "game=2;AAMode=3;gpus=NVIDIA GeForce GTX 1080;files=fsr;FrameCap=4;Shake=2;Fov=125;DoF=0;Cheats=1;Mutators=1",
-    "game=2;Resolution=4;Fullscreen=0;WindowSize=5;Mnk=1;Sens=0.1;DeadZone=5;Vibration=0;Monitor=1;screens=1;HDR=1",
+    "game=2;Resolution=4;Fullscreen=0;WindowSize=5;Mnk=1;Sens=0.1;DeadZoneL=25;DeadZoneR=8;Vibration=0;Monitor=1;screens=1;HDR=1",
     "game=0;AdaptiveTriggers=1;exe=adt;rt=adt",   // GitHub #245, Gears 2: sent
     "game=0;AdaptiveTriggers=1;rt=adt",           // Gears 2 exe without the weapon table: greyed, not sent
     "game=2;AdaptiveTriggers=1;exe=adt;rt=adt",   // Judgment exe without its own weapon table (Gears 3's needle): not sent
@@ -447,6 +447,29 @@ int summary() {
             }
         }
     }
+    // 0.6.5 stick dead zones: one slider per stick, 1 % steps; the old 6-step "DeadZone" choice read into both sliders
+    {
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        Store st; Settings s = st.view(Game::Gears2, e);
+        s.set("DeadZoneL", 12); s.set("DeadZoneR", 0);
+        const std::vector<std::string> a = build_args(Game::Gears2, Version::TitleUpdate, s, e, nullptr);
+        auto has = [&](const std::string& v) { return std::find(a.begin(), a.end(), v) != a.end(); };
+        bool right = false;
+        for (const std::string& x : a) right = right || x.rfind("--right_stick_deadzone_percentage", 0) == 0;
+        if (!has("--left_stick_deadzone_percentage=0.12") || right) { std::cout << "FAIL per-stick dead zone args\n"; ++fails; }
+        Store old;
+        old.load_ini("[General]\nDeadZone=3\n");
+        const Settings o = old.view(Game::Gears3, e);
+        if (o.i("DeadZoneL") != 15 || o.i("DeadZoneR") != 15) { std::cout << "FAIL old DeadZone choice not moved to both sliders\n"; ++fails; }
+        Store both;
+        both.load_ini("[General]\nDeadZoneL=7\nDeadZone=3\nDeadZoneR=9\n");
+        const Settings b = both.view(Game::Gears3, e);
+        if (b.i("DeadZoneL") != 7 || b.i("DeadZoneR") != 9) { std::cout << "FAIL saved sliders overridden by the old choice\n"; ++fails; }
+        const std::string saved = old.save_ini();
+        if (saved.find("DeadZoneL=15") == std::string::npos || saved.find("\nDeadZone=") != std::string::npos) { std::cout << "FAIL dead zone save\n"; ++fails; }
+    }
     // Ping in the FPS bar: Show ping sends --cogbox_show_ping=true (the exe must know it); off sends nothing
     for (int on = 0; on <= 1; ++on) {
         Environment e; e.update_ready = true;
@@ -633,10 +656,10 @@ int summary() {
         const int G2 = static_cast<int>(Game::Gears2), G3 = static_cast<int>(Game::Gears3), GJ = static_cast<int>(Game::Judgment);
         const int fs3 = pages[G3].i("Fullscreen"), fs2 = pages[G2].i("Fullscreen");
         // Gears 3 (open page, unsaved): Vibration off, a graphics card, Extra dead zone 2, its own display mode
-        pages[G3].set("Vibration", 0); pages[G3].t["GraphicsCard"] = "NVIDIA GeForce RTX 4090"; pages[G3].set("DeadZone", 2);
+        pages[G3].set("Vibration", 0); pages[G3].t["GraphicsCard"] = "NVIDIA GeForce RTX 4090"; pages[G3].set("DeadZoneL", 2);
         pages[G3].set("Fullscreen", fs3 == 0 ? 1 : 0);
         // Gears 2 (in-game menu, then Restart to apply): mouse sensitivity and Extra dead zone 4
-        pages[G2].set("Sens", 1.2); pages[G2].set("DeadZone", 4);
+        pages[G2].set("Sens", 1.2); pages[G2].set("DeadZoneL", 4);
         bool dirty[kGameCount] = {}; dirty[G2] = dirty[G3] = true;
         bool changed[kGameCount] = {};
         sync_shared(st, envs, pages, dirty, G2, changed);
@@ -644,7 +667,7 @@ int summary() {
         for (int g : { G2, G3, GJ }) {
             if (pages[g].i("Vibration") != 0 || pages[g].f("Sens") != 1.2 || pages[g].str("GraphicsCard") != "NVIDIA GeForce RTX 4090")
                 bad("edits of both pages on game " + std::to_string(g));
-            if (pages[g].i("DeadZone") != 4) bad("the saved page wins on game " + std::to_string(g));
+            if (pages[g].i("DeadZoneL") != 4) bad("the saved page wins on game " + std::to_string(g));
         }
         if (pages[G2].i("Fullscreen") != fs2 || pages[G3].i("Fullscreen") == fs3) bad("PerGame value moved");
         if (!changed[G2] || !changed[G3] || !changed[GJ]) bad("changed flags");
@@ -653,7 +676,7 @@ int summary() {
         for (bool c : again) if (c) bad("second sync changed something");
         st.commit(Game::Gears2, pages[G2], envs[G2]); st.commit(Game::Gears3, pages[G3], envs[G3]);   // either order keeps it
         const Settings g1 = st.view(Game::Gears1, envs[static_cast<int>(Game::Gears1)]);
-        if (g1.i("Vibration") != 0 || g1.f("Sens") != 1.2 || g1.i("DeadZone") != 4) bad("store after both commits");
+        if (g1.i("Vibration") != 0 || g1.f("Sens") != 1.2 || g1.i("DeadZoneL") != 4) bad("store after both commits");
         // nothing unsaved: nothing moves
         bool none[kGameCount] = {};
         Settings fresh[kGameCount];
@@ -707,13 +730,13 @@ int summary() {
         // 2. the page being saved changes Extra dead zone and back: not an edit, so Gears 3's unsaved 2 is kept (by design)
         {
             auto w = world(1, 0);
-            const int dz = w->pages[G2].i("DeadZone"), other = dz == 2 ? 3 : 2;
-            w->pages[G2].set("DeadZone", dz + 1); w->pages[G2].set("DeadZone", dz); w->pages[G2].set("Sens", 0.7);
+            const int dz = w->pages[G2].i("DeadZoneL"), other = dz == 2 ? 3 : 2;
+            w->pages[G2].set("DeadZoneL", dz + 1); w->pages[G2].set("DeadZoneL", dz); w->pages[G2].set("Sens", 0.7);
             w->dirty[G2] = true;
-            w->pages[G3].set("DeadZone", other); w->dirty[G3] = true;
+            w->pages[G3].set("DeadZoneL", other); w->dirty[G3] = true;
             sync_shared(w->st, w->envs, w->pages, w->dirty, G2, w->changed);
             for (int g = 0; g < kGameCount; ++g)
-                if (w->pages[g].i("DeadZone") != other || w->pages[g].f("Sens") != 0.7) bad("reverted edit on game " + std::to_string(g));
+                if (w->pages[g].i("DeadZoneL") != other || w->pages[g].f("Sens") != 0.7) bad("reverted edit on game " + std::to_string(g));
         }
         // 3. two unsaved pages with different graphics cards: the page being saved wins either way round
         for (int prefer : { G3, GJ }) {

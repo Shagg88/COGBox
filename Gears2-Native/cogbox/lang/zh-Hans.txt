@@ -286,7 +286,8 @@ WASD move, mouse look, left click fire, right click aim, Space cover/roll, F mel
 Sens = 灵敏度
 Mouse sensitivity = 鼠标灵敏度
 How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = 鼠标转动镜头的速度。建议从 0.5 开始；高 DPI 鼠标请调低，低 DPI 鼠标请调高。
-Extra stick dead zone = 额外摇杆死区
+Left stick dead zone (%) = 左摇杆死区 (%)
+Right stick dead zone (%) = 右摇杆死区 (%)
 Game's own = 游戏自带
 Vibration = 震动
 Controller vibration = 手柄震动
@@ -745,7 +746,8 @@ Sets the graphics boxes in one go. Original = the game as on the console. Change
 How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = 游戏绘制的细节程度。1x：与主机一致的 1280x720，2x：2560x1440，3x：3840x2160（4K），4x：5120x2880。是真实细节，而非放大。匹配我的显示器：能覆盖屏幕的最小倍率，再重采样到屏幕的精确尺寸。1080p：以 720p 绘制并锐化后放大到屏幕，速度快，适合性能较弱的显卡；比真实细节更柔和。
 The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = 纹理流式加载池。越大，等待变清晰的模糊纹理越少。较大的尺寸会给游戏其余部分留下更少的内存。
 100 = the original. Widens (or narrows) every camera view by this much. = 100：原版。按此数值加宽（或收窄）每个镜头视野。
-Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = 叠加在游戏自带的死区之上，适用于漂移的磨损摇杆。游戏自带：不额外添加。
+Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own dead zone. = 小于此值的左摇杆移动会被忽略——摇杆漂移时请调高。0 = 仅使用游戏自身的死区。
+Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own dead zone. = 小于此值的右摇杆移动会被忽略——视角漂移时请调高。0 = 仅使用游戏自身的死区。
 The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = 游戏文本和语音的语言，包含美版和欧版的所有语言。只有你的游戏副本中包含的语言可用，其他语言会回退为英语。欧版副本包含的语言最多。游戏启动时生效。
 English (US) = 英语（美国）
 English (UK) = 英语（英国）

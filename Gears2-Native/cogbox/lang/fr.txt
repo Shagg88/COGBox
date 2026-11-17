@@ -286,7 +286,8 @@ WASD move, mouse look, left click fire, right click aim, Space cover/roll, F mel
 Sens = Sensib.
 Mouse sensitivity = Sensibilité de la souris
 How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = Vitesse à laquelle la souris tourne la caméra. 0,5 est un bon départ ; baissez-la pour une souris à DPI élevé, augmentez-la pour une souris à faible DPI.
-Extra stick dead zone = Zone morte supplémentaire du stick
+Left stick dead zone (%) = Zone morte du stick gauche (%)
+Right stick dead zone (%) = Zone morte du stick droit (%)
 Game's own = Celui du jeu
 Vibration = Vibration
 Controller vibration = Vibration de la manette
@@ -745,7 +746,8 @@ Sets the graphics boxes in one go. Original = the game as on the console. Change
 How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = Le niveau de détail dessiné par le jeu. 1x : 1280x720 comme sur la console, 2x : 2560x1440, 3x : 3840x2160 (4K), 4x : 5120x2880. Un vrai détail, pas un agrandissement. Adapter à mon moniteur : la plus petite échelle qui couvre l'écran, rééchantillonnée à sa taille exacte. 1080p : dessiné en 720p et agrandi à l'écran avec netteté, rapide, pour les cartes graphiques modestes ; plus doux que le vrai détail.
 The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = La réserve de diffusion des textures. Plus grande : moins de textures floues en attente de netteté. Les grandes tailles laissent moins de mémoire au reste du jeu.
 100 = the original. Widens (or narrows) every camera view by this much. = 100 : l'original. Élargit (ou rétrécit) chaque vue de caméra de cette valeur.
-Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = S'ajoute à la zone morte propre au jeu, pour les sticks usés qui dérivent. Propre au jeu : rien n'est ajouté.
+Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own dead zone. = Les mouvements du stick gauche plus petits que cette valeur sont ignorés : augmentez-la si le stick dérive. 0 = seulement la zone morte du jeu.
+Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own dead zone. = Les mouvements du stick droit plus petits que cette valeur sont ignorés : augmentez-la si la caméra dérive. 0 = seulement la zone morte du jeu.
 The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = La langue des textes et des voix du jeu, toutes les langues des versions américaine et européenne. Seules les langues de votre copie du jeu sont disponibles ; les autres repassent en anglais. Les copies européennes en ont le plus. Pris en compte au lancement du jeu.
 English (US) = Anglais (États-Unis)
 English (UK) = Anglais (Royaume-Uni)

@@ -283,7 +283,8 @@ WASD move, mouse look, left click fire, right click aim, Space cover/roll, F mel
 Sens = Érz.
 Mouse sensitivity = Egér érzékenység
 How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = Milyen gyorsan forgatja az egér a kamerát. A 0,5 jó kiindulópont; egér magas DPI-nél csökkentsd, alacsony DPI-nél növeld.
-Extra stick dead zone = Extra kar holtzóna
+Left stick dead zone (%) = Bal kar holtzónája (%)
+Right stick dead zone (%) = Jobb kar holtzónája (%)
 Game's own = A játék saját
 Vibration = Rezgés
 Controller vibration = Kontroller rezgése
@@ -925,7 +926,8 @@ The soft shadowing in corners, creases and where things touch. XeGTAO: a modern 
 100 = the original. Widens (or narrows) every camera view by this much. = 100: az eredeti. Ennyivel szélesíti (vagy szűkíti) minden kameranézetet.
 Controller button prompts = Kontroller gombjelzései
 With Keyboard and mouse on, keep the game's controller button prompts instead of the key caps (for example when Steam Input sends a controller as keyboard and mouse). = Bekapcsolt Billentyűzet és egér mellett is a játék kontrolleres gombjelzései maradnak a billentyűfeliratok helyett (például ha a Steam Input a kontrollert billentyűzetként és egérként küldi).
-Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = A játék saját holtzónájára kerül rá, kopott, driftelő karokhoz. A játék saját: semmi sem adódik hozzá.
+Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own dead zone. = A bal kar ennél kisebb mozgását a játék figyelmen kívül hagyja – növeld, ha a kar magától mozog. 0 = csak a játék saját holtzónája.
+Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own dead zone. = A jobb kar ennél kisebb mozgását a játék figyelmen kívül hagyja – növeld, ha a kamera magától mozog. 0 = csak a játék saját holtzónája.
 Radial stick dead zone = Kerek kar holtzóna
 A round dead zone on both sticks (measured from the centre, not per axis), so small diagonal aim moves are not swallowed. Gears 1 and 2's own square dead zone on the camera is removed with it. Game's own = unchanged. = Kerek holtzóna mindkét karon (a középponttól mérve, nem tengelyenként), így a kis átlós célzómozdulatok nem vesznek el. Ezzel együtt a Gears 1 és 2 saját, négyzetes kamera-holtzónája is megszűnik. A játék saját: változatlan.
 Controller layout = Kontroller kiosztás

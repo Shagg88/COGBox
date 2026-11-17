@@ -468,8 +468,15 @@ std::vector<Option> make_options(Game g) {
     add(number("Sens", "Mouse sensitivity", Tab::Controls, Kind::Float, SH, 0.01, 2, 0.01, 0.5,
                "How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a "
                "low-DPI one.", 381, 2));
-    add(choice("DeadZone", "Extra stick dead zone", Tab::Controls, SH, { "Game's own", "5%", "10%", "15%", "20%", "25%" }, 0,
-               "Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added.", 382));
+    // 0.6.5 (Shagg 16 Nov 22:22: "simple thumbstick deadzones like those found in popular emulators"): one slider per
+    // stick, 0-50 % in 1 % steps (was one 6-step choice for both). The old saved "DeadZone" choice is read into both
+    // (Store::load). Same runtime switches as before (left_ / right_stick_deadzone_percentage, a fraction), read per poll.
+    add(number("DeadZoneL", "Left stick dead zone (%)", Tab::Controls, Kind::Int, SH, 0, 50, 1, 0,
+               "Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own "
+               "dead zone.", 382));
+    add(number("DeadZoneR", "Right stick dead zone (%)", Tab::Controls, Kind::Int, SH, 0, 50, 1, 0,
+               "Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own "
+               "dead zone.", 0));
     // GitHub #95: a round (radial) dead zone on both sticks, rescaled from its edge - Gears 3's feel for Gears 1 and 2.
     // SDK patch 55 (pad_radial_deadzone). In Gears 1 and 2 the game's own per-axis dead zone on the look binding is
     // taken off at the same time (below), so the round one is the one you feel.
@@ -1540,6 +1547,9 @@ bool Store::load_ini(const std::string& text) {
     // FrameCap list version per section (0 = [General]); only FrameCap values read from a file without
     // "FrameCapList=2" are moved over, once, after reading (values from the old "Fps" are already list 2).
     bool capList2[kGameCount + 1] = {}, capRead[kGameCount + 1] = {};
+    // 0.6.5: the old 6-step "DeadZone" choice (both sticks) goes into each slider not saved in the file itself
+    int oldDeadZone = -1;
+    bool dzRead[2] = {};
     // The PS1's flat keys (launcher-settings.json converted to key=value) are read in [General] too.
     struct Legacy { const char* key; int game; const char* id; };
     static const Legacy legacy[] = {
@@ -1581,6 +1591,9 @@ bool Store::load_ini(const std::string& text) {
                 continue;
             }
             if (key == "FrameCapList") { capList2[0] = x >= 2; continue; }
+            if (key == "DeadZone") { oldDeadZone = std::max(0, std::min(5, static_cast<int>(x))); any = true; continue; }
+            if (key == "DeadZoneL") dzRead[0] = true;
+            if (key == "DeadZoneR") dzRead[1] = true;
             if (key == "BrightnessDefault") continue;   // 0.6.1: the setting is gone (see the top of this file)
             if (key == "FrameCap") { top["FrameCap"] = x; capRead[0] = true; any = true; continue; }
             if (key == "Fps") {   // job 638: the old 4-step frame rate limit (the shared value)
@@ -1619,6 +1632,10 @@ bool Store::load_ini(const std::string& text) {
         }
     }
     if (capRead[0] && !capList2[0]) top["FrameCap"] = old_cap_list1_to_2(top["FrameCap"]);
+    if (oldDeadZone >= 0) {
+        if (!dzRead[0]) top["DeadZoneL"] = std::round(k_deadValue[oldDeadZone] * 100.0);
+        if (!dzRead[1]) top["DeadZoneR"] = std::round(k_deadValue[oldDeadZone] * 100.0);
+    }
     for (int g = 0; g < kGameCount; ++g)
         if (capRead[g + 1] && !capList2[g + 1]) per[g]["FrameCap"] = old_cap_list1_to_2(per[g]["FrameCap"]);
     // 0.6.1: a saved Brightness (shared or per game) is dropped, so it is not written back either.
@@ -2163,8 +2180,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 904-908: stick dead zone, vibration
     {
-        int d = std::max(0, std::min(5, s.i("DeadZone")));
-        if (d > 0) { std::string dz = fmt_double(k_deadValue[d]); a.push_back("--left_stick_deadzone_percentage=" + dz); a.push_back("--right_stick_deadzone_percentage=" + dz); }
+        const int l = std::max(0, std::min(50, s.i("DeadZoneL"))), r = std::max(0, std::min(50, s.i("DeadZoneR")));
+        if (l > 0) a.push_back("--left_stick_deadzone_percentage=" + fmt_double(l / 100.0));
+        if (r > 0) a.push_back("--right_stick_deadzone_percentage=" + fmt_double(r / 100.0));
     }
     if (!s.b("Vibration")) a.push_back("--vibration=false");
     if (on("AdaptiveTriggers")) a.push_back("--pad_adaptive_triggers=true");   // GitHub #245 (greyed: never sent)
@@ -2560,7 +2578,8 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         { "HideNotes", { { "gow2_hide_onscreen_notes", "false" } } },
         { "Mute", { { p + "_mute_unfocused", "false" } } },
         { "Vibration", { { "vibration", "true" } } },
-        { "DeadZone", { { "left_stick_deadzone_percentage", "0" }, { "right_stick_deadzone_percentage", "0" } } },
+        { "DeadZoneL", { { "left_stick_deadzone_percentage", "0" } } },
+        { "DeadZoneR", { { "right_stick_deadzone_percentage", "0" } } },
         { "WalkMode", { { "mnk_walk_toggle", "false" } } },
         { "AchievementStyle", { { "cogbox_ach_style", "x360" } } },
         { "AchievementColour", { { "cogbox_ach_colour", "dark" } } },

@@ -286,7 +286,8 @@ WASD move, mouse look, left click fire, right click aim, Space cover/roll, F mel
 Sens = Sens
 Mouse sensitivity = マウス感度
 How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = マウスでカメラを回す速さ。最初は0.5がおすすめです。高DPIのマウスでは下げ、低DPIのマウスでは上げてください。
-Extra stick dead zone = スティックのデッドゾーン追加
+Left stick dead zone (%) = 左スティックのデッドゾーン (%)
+Right stick dead zone (%) = 右スティックのデッドゾーン (%)
 Game's own = ゲーム標準
 Vibration = 振動
 Controller vibration = コントローラーの振動
@@ -745,7 +746,8 @@ Sets the graphics boxes in one go. Original = the game as on the console. Change
 How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = ゲームが描画する精細さです。1x：コンソール版と同じ1280x720、2x：2560x1440、3x：3840x2160（4K）、4x：5120x2880。アップスケールではない本物の精細さです。モニターに合わせる：画面を覆う最小の倍率で、画面の正確なサイズにリサンプリングします。1080p：720pで描画し、シャープ処理をして画面にアップスケールします。高速で、性能の低いグラフィックスカード向けですが、本物の精細さよりやわらかくなります。
 The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = テクスチャストリーミングのプールです。大きいほど、鮮明になるのを待つぼやけたテクスチャが減ります。大きいサイズにすると、ゲームのほかの部分に使えるメモリが減ります。
 100 = the original. Widens (or narrows) every camera view by this much. = 100：オリジナル。カメラの視野をこの分だけ広げます（または狭めます）。
-Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = ゲーム本来のデッドゾーンに上乗せされます。ドリフトする摩耗したスティック向けです。ゲーム本来：何も加えません。
+Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own dead zone. = これより小さい左スティックの動きは無視されます。スティックがドリフトする場合は上げてください。0 = ゲーム本来のデッドゾーンのみ。
+Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own dead zone. = これより小さい右スティックの動きは無視されます。カメラがドリフトする場合は上げてください。0 = ゲーム本来のデッドゾーンのみ。
 The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = ゲーム内のテキストと音声の言語です。米国版と欧州版のすべての言語に対応しています。ゲームのコピーに入っている言語のみ選べ、それ以外は英語になります。欧州版のコピーが最も多くの言語を含みます。ゲームの起動時に反映されます。
 English (US) = 英語（米国）
 English (UK) = 英語（英国）

@@ -286,7 +286,8 @@ WASD move, mouse look, left click fire, right click aim, Space cover/roll, F mel
 Sens = Sens
 Mouse sensitivity = 마우스 감도
 How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = 마우스로 카메라를 돌리는 속도입니다. 0.5로 시작해 보세요. DPI가 높은 마우스는 낮추고, DPI가 낮은 마우스는 높이세요.
-Extra stick dead zone = 추가 스틱 데드존
+Left stick dead zone (%) = 왼쪽 스틱 데드존 (%)
+Right stick dead zone (%) = 오른쪽 스틱 데드존 (%)
 Game's own = 게임 자체
 Vibration = 진동
 Controller vibration = 컨트롤러 진동
@@ -745,7 +746,8 @@ Sets the graphics boxes in one go. Original = the game as on the console. Change
 How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = 게임이 그리는 디테일의 정도입니다. 1x: 콘솔과 같은 1280x720, 2x: 2560x1440, 3x: 3840x2160(4K), 4x: 5120x2880. 업스케일이 아닌 실제 디테일입니다. 내 모니터에 맞춤: 화면을 덮는 가장 작은 배율로 그린 뒤 화면의 정확한 크기로 리샘플링합니다. 1080p: 720p로 그린 뒤 선명도를 높여 화면에 업스케일합니다. 빠르며 성능이 낮은 그래픽 카드에 적합하지만 실제 디테일보다 부드럽습니다.
 The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = 텍스처 스트리밍 풀입니다. 클수록 선명해지기를 기다리는 흐릿한 텍스처가 줄어듭니다. 크기가 클수록 게임의 나머지 부분에 쓸 메모리가 줄어듭니다.
 100 = the original. Widens (or narrows) every camera view by this much. = 100: 원본. 모든 카메라 시야를 이 값만큼 넓히거나 좁힙니다.
-Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = 게임 자체의 데드존 위에 더해집니다. 드리프트가 생기는 낡은 스틱용입니다. 게임 자체: 아무것도 더하지 않습니다.
+Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own dead zone. = 이보다 작은 왼쪽 스틱 움직임은 무시돼요. 스틱이 쏠리면 값을 올리세요. 0 = 게임 자체 데드존만.
+Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own dead zone. = 이보다 작은 오른쪽 스틱 움직임은 무시돼요. 카메라가 저절로 움직이면 값을 올리세요. 0 = 게임 자체 데드존만.
 The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = 게임 자체 텍스트와 음성의 언어입니다. 미국판과 유럽판이 지원하는 모든 언어를 선택할 수 있습니다. 사용 중인 게임 사본에 들어 있는 언어만 표시되며, 나머지는 영어로 대체됩니다. 유럽판 사본에 언어가 가장 많습니다. 게임을 시작할 때 적용됩니다.
 English (US) = 영어(미국)
 English (UK) = 영어(영국)
