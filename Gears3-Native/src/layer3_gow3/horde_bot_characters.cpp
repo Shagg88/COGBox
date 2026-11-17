@@ -11,9 +11,11 @@
 // script patch does not replace it). The game's own lobby bots are added in PendingMatch, where the load runs.
 //
 // --gow3_horde_bot_characters: while this PC hosts a Horde game, that one && reads || (EX_ native 0x82 -> 0x84, the same
-// length and the same short-circuit skip), so the game's own background load runs mid-match as it does in the lobby -
-// the same 12-class limit still applies mid-match; LoadPawnClass's callback (PawnClassLoaded) gives the bot its body and
-// the game sends the class to the other players as it does for lobby loads. In any other game type the byte is put back.
+// length and the same short-circuit skip), so the game's own background load runs mid-match as it does in the lobby.
+// Mid-match the 12-class limit still applies; in Horde's own lobby (PendingMatch) || skips it (at most 5 players a side,
+// so 12 classes are not reached). A bot spawned before its load ends plays that life as Marcus; LoadPawnClass's callback
+// (PawnClassLoaded) then gives it its body, and the game sends the class to the other players as it does for lobby
+// loads. In any other game type the byte is put back.
 // The change is to the loaded script in memory (as main_menu_exit.cpp), never to the package file, so Title Update 6's
 // package check (dirty disc) never sees it. Found by its bytes and its class, not by an address of one game build.
 //
@@ -55,23 +57,26 @@ uint32_t Word(uint32_t a) { return (uint32_t(Byte(a)) << 24) | (uint32_t(Byte(a 
 // The && of `IsInState('PendingMatch') && ...` in GearGameMP_Base.SetPlayerClassFromPlayerSelection: 82 | 61 19 (native
 // 281, IsInState) | 21 <FName 'PendingMatch', number 0> | 4A (empty optional) 16 (end of parameters) | 18 (skip, the
 // right side). 0 unless exactly one such byte is found (anything else: not the expected script - left alone).
+bool IsCondition(uint32_t at) {
+  const uint8_t b0 = Byte(at);
+  return (b0 == kAnd || b0 == kOr) && Byte(at + 1) == 0x61 && Byte(at + 2) == 0x19 && Byte(at + 3) == 0x21 && Byte(at + 12) == 0x4A &&
+         Byte(at + 13) == 0x16 && Byte(at + 14) == 0x18 && Word(at + 8) == 0 && obj::Name(Word(at + 4)) == "PendingMatch";
+}
+
 uint32_t FindCondition(int* functions) {
   uint32_t found = 0;
   int hits = 0;
   *functions = 0;
+  const uint32_t function_cls = obj::FindClass("Function");
+  if (!function_cls) return 0;
   for (uint32_t o : obj::AllObjects()) {
-    if (obj::ObjectName(o) != "SetPlayerClassFromPlayerSelection" || obj::ObjectName(obj::ClassOf(o)) != "Function") continue;
+    if (obj::ClassOf(o) != function_cls || obj::ObjectName(o) != "SetPlayerClassFromPlayerSelection") continue;
     if (obj::ObjectName(obj::Read32(o + 40)) != "GearGameMP_Base") continue;   // the Outer (KTL, SP, Wingman have their own)
     ++*functions;
     const uint32_t data = obj::Read32(o + 76), n = obj::Read32(o + 80);     // UStruct::Script {data, count}
-    if (!data || n < 16 || n > 4096 || !obj::Readable(data, n)) continue;
+    if (!data || n < 16 || n > 4096 || !obj::Readable(data, n) || Byte(data + n - 1) != 0x53) continue;   // EX_EndOfScript
     for (uint32_t i = 0; i + 15 <= n; ++i) {
-      const uint8_t b0 = Byte(data + i);
-      if (b0 != kAnd && b0 != kOr) continue;
-      if (Byte(data + i + 1) != 0x61 || Byte(data + i + 2) != 0x19 || Byte(data + i + 3) != 0x21 || Byte(data + i + 12) != 0x4A ||
-          Byte(data + i + 13) != 0x16 || Byte(data + i + 14) != 0x18)
-        continue;
-      if (Word(data + i + 8) != 0 || obj::Name(Word(data + i + 4)) != "PendingMatch") continue;
+      if (!IsCondition(data + i)) continue;
       found = data + i;
       ++hits;
     }
@@ -89,25 +94,26 @@ bool HordeHosted(uint32_t horde_cls) {
 
 void CharactersWorker() {
   uint32_t at = 0, horde_cls = 0;
-  bool warned = false;
+  bool gave_up = false;
   for (;; std::this_thread::sleep_for(std::chrono::seconds(2))) {
+    if (gave_up) return;
     if (!obj::Ready() && !Open()) continue;
     if (!horde_cls) horde_cls = obj::FindClass("GearGameHorde_Base");
     if (!at) {
       int functions = 0;
       at = FindCondition(&functions);
       if (at) REXLOG_INFO("gow3_horde_bot_characters: found the character-load check at {:08X}", at);
-      else if (functions && !warned) {
+      else if (functions) {   // the function is loaded but not as expected: looking again won't change it
         REXLOG_WARN("gow3_horde_bot_characters: SetPlayerClassFromPlayerSelection is not the expected script - left alone");
-        warned = true;
+        gave_up = true;
       }
       if (!at) continue;
     }
-    const uint8_t now = Byte(at);
-    if (now != kAnd && now != kOr) {   // the package was reloaded / the memory reused: look again
+    if (!IsCondition(at)) {   // the package was reloaded / the memory reused: look again
       at = 0;
       continue;
     }
+    const uint8_t now = Byte(at);
     const uint8_t want = HordeHosted(horde_cls) ? kOr : kAnd;
     if (now == want) continue;
     obj::Write8(at, want);
