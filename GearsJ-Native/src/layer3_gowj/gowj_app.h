@@ -35,6 +35,8 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 // into this game's layer 2). Declared here so Gears 2's ue3/ include folder is not needed. After the renderer.
 void Ue3InstallShaderPrebuildIfRequested();
 
+REXCVAR_DECLARE(bool, gowj_hdr_native);
+
 REXCVAR_DECLARE(bool, gowj_mute_unfocused);  // game_patches.cpp
 
 void GowjAddBuiltInIniEdits();  // game_patches.cpp: --gowj_trilinear, --gowj_fast_mip_fade
@@ -123,9 +125,9 @@ class GowjApp : public rex::ReXApp {
     //    still building is skipped and pops in. Judgment no longer sets pipeline_wait_ms / play_hold_draws (it set 0 / 8,
     //    and 8 would have brought the hold back - Shagg's 22:00 session froze up to 1 s per backlog).
     game_default("gow2_renderer_shader_backend", "dxbc");
-    // 0.6.1: no native-HDR profiles yet (false); the game reads its exposure back from a resolve (true) - see the hint.
+    // Native FP16 grading + post-scene FXAA; retain the original CPU eye-adaptation readback.
     XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull,
-                                                false, true});
+                    REXCVAR_GET(gowj_hdr_native), true, REXCVAR_GET(gowj_hdr_native)});
     Ue3InstallShaderPrebuildIfRequested();  // notes/78: after the renderer (it asks whether the renderer wants them)
     XenosInstallPm4ShadowIfRequested(runtime());
   }

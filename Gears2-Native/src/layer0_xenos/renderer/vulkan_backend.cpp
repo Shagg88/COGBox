@@ -363,6 +363,8 @@ class VulkanBackend final : public Backend {
     return std::format("Vulkan {}.{} on {} ({})", VK_API_VERSION_MAJOR(device_api_), VK_API_VERSION_MINOR(device_api_),
                        device_name_, driver_name_);
   }
+  bool SupportsMixedAttachmentSizes() const override { return true;
+  }
   ShaderIL GetShaderIL() const override { return ShaderIL::kSpirv; }
   bool SupportsStorage(Format format) const override {  // gpu.h: the device's storage-image feature for the format
     if (!ready_ || physical_ == VK_NULL_HANDLE) return false;

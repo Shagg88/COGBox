@@ -242,12 +242,18 @@ struct XenosRendererHints {
   uint64_t dummy_point_vs = 0;
   // 0.6.1: this game has captured native-HDR scene / HUD profiles (PR #267: Gears 2, Gears 3 TU6). Without it (Gears 1,
   // Judgment) HDR10 output keeps the Stage 7.3 encoder of 0.6.0 (paper white, knee, highlight expansion).
+  // Experimental Gears 1/Judgment profiles enable this hint only through their opt-in switches.
   bool native_hdr = false;
   // 0.6.1 (GitHub #185 / #250, GitLab 4): the game reads a resolved texture back on the CPU to set its exposure
   // (Judgment's eye adaptation). With --gow2_renderer_resolve_readback left at its default, resolves are then copied
   // back into guest memory the fast way; without that the game never sees its own measurement and every scene comes
   // out one stop too bright (measured at Wharf District against Xbox 360 footage: mean 107 -> 68, console 70).
   bool exposure_readback = false;
+  // Judgment's captured post-scene FXAA must sample the FP16 scene. Does not
+  // opt Gears 2/3 into the experimental scene-effect replay path.
+  bool native_hdr_fxaa = false;
+  // Gears 1: captured post-grade motion blur consumes an encoded FP16 scene.
+  bool native_hdr_motion_blur = false;
 };
 void XenosInstallRendererIfRequested(rex::Runtime* runtime, const XenosRendererHints& hints = {});
 // --gow2_pm4_shadow=N (Stage 5B, notes/49): our own PM4 processor runs on every ring range (SDK patch 20) and the GPU

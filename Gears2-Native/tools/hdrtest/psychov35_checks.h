@@ -154,6 +154,17 @@ static const float4 xe_c[256] = {
   if(xe_sys2.y==1) {
     output[id.xy]=float4(NativeGears3ExtendedLut(scene.Load(int3(id.xy,0)).rgb),1);return;
   }
+  if(xe_sys2.y==11) {
+    float3 v=scene.Load(int3(id.xy,0)).rgb;
+    output[id.xy]=float4(NativeGears3GradientLut(v).g,NativeGears3ExtendedLut(v).g,0,1);return;
+  }
+  if(xe_sys2.y==12) {
+    float h=0.001,k=0.5;
+    float a=NativeGears3ExtendedLut((k-h).xxx).g;
+    float b=NativeGears3ExtendedLut(k.xxx).g;
+    float c=NativeGears3ExtendedLut((k+h).xxx).g;
+    output[id.xy]=float4((b-a)/h,(c-b)/h,b,1);return;
+  }
   if(xe_sys2.y==2) {
     output[id.xy]=float4(NativeGears3ExtendedNeutral(max(scene.Load(int3(id.xy,0)).rgb,0.0))/65536.0,1);return;
   }

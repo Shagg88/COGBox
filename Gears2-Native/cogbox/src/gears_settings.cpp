@@ -181,6 +181,9 @@ std::vector<Option> make_options(Game g) {
     add(choice("HdrHighlights", "HDR highlights", Tab::Display, PG, { "Off", "Subtle", "Default", "Strong" }, 2,
                "Gears 2 and Gears 3: how much brighter than normal white explosions, muzzle flashes and lights get. "
                "Default is the tuned look; Off keeps highlights at the plain tone-mapped level.", 0), "hdrhighlights", "HDR");
+    add(make("HdrCompressedLut", "Improved HDR LUT sampling", Tab::Display, Kind::Bool, PG, 1,
+             "Gears 3 native HDR: improved sampling of the game's colour grading. Off uses the previous sampling. "
+             "Restart the game after changing this setting.", 0), "hdrcompressedlut", "HDR");
     add(make("Vsync", "Vsync (no tearing)", Tab::Display, Kind::Bool, SH, 0,
              "Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen "
              "follows the game below its refresh rate. A frame-rate limit above your screen's refresh rate is lowered to the "
@@ -804,6 +807,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "hdrhighlights") {   // 0.6.2: the native HDR scene (PsychoV35) of Gears 2 and Gears 3 only
         if (g != Game::Gears2 && g != Game::Gears3) return no("Gears 2 and Gears 3 only (their native HDR).");
         if (!cap_exe(env, "gow2_hdr_highlights")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "hdrcompressedlut") {
+        if (g != Game::Gears3) return no("Gears 3 native HDR only.");
+        if (!cap_exe(env, "gow3_hdr_compressed_lut")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "gamefps") {
         if (g == Game::Judgment || g == Game::Gears1) return no(not_yet(gi, "game's own counter"));
     } else if (f == "ultrawide") {   // 0.2.0: Judgment too (--gowj_ultrawide, a new build); Gears 1 when gow1.exe has it
@@ -1148,7 +1154,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     if (!a.ok) return a;
     bool on = true;
     if (o.id == "WindowSize") on = s.i("Fullscreen") == 0;                             // PS1 333: windowed only
-    else if (o.id == "PaperWhite" || o.id == "Peak" || o.id == "HdrHighlights") on = s.b("HDR");   // PS1 366; 0.6.2
+    else if (o.id == "PaperWhite" || o.id == "Peak" || o.id == "HdrHighlights" || o.id == "HdrCompressedLut") on = s.b("HDR");   // PS1 366; 0.6.2
     else if (o.id == "PadPrompts") on = s.b("Mnk");                                  // GitHub #104
     else if (o.id == "WalkMode") on = s.b("Mnk");                                    // GitHub #125
     else if (o.id == "TriggerRumble") on = s.b("Vibration");                         // 0.6.3: no rumble, no trigger rumble
@@ -2103,6 +2109,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back(std::string("--gow2_hdr_highlights=") + k_strength[std::max(0, std::min(3, s.i("HdrHighlights")))]);
         }
     }
+    if (s.b("HDR") && g == Game::Gears3 && cap_exe(env, "gow3_hdr_compressed_lut"))
+        a.push_back(std::string("--gow3_hdr_compressed_lut=") + (s.b("HdrCompressedLut") ? "true" : "false"));
     // PS1 901-902: fullscreen / window size
     // job 523: under Wine / Proton the compositor (gamescope on a Steam Deck) owns the screen - no exclusive fullscreen
     if (s.i("Fullscreen") >= 1) { a.push_back("--fullscreen=true"); if (s.i("Fullscreen") == 2 && !env.wine) a.push_back("--fullscreen_exclusive=true"); }

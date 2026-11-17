@@ -8,6 +8,7 @@
 
 #include <xenos/renderer/gpu.h>
 #include <xenos/renderer/render_target_cache.h>
+#include <xenos/renderer/hdr_scene_effect.h>
 
 namespace {
 
@@ -183,4 +184,28 @@ TEST_CASE("render_target_cache: twins of both phases in use are kept", "[rendere
   CHECK(r.count == 1);
   CHECK(rts.size() == 2);
   CHECK(rts.Find(small) != nullptr);
+}
+
+TEST_CASE("HDR resolve leases retain their scale twin across phase changes", "[hdr][rt_cache]") {
+  RtMockBackend backend;
+  RenderTargetCache rts(backend, false, 4, 640);
+  const RenderTargetKey scene{720, uint32_t(edram::ColorFormat::k_8_8_8_8), 1280, 0};
+  for (uint32_t source_scale : {1u, 2u, 3u, 4u}) {
+    rts.SetPhaseScale(source_scale);
+    auto* source = rts.Get(scene);
+    REQUIRE(source);
+    ++source->write_gen;
+    const native_hdr::SceneLease lease{51, source->write_gen, 7, source->id};
+    for (uint32_t next_scale : {1u, 2u, 3u, 4u}) {
+      rts.SetPhaseScale(next_scale);
+      REQUIRE(rts.Get(scene));
+      const auto* owner = rts.FindById(lease.owner_id);
+      REQUIRE(owner == source);
+      CHECK(lease.Current(51, owner->id, owner->write_gen, 7));
+      CHECK_FALSE(lease.Current(52, owner->id, owner->write_gen, 7));
+      CHECK_FALSE(lease.Current(51, owner->id, owner->write_gen, 8));
+    }
+    ++source->write_gen;
+    CHECK_FALSE(lease.Current(51, source->id, source->write_gen, 7));
+  }
 }

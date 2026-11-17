@@ -18,6 +18,8 @@
 #include <xenos/renderer/gpu.h>
 #include <xenos/renderer/guest_watch.h>
 #include <xenos/renderer/texture_cache.h>
+#include <xenos/renderer/hdr_overlay.h>
+#include <xenos/renderer/hdr_scene_effect.h>
 #include <xenos/renderer/texture_pack.h>
 
 // Stub for guest_watch.cpp's diagnostic log when observer_hub.cpp is not linked into gn_tests.
@@ -49,6 +51,9 @@ class MockBackend final : public gpu::Backend {
   std::vector<UploadRecord> uploads;
   std::unordered_map<gpu::TextureHandle, gpu::TextureDesc> live_textures;
   gpu::BackendStats stats{};
+  bool drop_upload=false;
+  uint64_t load_drops=0;
+  uint64_t TextureLoadDrops() const override { return load_drops; }
 
   bool Init(const gpu::BackendOptions&, std::string&) override { return true; }
   std::string Describe() const override { return "MockBackend"; }
@@ -83,6 +88,7 @@ class MockBackend final : public gpu::Backend {
   void SetTextures(const gpu::TextureView*, const gpu::SamplerDesc*, uint32_t, uint32_t) override {}
   void UploadTexture(gpu::TextureHandle texture, uint32_t mip, uint32_t layer, const void* data, uint32_t row_bytes,
                      uint32_t rows, uint32_t slices) override {
+    if(drop_upload){++load_drops;return;}
     const size_t total = size_t(row_bytes) * rows * slices;
     const auto* p = static_cast<const uint8_t*>(data);
     uploads.push_back({texture, mip, layer, row_bytes, rows, slices, std::vector<uint8_t>(p, p + total)});
@@ -318,6 +324,100 @@ TEST_CASE("texture_cache: both swap_hash and rex_hash match registered overlays"
   ClearDynamicOverlays();
 }
 
+TEST_CASE("HDR UI: normalized masks are independent but failed loads are not", "[texture_cache][hdr]") {
+  ClearDynamicOverlays();
+  std::vector<uint8_t> memory(1u<<20,0x55);MockBackend backend;GuestWatch watch(nullptr);
+  TextureCache cache(backend,memory.data(),watch);
+  uint32_t fetch[192]{};MakeLinearDxt5Fetch(fetch,0x1000,32,32);
+  gpu::TextureView views[96]{};gpu::SamplerDesc samplers[32]{};
+  REQUIRE(cache.Bind(fetch,1,0,0,1,views,samplers)==0);
+  CHECK(cache.IndependentUiMask(1)==1);
+  watch.MarkGpuWritten(0x1000,4096,false);
+  REQUIRE(cache.Bind(fetch,1,0,0,2,views,samplers)==0);
+  CHECK(cache.IndependentUiMask(1)==1);
+  // R8 mask: bounded coverage remains valid even on previously rendered pages.
+  fetch[1]=(fetch[1]&~63u)|2u;
+  REQUIRE(cache.Bind(fetch,1,0,0,3,views,samplers)==0);
+  CHECK(cache.IndependentUiMask(1)==1);
+  backend.drop_upload=true;fetch[1]=0x8000|2u;
+  REQUIRE(cache.Bind(fetch,1,0,0,4,views,samplers)==0);
+  CHECK(cache.IndependentUiMask(1)==0);
+  CHECK(cache.Stats().load_failures>0);
+  backend.drop_upload=false;
+  REQUIRE(cache.Bind(fetch,1,0,0,5,views,samplers)==0);
+  CHECK(cache.IndependentUiMask(1)==1);
+  ClearDynamicOverlays();
+}
+TEST_CASE("HDR UI: CPU RGBA8 proof is revoked by render provenance", "[texture_cache][hdr]") {
+  ClearDynamicOverlays();std::vector<uint8_t> memory(1u<<20,0x55);
+  MockBackend backend;GuestWatch watch(nullptr);TextureCache cache(backend,memory.data(),watch);
+  uint32_t fetch[192]{};MakeLinearDxt5Fetch(fetch,0x1000,32,32);fetch[1]=(fetch[1]&~63u)|6u;
+  gpu::TextureView views[96]{};gpu::SamplerDesc samplers[32]{};
+  REQUIRE(cache.Bind(fetch,1,0,0,1,views,samplers)==0);CHECK(cache.IndependentUiMask(1)==1);
+  watch.MarkGpuWritten(0x1000,4096,false);
+  REQUIRE(cache.Bind(fetch,1,0,0,2,views,samplers)==0);CHECK(cache.IndependentUiMask(1)==0);
+  // A page-level CPU invalidation alone is not proof of a complete replacement.
+  watch.Bump(0x1000,4096);
+  REQUIRE(cache.Bind(fetch,1,0,0,3,views,samplers)==0);CHECK(cache.IndependentUiMask(1)==0);
+  CHECK(cache.IndependentUiMask(0)==0);ClearDynamicOverlays();
+}
+TEST_CASE("HDR UI: geometry and state bound eligibility; replay preserves original tests", "[hdr]") {
+  namespace hdr=xenos::renderer::native_hdr;using M=hdr::OverlayMode;using F=gpu::BlendFactor;
+  hdr::OverlayInputs input{true,true,true,false,false,false,1};gpu::GraphicsPipelineDesc original;
+  original.depth_enable=original.depth_write=original.stencil_enable=true;original.stencil_write_mask=255;
+  original.stencil_front.pass=original.stencil_back.pass=gpu::StencilOp::kIncrSat;
+  original.color_blend[0].enable=true;original.color_blend[0].src=F::kOne;original.color_blend[0].dst=F::kInvSrcAlpha;
+  REQUIRE(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kPremultiplied);
+  const auto replay=hdr::OverlayPipeline(original,M::kPremultiplied);
+  CHECK(replay.depth_enable);CHECK_FALSE(replay.depth_write);CHECK(replay.stencil_enable);CHECK(replay.stencil_write_mask==0);
+  CHECK(replay.stencil_front.pass==gpu::StencilOp::kKeep);CHECK(original.depth_write);CHECK(original.stencil_write_mask==255);
+  input.scene_texture=true;CHECK(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kNone);
+  input.scene_texture=false;input.shader_side_effects=true;CHECK(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kNone);
+  input.shader_side_effects=false;input.screen_vertex=false;CHECK(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kNone);
+}
+
+TEST_CASE("HDR scene effects: leases reject stale frames, owners, writes and guest memory", "[hdr]") {
+  using xenos::renderer::native_hdr::SceneLease;
+  SceneLease lease{10,17,25,3};
+  CHECK(lease.Current(10,3,17,25));
+  CHECK_FALSE(lease.Current(11,3,17,25));
+  CHECK_FALSE(lease.Current(10,4,17,25));
+  CHECK_FALSE(lease.Current(10,3,18,25));
+  CHECK_FALSE(lease.Current(10,3,17,26));
+  SceneLease empty;CHECK_FALSE(empty.Current(0,0,0,0));
+}
+TEST_CASE("HDR scene effects: only complete canonical RGBA8 resolves and fetches qualify", "[hdr]") {
+  namespace h=xenos::renderer::native_hdr;
+  CHECK(h::DirectSceneResolve(6,0,false,2,0,0,0,0,1280,720,1280));
+  CHECK_FALSE(h::DirectSceneResolve(6,1,false,2,0,0,0,0,1280,720,1280));
+  CHECK(h::DirectSceneResolve(6,0,true,2,0,0,0,0,1280,720,1280));
+  CHECK(h::SceneComponent(0,true)==2);CHECK(h::SceneComponent(2,true)==0);
+  CHECK(h::SceneComponent(1,true)==1);CHECK(h::SceneComponent(3,true)==3);
+  CHECK(h::SceneComponent(0,false)==0);CHECK(h::SceneComponent(7,false)==5);
+  CHECK_FALSE(h::DirectSceneResolve(6,0,false,2,8,0,0,0,1280,720,1280));
+  CHECK_FALSE(h::DirectSceneResolve(6,0,false,2,0,0,8,0,1280,720,1280));
+  CHECK_FALSE(h::DirectSceneResolve(6,0,false,2,0,0,0,0,1200,720,1280));
+  CHECK_FALSE(h::DirectSceneResolve(7,0,false,2,0,0,0,0,1280,720,1280));
+  uint32_t f[6]{};f[0]=(1u<<31)|(40u<<22);f[1]=6|(2<<6);f[3]=3<<10;f[5]=1<<9;
+  CHECK(h::SceneFetchCompatible(f,2,1280));
+  f[3]|=1;CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));f[3]&=~1u;
+  CHECK_FALSE(h::SceneFetchCompatible(f,0,1280));f[0]|=1<<2;CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));
+  f[0]&=~(1u<<2);f[3]=(3<<10)|(1<<13);CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));
+  f[3]=3<<10;f[4]=1<<6;CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));f[4]=0;
+  CHECK_FALSE(h::SceneFetchCompatible(f,2,1344));
+  f[0]&=~(1u<<31);CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));f[0]|=1u<<31;
+  f[5]=0;CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));f[5]=1<<9;
+  f[1]|=1<<10;CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));
+  CHECK_FALSE(h::SceneFetchCompatible(nullptr,2,1280));
+}
+TEST_CASE("HDR scene effects: allocation arithmetic enforces the fixed budget", "[hdr]") {
+  namespace h=xenos::renderer::native_hdr;
+  CHECK(h::SceneEffectAllocationFits(0,0,3840,2160));
+  CHECK(h::SceneEffectAllocationFits(3840ull*2160*8,3840ull*2160*8,5120,2160));
+  CHECK_FALSE(h::SceneEffectAllocationFits(0,0,7680,4320));
+  CHECK_FALSE(h::SceneEffectAllocationFits(0,1,1,1));
+  CHECK_FALSE(h::SceneEffectAllocationFits(0,0,0,2160));
+  CHECK_FALSE(h::SceneEffectAllocationFits(h::kSceneEffectBudget,0,1,1));
 // 0.6.4 (GitHub #341): texture packs - one host texture per pack file, shared by every guest address that holds the same
 // content; kept (counted) when nothing shows it, reused when the content comes back, freed only when the cap needs it.
 TEST_CASE("texture_cache: a pack texture is read once and shared across guest addresses", "[texture_cache][texture_pack]") {

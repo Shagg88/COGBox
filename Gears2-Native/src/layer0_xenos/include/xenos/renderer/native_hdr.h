@@ -4,16 +4,33 @@
 #include <cstdint>
 #include <string>
 #include <xenos/renderer/psychov35_bridge.h>
+#include <xenos/renderer/gears1_hdr_bridge.h>
 
 namespace xenos::renderer::native_hdr {
 inline constexpr uint64_t kScene = 0xB6B6DD4E7D91F3D9ull;
 inline constexpr uint64_t kCanvas = 0xA9AC71DCCCEAEBE4ull;
 inline constexpr uint64_t kSceneUi = 0xECE0CF7069CD4A91ull;
+inline constexpr uint64_t kGears1Scene = 0xF513AF828C9DDF79ull;
 inline constexpr uint64_t kGears3Scene = 0x2F284B68A112ED3Eull;
-inline bool IsScene(uint64_t hash) { return hash == kScene || hash == kGears3Scene; }
+inline constexpr uint64_t kJudgmentScene = 0xFF451AA8CB30AC21ull;
+inline constexpr uint64_t kJudgmentSceneAlt = 0x887C175ADE20613Dull;
+inline bool IsJudgmentScene(uint64_t hash) { return hash==kJudgmentScene || hash==kJudgmentSceneAlt; }
+inline bool IsScene(uint64_t hash) { return hash == kScene || hash == kGears1Scene || hash == kGears3Scene || IsJudgmentScene(hash); }
 inline bool IsCanvasVertex(uint64_t hash) {
   return hash == 0x868DFF11A6BDEBAAull || hash == 0xE775468CA654846Dull ||
          hash == 0x6F83A894AB66D831ull || hash == 0x2E88B37100D9D0CEull;
+}
+
+// Captured Gears 1 menu atlas and animated text vertices. These are used
+// only by the guarded UI path: actual independent inputs and state still win.
+inline bool IsGears1UiVertex(uint64_t hash) {
+  return hash == 0xA740818096E7BC67ull || hash == 0x6EABF5AA338FF24Full;
+}
+
+// Additional captured Gears 3 menu vertices. These are evidence only for the
+// automatic UI path, which still checks actual inputs, blend and side effects.
+inline bool IsAdditionalUiVertex(uint64_t hash) {
+  return hash==0xE49D26F998B9A5B3ull || hash==0xF9EBE3D4293EC775ull || hash==0x6EB1D77A55840B2Dull;
 }
 
 // Evaluate a scene-sampling Canvas material with both the real HDR scene and
@@ -74,6 +91,11 @@ struct UiProfile {
   uint64_t vertex = 0;
 };
 inline constexpr UiProfile kUiProfiles[] = {
+    {0x3ED75A5AD9EEC713ull, 51, 0x414294FCB70FA79Eull, false,
+     0xA740818096E7BC67ull},  // Gears 1 straight-alpha menu atlas, captured BC3 inputs.
+    {0xC8DDFDD71DA39BB4ull, 30, 0x87D5B5F2222D1A70ull, false,
+     0x6EABF5AA338FF24Full},  // Gears 1 menu text, captured BC3 font sheet.
+
     {kCanvas, 54, 0xD3A4073CB8DAEB0Dull},
     {0x3F3410143BA49FE9ull, 54, 0xBD1EBA583EEF9E4Dull},
     {0xCDA0455F4F4EAFB4ull, 36, 0x2E30DE46E0279C75ull},

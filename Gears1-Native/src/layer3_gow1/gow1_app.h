@@ -33,6 +33,8 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 // into this game's layer 2). Declared here so Gears 2's ue3/ include folder is not needed. After the renderer.
 void Ue3InstallShaderPrebuildIfRequested();
 
+REXCVAR_DECLARE(bool, gow1_hdr_native);
+
 REXCVAR_DECLARE(bool, gow1_mute_unfocused);
 REXCVAR_DECLARE(bool, gow1_tiling_off);  // game_patches.cpp: one pass per frame  // game_patches.cpp
 
@@ -132,7 +134,8 @@ class Gow1App : public rex::ReXApp {
     // switch found 0A6D1DD7767FDF27 / 2E372EA28CC404B7 on 4,800 clears per 300 frames; the other games' pair never appears).
     // Without it nothing in Gears 1's frames was cleared (shadow maps, the light buffer, depth/stencil). The no-op point VS
     // is the other games' until Gears 1's is measured.
-    XenosInstallRendererIfRequested(runtime(), {0x0A6D1DD7767FDF27ull, 0x2E372EA28CC404B7ull, 0xB6C9863F710683ECull});
+    XenosInstallRendererIfRequested(runtime(), {0x0A6D1DD7767FDF27ull, 0x2E372EA28CC404B7ull, 0xB6C9863F710683ECull,
+                    REXCVAR_GET(gow1_hdr_native), false, false, REXCVAR_GET(gow1_hdr_native)});
     Ue3InstallShaderPrebuildIfRequested();  // notes/78: after the renderer (it asks whether the renderer wants them)
     XenosInstallPm4ShadowIfRequested(runtime());
   }

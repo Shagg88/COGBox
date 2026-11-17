@@ -834,7 +834,11 @@ struct Gen {
       }
       (void)replicate;
       Line("float4 vr = " + e + ";");
-      if (a.vector_result.clamp) Line("vr = xe_sat4(vr);");
+      if (a.vector_result.clamp) {
+        if(opt.native_hdr_filter && a.vector_result.write_mask==7)
+          Line("vr = max(vr, 0.0); // preserve HDR RGB; alpha is unchanged");
+        else Line("vr = xe_sat4(vr);");
+      }
       vr = "vr";
       if (a.vector_opcode >= AluVectorOpcode::kKillEq && a.vector_opcode <= AluVectorOpcode::kKillNe) EmitKill("vr.x != 0.0");
     }
@@ -1525,10 +1529,20 @@ Translation TranslateToHlsl(const Program& program, const HlslOptions& options) 
       s += "  o.color0 = saturate(o.color0);\n  o.color1 = saturate(o.color1);\n";
       s += "  o.color2 = saturate(o.color2);\n  o.color3 = saturate(o.color3);\n";
     }
-    if (options.native_hdr_linear) {
+    if (options.native_hdr_linear && !options.native_hdr_filter) {
       s += "  // Linear-light composition in scene reference-white units.\n";
-      if (options.native_hdr_modulation) {
-        s += "  float3 nativeColor = pow(saturate(o.color0.rgb), 2.2);\n";
+      if (options.native_hdr_premultiplied) {
+        s += "  float uiAlpha = saturate(o.color0.a);\n";
+        s += "  float3 coveredEncoded = min(saturate(o.color0.rgb), uiAlpha);\n";
+        s += "  float3 additiveEncoded = max(saturate(o.color0.rgb) - uiAlpha, 0.0);\n";
+        s += "  float3 nativeColor = pow(max(coveredEncoded / max(uiAlpha, 1e-6), 0.0), 2.2) * "
+             "uiAlpha\n";
+        s += "                     + pow(max(additiveEncoded, 0.0), 2.2);\n";
+        s += "  o.color0.a = uiAlpha;\n";
+      } else if (options.native_hdr_modulation) {
+        s += options.native_hdr_modulation_x2
+            ? "  float3 nativeColor = pow(max(saturate(o.color0.rgb) * 2.0, 0.0), 2.2);\n"
+            : "  float3 nativeColor = pow(saturate(o.color0.rgb), 2.2);\n";
         s += "  o.color0.a = saturate(o.color0.a);\n";
       } else {
         s += "  float3 nativeColor = pow(min(max(o.color0.rgb, 0.0), 65504.0), 2.2);\n";
@@ -1542,6 +1556,14 @@ Translation TranslateToHlsl(const Program& program, const HlslOptions& options) 
         s += "  nativeColor *= shoulder / max(brightest, 1.0);\n";
       }
       s += "  o.color0.rgb = nativeColor;\n";
+    }
+    if(options.native_hdr_filter && options.native_hdr_linear) {
+      s += "  o.color0.a = saturate(o.color0.a);\n";
+      if(options.native_hdr_premultiplied)
+        s += "  float filterAlpha = o.color0.a > 1e-6 ? o.color0.a : 1.0;\n"
+             "  o.color0.rgb = min(pow(max(o.color0.rgb / filterAlpha, 0.0), 2.2) * filterAlpha, "
+             "65504.0);\n";
+      else s += "  o.color0.rgb = min(pow(max(o.color0.rgb, 0.0), 2.2), 65504.0);\n";
     }
     if (g.writes_depth) s += "  o.depth = xe_odepth.x;\n";
     s += "  return o;\n";

@@ -8,7 +8,7 @@
 #include <xenos/renderer/ue3_grade_bridge.h>
 
 namespace xenos::renderer::native_hdr {
-inline std::string Psycho35SceneSource(std::string source, uint32_t low, uint32_t high, bool gears3) {
+inline std::string Psycho35SceneSource(std::string source, uint32_t low, uint32_t high, bool gears3, bool compressed_lut=true) {
   const auto constant = [=](uint32_t index) {
     if (low != high && index >= high) index = low + index - high;
     return "xe_c[" + std::to_string(index) + "]";
@@ -80,7 +80,7 @@ float3 NativeGears3ReadLut(float3 linearInput) {
   return pow(max(sampled.rgb, 0.0), 2.2);
 }
 
-float3 NativeGears3ExtendedLut(float3 linearInput) {
+float3 NativeGears3GradientLut(float3 linearInput) {
   linearInput = max(linearInput, 0.0);
   float3 boundaryInput = saturate(linearInput);
   float3 excess = linearInput - boundaryInput;
@@ -104,6 +104,24 @@ float3 NativeGears3ExtendedLut(float3 linearInput) {
     previous = current;
   }
   return NativeUe3ContinueLut(boundary, edgeSlope, usefulSlope, distance, stepSize);
+}
+
+// Max-channel compress/sample/restore, as used by the RenoDX-inspired
+// Judgment bridge. Retain the real LUT, original addressing and gamma decode.
+float3 NativeGears3CompressedLut(float3 linearInput) {
+  linearInput=max(linearInput,0.0);
+  float peak=max(linearInput.r,max(linearInput.g,linearInput.b));
+  const float knee=0.5;
+  if(peak<=knee)return NativeGears3ReadLut(linearInput);
+  // One common scale retains input RGB ratios. The shoulder joins identity
+  // with matching value and derivative and smoothly approaches LUT white.
+  float distance=peak-knee;
+  float bounded=knee+distance/(1.0+distance/(1.0-knee));
+  float scale=bounded/peak;
+  return NativeGears3ReadLut(linearInput*scale)/scale;
+}
+float3 NativeGears3ExtendedLut(float3 linearInput) {
+  return $LUT_BRIDGE(linearInput);
 }
 
 float3 NativeGears3ExtendedGrade(float3 scene, float grain) {
@@ -163,6 +181,11 @@ float3 NativeGears2PeakInput(float3 graded, float peak, float strength = 1.0) {
   return graded * gain;
 }
 )";
+  }
+  if(gears3) {
+    const std::string token="$LUT_BRIDGE";
+    const auto at=grade.find(token);if(at==std::string::npos)return {};
+    grade.replace(at,token.size(),compressed_lut?"NativeGears3CompressedLut":"NativeGears3GradientLut");
   }
   for (const auto index : {252u, 253u, 254u, 10u, 3u, 4u, 5u, 6u, 7u, 8u, 9u}) {
     const auto token = "$C" + std::to_string(index);

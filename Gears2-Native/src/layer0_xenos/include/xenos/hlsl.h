@@ -116,6 +116,9 @@ struct HlslOptions {
   // A dimensionless scene modulation factor: bounded linear RGB, with no
   // UI-white gain or scene highlight shoulder.
   bool native_hdr_modulation = false;
+  bool native_hdr_modulation_x2 = false;
+  bool native_hdr_premultiplied = false;
+  bool native_hdr_filter = false; // verified single-input blur, RGB lower clamp only; original alpha
 };
 
 // Patch 0105: the two dwords per fetch slot that tex_post_constants shaders read (fetch = the slot's 6 fetch-constant

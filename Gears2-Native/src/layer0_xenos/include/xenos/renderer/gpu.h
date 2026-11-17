@@ -495,6 +495,10 @@ class Backend {
   virtual ShaderIL GetShaderIL() const = 0;
   // Pixel shaders can output the stencil reference (SV_StencilRef), so one pass writes all 8 stencil bits.
   virtual bool SupportsStencilRefExport() const { return false; }
+  // Smaller color attachments may share larger guest depth/SDR attachments,
+  // provided the renderer bounds every draw to their common visible region.
+  virtual bool SupportsMixedAttachmentSizes() const { return false; }
+
   // Device removed / hung: everything after that is a no-op, and the reason is in the string.
   virtual bool IsLost(std::string* reason = nullptr) = 0;
 
