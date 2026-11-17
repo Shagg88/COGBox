@@ -1593,6 +1593,6 @@ Gears 3 and Judgment: also a System Link or online game you host - please keep i
 Achievements and saves are your own business. = Osiągnięcia i zapisy to twoja sprawa.
 # GitHub #353: recent players (machine-made; corrections welcome)
 RECENT PLAYERS = OSTATNI GRACZE
-Played with you recently = Grał z tobą niedawno
-Played {1} with you recently = Grał z tobą niedawno w {1}
+Played with you recently = Niedawno graliście razem
+Played {1} with you recently = Niedawno graliście razem w {1}
 Send a friend request. = Wyślij zaproszenie do znajomych.
