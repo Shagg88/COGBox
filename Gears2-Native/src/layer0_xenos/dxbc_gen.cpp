@@ -2954,14 +2954,17 @@ struct Small {
   const T* end() const { return a + n; }
 };
 struct Op {  // no member defaults (cheap to hold in arrays): ParseOp sets every field
-  size_t at, len;       // whole operand tokens [at, at + len)
-  uint32_t type, mask, sel, comps, dim;
+  // 17 Nov: narrow fields (20 bytes, was 48) - every pass copies 12 per instruction. Each holds its whole range: a
+  // shader is far below 4G words, type is 8 bits of the token, mask / read_comps 4, sel / comps / dim 2.
+  uint32_t at, len;     // whole operand tokens [at, at + len)
+  uint8_t type, mask, sel, comps, dim;
   bool mod, rel;
   uint32_t index0;
-  uint32_t read_comps;  // components a read of it can touch (from the swizzle / select)
+  uint8_t read_comps;   // components a read of it can touch (from the swizzle / select)
 };
+static_assert(sizeof(Op) <= 24);
 inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, Small<Op, 4>* nested) {
-  o.at = p;
+  o.at = uint32_t(p);
   o.len = 0;
   o.mask = 0xF;
   o.read_comps = 0xF;
@@ -2993,7 +2996,7 @@ inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, Small<Op,
   if (o.type == 4 || o.type == 5) {  // immediates
     const size_t n = (o.comps == 1 ? 1 : 4) * (o.type == 5 ? 2 : 1);
     p += n;
-    o.len = p - o.at;
+    o.len = uint32_t(p - o.at);
     return p;
   }
   for (uint32_t i = 0; i < o.dim; ++i) {
@@ -3011,7 +3014,7 @@ inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, Small<Op,
       if (nested) nested->push_back(inner);
     }
   }
-  o.len = p - o.at;
+  o.len = uint32_t(p - o.at);
   return p;
 }
 struct Ins {
@@ -3397,18 +3400,75 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
   uint32_t removed = 0;
   // Shader warm-up speed (17 Nov): the lists are made once and reused by every pass (cleared, capacity kept) - fewer
   // heap calls from the warm-up's many threads at once. The same code comes out.
-  InsList v;
+  InsList v, v_next;
   std::vector<uint32_t> out;
   TouchIndex touch;
   Liveness liveness;
+  // 17 Nov: each pass also builds the next pass's parse of its output (v_next): an instruction copied unchanged keeps
+  // its parse with every offset moved to where it now is, a new (fused) one is parsed as it is written. Only the first
+  // pass parses the whole shader. ParseIns depends only on the instruction's own words, so this is the parse the next
+  // pass would make; one it can't parse (next_bad) ends the run where the full parse would have.
+  bool have_next = false, next_bad = false;
   for (int pass = 0; pass < 8; ++pass) {
-    v.clear();
-    v.reserve(c.size() / 6);
-    for (size_t p = 0; p < c.size();) {
-      v.emplace_back();
-      if (!ParseIns(c, p, v.back())) return removed;  // something we don't parse: leave the code as it is
-      p += v.back().len;
+    if (have_next) {
+      v.swap(v_next);
+    } else {
+      v.clear();
+      v.reserve(c.size() / 6);
+      for (size_t p = 0; p < c.size();) {
+        v.emplace_back();
+        if (!ParseIns(c, p, v.back())) return removed;  // something we don't parse: leave the code as it is
+        p += v.back().len;
+      }
     }
+#ifdef COGBOX_COALESCE_VERIFY
+    {  // test builds: the carried parse must equal a fresh one, field by field
+      InsList f;
+      size_t p = 0;
+      for (; p < c.size();) {
+        f.emplace_back();
+        if (!ParseIns(c, p, f.back())) break;
+        p += f.back().len;
+      }
+      bool same = p >= c.size() && f.size() == v.size();
+      auto op_eq = [](const Op& x, const Op& y) {
+        return x.at == y.at && x.len == y.len && x.type == y.type && x.mask == y.mask && x.sel == y.sel &&
+               x.comps == y.comps && x.dim == y.dim && x.mod == y.mod && x.rel == y.rel && x.index0 == y.index0 &&
+               x.read_comps == y.read_comps;
+      };
+      for (size_t k = 0; same && k < f.size(); ++k) {
+        const Ins& x = f[k];
+        const Ins& y = v[k];
+        same = x.at == y.at && x.len == y.len && x.ops_at == y.ops_at && x.op == y.op && x.sat == y.sat &&
+               x.ext == y.ext && x.ops.n == y.ops.n && x.rel_ops.n == y.rel_ops.n;
+        for (size_t o = 0; same && o < x.ops.n; ++o) same = op_eq(x.ops[o], y.ops[o]);
+        for (size_t o = 0; same && o < x.rel_ops.n; ++o) same = op_eq(x.rel_ops[o], y.rel_ops[o]);
+      }
+      if (!same) std::abort();
+    }
+#endif
+    v_next.clear();
+    v_next.reserve(v.size());
+    next_bad = false;
+    // I copied unchanged to the end of `out`: its parse moves with it
+    auto keep = [&](const Ins& I) {
+      const size_t na = out.size();
+      out.insert(out.end(), c.begin() + I.at, c.begin() + I.at + I.len);
+      v_next.push_back(I);
+      Ins& m = v_next.back();
+      m.at = na;
+      if (m.ops_at) m.ops_at = m.ops_at - I.at + na;
+      for (size_t o = 0; o < m.ops.n; ++o) m.ops.a[o].at = uint32_t(m.ops.a[o].at - I.at + na);
+      for (size_t o = 0; o < m.rel_ops.n; ++o) m.rel_ops.a[o].at = uint32_t(m.rel_ops.a[o].at - I.at + na);
+    };
+    // a new instruction written to the end of `out`, parsed there
+    auto add_new = [&](const std::vector<uint32_t>& ni) {
+      const size_t na = out.size();
+      out.insert(out.end(), ni.begin(), ni.end());
+      if (next_bad) return;
+      v_next.emplace_back();
+      if (!ParseIns(out, na, v_next.back()) || v_next.back().len != ni.size()) next_bad = true;
+    };
     touch.Build(v);  // job 637
     liveness.Build(v, c);
     struct LiveScope {
@@ -3480,7 +3540,7 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
             ni.insert(ni.end(), c.begin() + is.at, c.begin() + is.at + is.len);
             ni[sp] = (ni[sp] & ~((3u << 2) | (0xFFu << 4))) | (1u << 2) | (swz << 4);
             ni[0] = (ni[0] & ~(0x7Fu << 24)) | (uint32_t(ni.size()) << 24);
-            out.insert(out.end(), ni.begin(), ni.end());
+            add_new(ni);
             ++i;
             ++here;
             continue;
@@ -3522,7 +3582,7 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
             ni.insert(ni.end(), c.begin() + i_dest_end, c.begin() + I.at + I.len);
             ni[0] = (ni[0] & ~(0x7Fu << 24)) | (uint32_t(ni.size()) << 24);
             if (ni.size() <= 0x7F) {
-              out.insert(out.end(), ni.begin(), ni.end());
+              add_new(ni);
               ++i;
               ++here;
               fused = true;
@@ -3541,12 +3601,14 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
             continue;
           }
         }
-        out.insert(out.end(), c.begin() + I.at, c.begin() + I.at + I.len);
+        keep(I);
       }
     }
     c.swap(out);
     removed += here;
     if (!here) break;
+    if (next_bad) return removed;  // the full parse of `c` would stop here too
+    have_next = true;
   }
   return removed;
 }
