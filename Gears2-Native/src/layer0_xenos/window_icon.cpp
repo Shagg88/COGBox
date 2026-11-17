@@ -47,11 +47,17 @@ std::vector<uint8_t> Resize(const uint8_t* src, int w, int h, int size) {
     const int y0 = y * h / size, y1 = std::max(y0 + 1, (y + 1) * h / size);
     for (int x = 0; x < size; ++x) {
       const int x0 = x * w / size, x1 = std::max(x0 + 1, (x + 1) * w / size);
-      uint32_t sum[4] = {0, 0, 0, 0}, n = 0;
+      uint32_t sum[4] = {0, 0, 0, 0}, csum[3] = {0, 0, 0}, n = 0;
       for (int sy = y0; sy < y1; ++sy)
-        for (int sx = x0; sx < x1; ++sx, ++n)
-          for (int c = 0; c < 4; ++c) sum[c] += src[(size_t(sy) * w + sx) * 4 + c];
-      for (int c = 0; c < 4; ++c) out[(size_t(y) * size + x) * 4 + c] = uint8_t(sum[c] / n);
+        for (int sx = x0; sx < x1; ++sx, ++n) {
+          const uint8_t* p = src + (size_t(sy) * w + sx) * 4;
+          for (int c = 0; c < 4; ++c) sum[c] += p[c];
+          for (int c = 0; c < 3; ++c) csum[c] += uint32_t(p[c]) * p[3];
+        }
+      // colour weighted by alpha, so see-through edge pixels don't darken the small icon
+      const size_t o = (size_t(y) * size + x) * 4;
+      out[o + 3] = uint8_t(sum[3] / n);
+      for (int c = 0; c < 3; ++c) out[o + c] = uint8_t(sum[3] ? csum[c] / sum[3] : 0);
     }
   }
   return out;
@@ -86,7 +92,9 @@ HICON MakeIcon(const uint8_t* rgba, int w, int h, int size) {
     d[i * 4 + 2] = px[i * 4 + 0];
     d[i * 4 + 3] = px[i * 4 + 3];
   }
-  HBITMAP mask = CreateBitmap(size, size, 1, 1, nullptr);  // unused with 32-bit alpha, but required
+  // all zero (opaque by mask; the alpha decides), so nothing that draws with the mask shows garbage
+  const std::vector<uint8_t> mask_bits(size_t((size + 15) / 16) * 2 * size, 0);
+  HBITMAP mask = CreateBitmap(size, size, 1, 1, mask_bits.data());
   ICONINFO ii = {};
   ii.fIcon = TRUE;
   ii.hbmColor = colour;
@@ -111,17 +119,17 @@ void ApplyLocked() {
     REXLOG_WARN("window_icon: the title image could not be decoded - the window keeps its default icon");
     return;
   }
-  const int big = std::max(GetSystemMetrics(SM_CXICON), 16);
-  const int small = std::max(GetSystemMetrics(SM_CXSMICON), 16);
+  const int big_px = std::max(GetSystemMetrics(SM_CXICON), 16);
+  const int small_px = std::max(GetSystemMetrics(SM_CXSMICON), 16);
   // Kept for the life of the process: the window holds them (WM_SETICON does not copy).
-  HICON big_icon = MakeIcon(rgba, w, h, big);
-  HICON small_icon = MakeIcon(rgba, w, h, small);
+  HICON big_icon = MakeIcon(rgba, w, h, big_px);
+  HICON small_icon = MakeIcon(rgba, w, h, small_px);
   stbi_image_free(rgba);
   HWND hwnd = static_cast<HWND>(g_window);
   // Posted, not sent: the caller may be any thread, and a cross-thread SendMessage would wait on the window's thread.
-  if (big_icon) PostMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(big_icon));
-  if (small_icon) PostMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small_icon));
-  REXLOG_INFO("window_icon: the game's title image ({}x{}) set as the window icon ({} / {} px){}", w, h, big, small,
+  if (big_icon && !PostMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(big_icon))) DestroyIcon(big_icon);
+  if (small_icon && !PostMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small_icon))) DestroyIcon(small_icon);
+  REXLOG_INFO("window_icon: the game's title image ({}x{}) set as the window icon ({} / {} px){}", w, h, big_px, small_px,
               big_icon && small_icon ? "" : " - an icon could not be made");
 #endif
 }
