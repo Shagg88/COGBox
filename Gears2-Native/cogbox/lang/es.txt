@@ -1168,7 +1168,7 @@ resume = reanudar
 # 0.4.9: Launcher: 4:3, FSR on Vulkan, DLSS model, frame generation
 Aspect ratio = Relación de aspecto
 Auto = Auto
-4:3 tells the game it is on an old 4:3 TV, so it makes a 4:3 picture and HUD itself, as on the console. Auto = 16:9 for now (4:3 is untested: choose it yourself). Not with Ultrawide. = 4:3 le dice al juego que está en un televisor 4:3 antiguo, así que él mismo crea una imagen y un HUD 4:3, como en la consola. Auto: 16:9 por ahora (4:3 no está probado: elígelo tú). No con Ultrapanorámico.
+16:10 and 4:3 tell the game the screen's shape, so it makes a picture of that shape and lays out its HUD itself (16:10: a taller view, for a Steam Deck or a 16:10 laptop). Auto = 16:10 on a 16:10 screen, else 16:9 (4:3 is untested: choose it yourself). Not with Ultrawide. = 16:10 y 4:3 le indican al juego la forma de la pantalla, así que crea una imagen con esa forma y coloca su HUD por sí mismo (16:10: una vista más alta, para una Steam Deck o un portátil 16:10). Auto = 16:10 en una pantalla 16:10; si no, 16:9 (4:3 no está probado: elígelo tú). No con Ultrapanorámico.
 needs the next runtime (SDK patch 70) = necesita el próximo runtime (parche 70 del SDK)
 not checked yet = aún no comprobado
 this build has no DLSS file = esta compilación no tiene archivo DLSS

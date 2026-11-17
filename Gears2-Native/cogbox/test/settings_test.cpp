@@ -423,6 +423,30 @@ int summary() {
             if (on ? !all : any) { std::cout << "FAIL net rates for game " << static_cast<int>(g) << " (" << (on ? "on" : "off") << ")\n"; ++fails; }
         }
     }
+    // 0.6.5 16:10: Aspect ratio 16:10 (index 3, added last) sends a 1152x720 non-widescreen mode; Auto does on a 16:10
+    // screen (1280x800 / 1920x1200) and not on 16:9 (1920x1080) or 21:9 (3440x1440); 16:9 sends no mode; Gears 1 none
+    for (Game g : { Game::Gears2, Game::Gears3, Game::Judgment, Game::Gears1 }) {
+        struct Case { int ar, w, h; bool want; } cases[] = {
+            { 3, 1920, 1080, true }, { 0, 1280, 800, true }, { 0, 1920, 1200, true }, { 0, 1920, 1080, false },
+            { 0, 3440, 1440, false }, { 0, 0, 0, false }, { 1, 1280, 800, false } };
+        for (const Case& k : cases) {
+            Environment e; e.update_ready = true;
+            e.cap.exe_has = [](const std::string&) { return true; };
+            e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+            e.monitor_w = k.w; e.monitor_h = k.h;
+            Store st; Settings s = st.view(g, e);
+            s.set("AspectRatio", k.ar);
+            const std::vector<std::string> a = build_args(g, Version::TitleUpdate, s, e, nullptr);
+            auto has = [&](const std::string& v) { return std::find(a.begin(), a.end(), v) != a.end(); };
+            const bool want = k.want && g != Game::Gears1;   // Gears 1: the option is not offered yet
+            const bool sent = has("--video_mode_width=1152") && has("--video_mode_height=720") && has("--video_mode_widescreen=false");
+            const bool any = has("--video_mode_width=1152") || has("--video_mode_widescreen=false");
+            if (want ? !sent : any) {
+                std::cout << "FAIL 16:10 args: game " << static_cast<int>(g) << " choice " << k.ar << " screen " << k.w << "x" << k.h << "\n";
+                ++fails;
+            }
+        }
+    }
     // Ping in the FPS bar: Show ping sends --cogbox_show_ping=true (the exe must know it); off sends nothing
     for (int on = 0; on <= 1; ++on) {
         Environment e; e.update_ready = true;

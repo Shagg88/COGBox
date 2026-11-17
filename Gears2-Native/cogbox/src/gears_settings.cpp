@@ -240,9 +240,13 @@ std::vector<Option> make_options(Game g) {
              "A wider view that matches an ultrawide monitor (21:9 or 32:9); black bars on other shapes.", 362), "ultrawide");
     // 0.4.9: 4:3 screens (SDK patch 70 --video_mode_widescreen=false): the game is told it is on a 4:3 TV and lays
     // itself out for 4:3 (a 960x720 picture, x the resolution scale), as on the console. Not with Ultrawide.
-    add(choice("AspectRatio", "Aspect ratio", Tab::Display, PG, { "Auto", "16:9", "4:3" }, 0,
-               "4:3 tells the game it is on an old 4:3 TV, so it makes a 4:3 picture and HUD itself, as on the console. "
-               "Auto = 16:9 for now (4:3 is untested: choose it yourself). Not with Ultrawide.", 0), "aspect43", "!Ultrawide");
+    // 0.6.5 (Shagg 16 Nov: 16:10 for the Steam Deck / 16:10 laptops): the same path with a 1152x720 mode - the games
+    // size their picture from a non-widescreen mode (720 x w / h, jobs 1965 / 1966: Gears 2 / 3 / Judgment draw a full
+    // 1152x720 picture, HUD laid out by the game). Added LAST so a saved index keeps its meaning.
+    add(choice("AspectRatio", "Aspect ratio", Tab::Display, PG, { "Auto", "16:9", "4:3", "16:10" }, 0,
+               "16:10 and 4:3 tell the game the screen's shape, so it makes a picture of that shape and lays out its HUD "
+               "itself (16:10: a taller view, for a Steam Deck or a 16:10 laptop). Auto = 16:10 on a 16:10 screen, else "
+               "16:9 (4:3 is untested: choose it yourself). Not with Ultrawide.", 0), "aspect43", "!Ultrawide");
 
     // ---- Graphics ------------------------------------------------------------------------------------------------
     add(choice("Preset", "Quality preset", Tab::Graphics, PG, { "Original (as on the console)", "High", "Ultra", "Custom" }, 3,
@@ -2122,11 +2126,19 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         constexpr bool kAuto43 = false;
         const bool screen43 = kAuto43 && env.monitor_w > 0 && env.monitor_h > 0 && env.monitor_w >= env.monitor_h &&
                               env.monitor_w * 10 <= env.monitor_h * 14;   // landscape, <= 1.4:1
+        // 0.6.5: 16:10 = a landscape screen between 1.55:1 and 1.65:1 (1280x800, 1440x900, 1680x1050, 1920x1200, 2560x1600)
+        const bool screen1610 = env.monitor_w > 0 && env.monitor_h > 0 && env.monitor_w * 100 >= env.monitor_h * 155 &&
+                                env.monitor_w * 100 <= env.monitor_h * 165;
         if (ar == 2 || (ar == 0 && screen43)) {
             a.push_back("--video_mode_width=960");
             a.push_back("--video_mode_height=720");
             a.push_back("--video_mode_widescreen=false");
             if (ar == 0) notes.push_back("launcher: Aspect ratio Auto: " + std::to_string(env.monitor_w) + "x" + std::to_string(env.monitor_h) + " screen -> 4:3");
+        } else if (ar == 3 || (ar == 0 && screen1610)) {
+            a.push_back("--video_mode_width=1152");
+            a.push_back("--video_mode_height=720");
+            a.push_back("--video_mode_widescreen=false");
+            if (ar == 0) notes.push_back("launcher: Aspect ratio Auto: " + std::to_string(env.monitor_w) + "x" + std::to_string(env.monitor_h) + " screen -> 16:10");
         }
     }
     // PS1 900: HDR
