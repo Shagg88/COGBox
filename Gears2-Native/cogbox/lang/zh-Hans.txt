@@ -1622,3 +1622,4 @@ Cheats are off in Versus = 对战模式中作弊已关闭
 Cheats are off with another PC's player in the game = 有其他电脑的玩家在游戏中时作弊已关闭
 not recognised by the game = 游戏无法识别
 not available with Title Update 6 = Title Update 6 下不可用
+HUD = 界面

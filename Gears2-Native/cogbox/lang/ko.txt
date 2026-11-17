@@ -1622,3 +1622,4 @@ Cheats are off in Versus = Versus에서는 치트가 꺼집니다
 Cheats are off with another PC's player in the game = 다른 PC의 플레이어가 게임에 있는 동안 치트가 꺼집니다
 not recognised by the game = 게임이 인식하지 못함
 not available with Title Update 6 = Title Update 6에서는 사용할 수 없음
+HUD = HUD

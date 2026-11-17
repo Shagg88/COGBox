@@ -1622,3 +1622,4 @@ Cheats are off in Versus = Versusではチートはオフです
 Cheats are off with another PC's player in the game = 他のPCのプレイヤーがいる間はチートはオフです
 not recognised by the game = ゲームが認識しません
 not available with Title Update 6 = Title Update 6では使用できません
+HUD = HUD

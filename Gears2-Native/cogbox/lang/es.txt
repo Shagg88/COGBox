@@ -1621,3 +1621,4 @@ Cheats are off in Versus = Los trucos están desactivados en Versus
 Cheats are off with another PC's player in the game = Los trucos están desactivados con un jugador de otro PC en la partida
 not recognised by the game = el juego no lo reconoce
 not available with Title Update 6 = no disponible con la Title Update 6
+HUD = HUD

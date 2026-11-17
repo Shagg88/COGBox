@@ -193,6 +193,9 @@ void NoteKey(const std::string& key, const std::string& command, int outcome) {
   const std::string shown = n.state.empty() ? n.label : n.tone == 3 ? n.label + ": " + n.state : n.label + " " + n.state;
   REXLOG_INFO("cheat_popup: {} {} {} -> {} (state read: {}){}", GN_UE3_CONSOLE_GROUP, key, command, shown, n.read,
               REXCVAR_GET(cogbox_cheat_popups) ? "" : " [popups off]");
+  // review r359: a key bound to a command that is no cheat (--ue3_hotkeys can bind anything, e.g. "stat fps") is
+  // logged but gets no popup - the notice is for cheats (and for a cheat key refused in Versus)
+  if (n.icon == 0 && outcome != 2) return;
   static constexpr XenosCheatTone kTones[] = {XenosCheatTone::On, XenosCheatTone::Off, XenosCheatTone::Value,
                                               XenosCheatTone::Refused};
   XenosCheatPopupPush(n.label, n.state, kTones[n.tone < 0 || n.tone > 3 ? 2 : n.tone], XenosCheatIcon(n.icon));

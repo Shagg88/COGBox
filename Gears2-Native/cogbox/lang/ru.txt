@@ -1626,3 +1626,4 @@ Cheats are off in Versus = Читы отключены в Versus
 Cheats are off with another PC's player in the game = Читы отключены, пока в игре игрок с другого ПК
 not recognised by the game = игра не распознала команду
 not available with Title Update 6 = недоступно с Title Update 6
+HUD = Интерфейс

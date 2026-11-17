@@ -76,6 +76,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/social_ingame.cpp
     src/layer0_xenos/social_page.cpp
     src/layer0_xenos/social_popup.cpp
+    src/layer0_xenos/cheat_popup.cpp
     src/layer0_xenos/social_shared.cpp
     src/layer0_xenos/profiler.cpp
 )

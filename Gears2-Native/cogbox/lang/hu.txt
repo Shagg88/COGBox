@@ -1629,3 +1629,4 @@ Cheats are off in Versus = A csalások ki vannak kapcsolva Versus módban
 Cheats are off with another PC's player in the game = A csalások ki vannak kapcsolva, amíg egy másik PC játékosa is a játékban van
 not recognised by the game = a játék nem ismeri fel
 not available with Title Update 6 = a Title Update 6-tal nem érhető el
+HUD = HUD

@@ -1620,3 +1620,4 @@ Cheats are off in Versus = Les codes sont désactivés en Versus
 Cheats are off with another PC's player in the game = Les codes sont désactivés avec le joueur d'un autre PC dans la partie
 not recognised by the game = non reconnu par le jeu
 not available with Title Update 6 = indisponible avec la Title Update 6
+HUD = ATH
