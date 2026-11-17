@@ -85,7 +85,7 @@ void Gow3InstallExtras() {
   // work with Title Update 6); all weapons does, which only --gow3_cheats' patched AllowCheats gives. Also in a game this
   // PC hosts, as Gears 3's cheats always were.
   ue3::cheats::Configure({"Gears 3", true, false, REXCVAR_GET(gow3_cheats), target.engine_global,
-                          target.players_data_offset, target.players_num_offset});
+                          target.players_data_offset, target.players_num_offset, "GearPawn"});
   if (REXCVAR_GET(gow3_cheats)) {
     AddPackagePatch(kCheatsPatch);
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);

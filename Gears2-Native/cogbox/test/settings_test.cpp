@@ -43,6 +43,7 @@ std::string exe_needle(const std::string& alias, int g) {
     if (alias == "edits") return "'file|section|~=old>new'";
     if (alias == "avx") return "gn_cpu_level=x86-64-v";
     if (alias == "chx") return "GitHub #342: the HUD hidden whenever a player exists";   // console.cpp's --ue3_cheat_* (#342)
+    if (alias == "chk") return "GitHub #264 / #342: the developers' cheat keys";            // the keys' new description
     if (alias == "adt") return g == 0 ? "Gears 2 weapon feel for DualSense pads" : "Gears 3 weapon feel for DualSense pads";   // GitHub #245
     if (alias == "adtg") {   // GitHub #245: each game's own needle (Judgment, Gears 1 too)
         static const char* adt[4] = { "Gears 2 weapon feel for DualSense pads", "Gears 3 weapon feel for DualSense pads",
@@ -175,6 +176,8 @@ const char* const k_builtin[] = {
     "game=2;AdaptiveTriggers=1;exe=adtg;rt=adt",  // GitHub #245, Judgment: sent
     // GitHub #342: the cheats that are simply on - sent when the exe has them; Gears 3 TU6: all weapons greyed (no cheat manager)
     "game=0;exe=chx;CheatGod=1;CheatWeapons=1;CheatSpeed=2;CheatHud=1;Cheats=1",
+    "game=0;exe=chx,chk;Cheats=1",   // the cheat keys with the rewritten description (review r342): --gow2_cheats sent
+    "game=3;exe=chk;Cheats=1",       // Gears 1 too
     "game=1;upd=1;exe=chx;CheatGod=1;CheatWeapons=1;CheatSpeed=3;CheatHud=1",
     "game=2;exe=chx;CheatGod=1;CheatSpeed=1",
     "game=3;exe=chx;CheatWeapons=1;CheatHud=1",

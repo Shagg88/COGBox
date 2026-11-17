@@ -2,12 +2,13 @@
 // Gears3-Native layer3_gow3/extras.cpp). Off by default.
 //
 // No package patch: Gears 2's Engine.GameInfo.AllowCheats is the stock `return WorldInfo.NetMode == NM_Standalone`
-// (GearGame does not override it), so PlayerController.EnableCheats makes a cheat manager in a standalone game - the
-// campaign, local split screen, Horde / versus against bots on one console (versus: not any more, see below) - and never in a System Link or online game
-// (a host is a listen server, a client has no GameInfo at all). (Before the 0.6.3 fix our Horde-bots option's Back
-// binding forced NM_Standalone and ran EnableCheats; it is now "GBA_Scoreboard | Friends" and touches neither - layer2
-// config_install.cpp.) We never touch NetMode here. Each hotkey runs "EnableCheats" first (ue3/console.h before_each):
-// the cheat manager belongs to the player controller, which a new level replaces.
+// (GearGame does not override it), so PlayerController.EnableCheats makes a cheat manager only in a standalone game -
+// and never in a System Link or online game (a host is a listen server, a client has no GameInfo at all). (Before the
+// 0.6.3 fix our Horde-bots option's Back binding forced NM_Standalone and ran EnableCheats; it is now "GBA_Scoreboard |
+// Friends" and touches neither - layer2 config_install.cpp.) GitHub #342: a campaign started from the menus is a listen
+// server too (drop-in co-op), so EnableCheats was refused even alone; each hotkey now runs EnableCheats through
+// ue3/auto_cheats.h (Ue3ConsoleTarget::enable_cheats), which shows NetMode as NM_Standalone for that one call while
+// every player is on this PC, and takes the cheat manager away again if another PC's player joins.
 //
 // Console commands go through the engine's own path (layer 2 console.cpp): GEngine -> GamePlayers(0) -> its FExec
 // subobject -> vtable slot 0, output device GLog - read from the engine's "-EXEC=" start-up code (disc 0x82840BA0..
@@ -79,7 +80,8 @@ void Gow2InstallCheats() {
   // GitHub #342: the launcher's cheats - only while every player in the game is on this PC (Gears 2's own rule), and
   // EnableCheats on the menus' solo listen server
   ue3::cheats::Configure({"Gears 2", false, true, true, target.engine_global, target.players_data_offset,
-                          target.players_num_offset});
+                          target.players_num_offset, "GearPawn"});
+  if (cheats) ue3::cheats::Prepare();   // the keys' EnableCheats uses the lookup even with no launcher cheat on
   if (cheats) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
     REXLOG_INFO("gow2_cheats: developer cheats on hotkeys (standalone games only: the game's own AllowCheats; never in Versus)");

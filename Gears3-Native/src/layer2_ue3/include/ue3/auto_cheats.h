@@ -8,18 +8,22 @@
 //  - god mode:  Controller.bGodMode, the flag the engine's own "God" command sets (Pawn.InGodMode reads it). Written
 //    directly, so it needs no cheat manager - it works where the game's AllowCheats says no (Gears 3 with Title Update 6,
 //    whose script package we leave unpatched) - and it is only ever turned on, never toggled.
-//  - hide HUD:  the player controller's HUD.bShowHUD, the flag "ToggleHUD" flips. Written directly; kept off.
+//  - hide HUD:  the player controller's HUD.bShowHUD, the flag "ToggleHUD" flips. Written directly, once per HUD (each
+//    level's new HUD), so F11 (ToggleHUD, with the cheat keys) can still show it.
 //  - speed:     WorldInfo.TimeDilation (and GameInfo.GameSpeed), as "Slomo" sets them, whenever the game runs at its normal
 //    speed (1.0) - the game's own slow-motion moments are left alone and the choice comes back after them.
 //  - weapons:   the engine's "AllWeapons" and "AllAmmo" commands (they give items, which only the game's script can do), once
-//    per new pawn, a second after it appears; then InventoryManager.bInfiniteAmmo where the game has it. These need the
-//    player's cheat manager: "EnableCheats" makes it when GameInfo.AllowCheats agrees.
+//    per new infantry pawn (not a turret or vehicle the player sits in), a second and a half after it appears; then
+//    InventoryManager.bInfiniteAmmo where the game has it. These need the player's cheat manager: "EnableCheats" makes it
+//    when GameInfo.AllowCheats agrees.
 // Gears 2 (#342): its AllowCheats is the engine's `return WorldInfo.NetMode == NM_Standalone`, and a campaign started from
 // the menus runs as a listen server (drop-in co-op), so EnableCheats is refused even alone. With `listen_server_enable`, a
 // listen server whose only players are this PC's own has NetMode shown as NM_Standalone for that one EnableCheats call and
 // put back at once - the same answer the engine gives a game with no network. Never with a remote player in the game.
 // Only in a game this PC runs (WorldInfo.Game set): a client in someone else's game changes nothing. With
-// `remote_players_ok` false (Gears 1, Gears 2) only while every player in the game is on this PC.
+// `remote_players_ok` false (Gears 1, Gears 2) only while every player in the game is on this PC: when another PC's
+// player joins (drop-in co-op), what was set is undone - normal speed, god mode off, and the cheat managers this code
+// made (Gears 2's) taken away again - as if the game had been a listen server from the start.
 //
 // Header only (included by each game's cheats.cpp - Gears 3: extras.cpp - next to ue3/match_guard.h; the four copies are
 // kept identical). The options are console.cpp's --ue3_cheat_god / _weapons / _speed / _hide_hud. Our code (MIT).
@@ -56,6 +60,7 @@ struct Spec {
   uint32_t engine_global;         // as the console target's
   uint32_t players_data_offset;
   uint32_t players_num_offset;
+  const char* infantry_class;     // the game's on-foot pawn class (GearPawn; Gears 1 WarPawn): weapons only for these
 };
 
 namespace detail {
@@ -63,20 +68,23 @@ constexpr int kMaxPlayers = 4;
 constexpr uint8_t kNmStandalone = 0, kNmListenServer = 2;
 
 struct PlayerState {
-  uint32_t pc = 0, god_pc = 0, hud = 0;         // the last controller / HUD logged for
+  uint32_t god_pc = 0, hud = 0;                 // the controller god mode was set on / the HUD hidden once
+  uint32_t made_mgr_pc = 0;                     // the controller whose cheat manager this code made (Gears 2 flip)
   uint32_t pawn_done = 0, pawn_seen = 0;        // weapons given to / first seen
   std::chrono::steady_clock::time_point seen_at{};   // when pawn_seen appeared
 };
 struct State {
   Spec spec{};
-  std::atomic<bool> ready{false}, failed{false};
+  std::atomic<bool> ready{false}, failed{false}, started{false};
   // offsets (-1: this game has no such property) and bool masks
   int off_actor = -1, off_world = -1, off_pawn = -1, off_god = -1, off_hud = -1, off_cheat = -1, off_show = -1;
-  int off_game = -1, off_td = -1, off_netmode = -1, off_numplayers = -1, off_speed = -1, off_inv = -1, off_inf = -1;
-  uint32_t mask_god = 0, mask_show = 0, mask_inf = 0;
+  int off_game = -1, off_td = -1, off_netmode = -1, off_numplayers = -1, off_travelling = -1, off_speed = -1, off_inv = -1;
+  int off_inf = -1;
+  uint32_t mask_god = 0, mask_show = 0, mask_inf = 0, infantry = 0;
   // game thread only
   PlayerState player[kMaxPlayers];
   uint32_t speed_world = 0, remote_world = 0, nomgr_logged = 0;
+  float speed_set = 1.0f;                       // the TimeDilation this code wrote into speed_world (1 = none)
   uint64_t ticks = 0;
   bool said_missing = false;
 };
@@ -115,17 +123,24 @@ inline void SetBit(uint32_t object, int off, uint32_t mask, bool on) {
   obj::Write32(object + uint32_t(off), on ? (w | mask) : (w & ~mask));
 }
 
-// Worker thread (match guard's object tables): every class and property used. Retried while the engine starts.
+// Worker thread: every class and property used. Retried while the engine starts. The object tables are the match
+// guard's (its open_objects, asked here too so the lookup can start before the first check).
 inline void Resolve() {
   State& s = S();
   for (int attempt = 0; attempt < 60; attempt++) {
     if (attempt) std::this_thread::sleep_for(std::chrono::seconds(attempt < 15 ? 2 : 15));
-    if (!obj::Ready()) continue;   // the match guard (asked first by every check) opens the tables
+    if (!obj::Ready()) {
+      const auto open = ue3::match::detail::State().spec.open_objects;
+      if (!open || !open()) continue;
+    }
     const uint32_t local_player = obj::FindClass("LocalPlayer"), actor = obj::FindClass("Actor"),
                    controller = obj::FindClass("Controller"), pcls = obj::FindClass("PlayerController"),
                    hud = obj::FindClass("HUD"), world = obj::FindClass("WorldInfo"), game = obj::FindClass("GameInfo"),
                    pawn = obj::FindClass("Pawn"), inv = obj::FindClass("InventoryManager");
     if (!local_player || !actor || !controller || !pcls || !world || !game || !pawn) continue;
+    // the game's script classes (the infantry pawn) load with its package: wait for them during the first 30 s of tries
+    const uint32_t infantry = s.spec.infantry_class ? obj::FindClass(s.spec.infantry_class) : 0;
+    if (!infantry && attempt < 15) continue;
     s.off_actor = obj::PropertyOffset(local_player, "Actor");
     s.off_world = obj::PropertyOffset(actor, "WorldInfo");
     s.off_pawn = obj::PropertyOffset(controller, "Pawn");
@@ -138,23 +153,29 @@ inline void Resolve() {
     s.off_td = obj::PropertyOffset(world, "TimeDilation");
     s.off_netmode = obj::PropertyOffset(world, "NetMode");
     s.off_numplayers = obj::PropertyOffset(game, "NumPlayers");
+    s.off_travelling = obj::PropertyOffset(game, "NumTravellingPlayers");
     s.off_speed = obj::PropertyOffset(game, "GameSpeed");
     s.off_inv = obj::PropertyOffset(pawn, "InvManager");
     if (inv) s.off_inf = obj::PropertyOffset(inv, "bInfiniteAmmo"), s.mask_inf = obj::BoolMask(inv, "bInfiniteAmmo");
+    s.infantry = infantry;
     if (s.off_actor < 0 || s.off_world < 0 || s.off_pawn < 0 || s.off_game < 0) continue;
     if (!s.mask_god) s.off_god = -1;
     if (!s.mask_show) s.off_show = -1;
     if (!s.mask_inf) s.off_inf = -1;
     REXLOG_INFO("auto cheats ({}): ready (Controller.bGodMode +{} mask {:X}, PlayerController.myHUD +{} .CheatManager +{}, "
-                "HUD.bShowHUD +{}, WorldInfo.TimeDilation +{} .NetMode +{}, GameInfo.NumPlayers +{} .GameSpeed +{}, "
-                "Pawn.InvManager +{}, InventoryManager.bInfiniteAmmo +{})",
+                "HUD.bShowHUD +{}, WorldInfo.TimeDilation +{} .NetMode +{}, GameInfo.NumPlayers +{} .NumTravellingPlayers +{} "
+                ".GameSpeed +{}, Pawn.InvManager +{}, InventoryManager.bInfiniteAmmo +{}, infantry {} {})",
                 s.spec.game, s.off_god, s.mask_god, s.off_hud, s.off_cheat, s.off_show, s.off_td, s.off_netmode,
-                s.off_numplayers, s.off_speed, s.off_inv, s.off_inf);
+                s.off_numplayers, s.off_travelling, s.off_speed, s.off_inv, s.off_inf,
+                s.spec.infantry_class ? s.spec.infantry_class : "-", infantry ? "found" : "NOT found (any pawn)");
     s.ready.store(true, std::memory_order_release);
     return;
   }
   REXLOG_WARN("auto cheats ({}): the engine's classes were not found - the launcher's cheats stay off", S().spec.game);
   S().failed = true;
+}
+inline void StartResolve() {
+  if (!S().started.exchange(true)) std::thread(Resolve).detach();
 }
 
 // The game's player list: how many local players, and player i's controller (0 when none).
@@ -172,11 +193,13 @@ inline uint32_t ControllerOf(int i) {
   const uint32_t player = data ? obj::Read32(data + 4u * uint32_t(i)) : 0;
   return player ? obj::Read32(player + uint32_t(s.off_actor)) : 0;
 }
-// Every player in the game this PC runs is on this PC (or the game cannot say: then no).
+// Every player in the game this PC runs is on this PC (or the game cannot say: then no). Players still travelling to
+// the level (seamless travel) count too.
 inline bool OnlyLocalPlayers(uint32_t game, int local) {
   const State& s = S();
   if (s.off_numplayers < 0) return false;
-  const int32_t n = int32_t(obj::Read32(game + uint32_t(s.off_numplayers)));
+  int32_t n = int32_t(obj::Read32(game + uint32_t(s.off_numplayers)));
+  if (s.off_travelling >= 0) n += int32_t(obj::Read32(game + uint32_t(s.off_travelling)));
   return n >= 0 && n <= local;
 }
 
@@ -193,6 +216,7 @@ inline bool EnsureCheatManager(PPCContext& ctx, uint8_t* base, int i, uint32_t p
   const bool ran = Ue3ConsoleExecNow(ctx, base, i, "EnableCheats", &handled);
   if (flip) obj::Write8(nm_at, nm);
   const bool made = obj::Read32(pc + uint32_t(s.off_cheat)) != 0;
+  if (made && flip && i < kMaxPlayers) s.player[i].made_mgr_pc = pc;   // undone if another PC's player joins
   if (ran && (made || s.nomgr_logged != pc)) {
     REXLOG_INFO("auto cheats ({}): EnableCheats for player {} - cheat manager {} (NetMode {}{})", s.spec.game, i + 1,
                 made ? "made" : "NOT made (the game's AllowCheats said no)", unsigned(nm),
@@ -201,14 +225,46 @@ inline bool EnsureCheatManager(PPCContext& ctx, uint8_t* base, int i, uint32_t p
   }
   return made;
 }
+
+// Another PC's player is in a game where the cheats are for this PC's games only: undo what this code set.
+inline void UndoForRemote(uint32_t world, uint32_t game, int local) {
+  State& s = S();
+  bool any = false;
+  for (int i = 0; i < local; i++) {
+    PlayerState& p = s.player[i];
+    const uint32_t pc = ControllerOf(i);
+    if (pc && p.god_pc == pc && s.off_god >= 0 && BitOn(pc, s.off_god, s.mask_god)) SetBit(pc, s.off_god, s.mask_god, false), any = true;
+    p.god_pc = 0;
+    if (pc && p.made_mgr_pc == pc && s.off_cheat >= 0 && obj::Read32(pc + uint32_t(s.off_cheat))) {
+      obj::Write32(pc + uint32_t(s.off_cheat), 0);   // the engine's garbage collector frees the object
+      any = true;
+    }
+    p.made_mgr_pc = 0;
+    p.pawn_done = p.pawn_seen = 0;
+  }
+  if (s.speed_set != 1.0f && s.speed_world == world && s.off_td >= 0 && ReadF(world + uint32_t(s.off_td)) == s.speed_set) {
+    WriteF(world + uint32_t(s.off_td), 1.0f);
+    if (s.off_speed >= 0) WriteF(game + uint32_t(s.off_speed), 1.0f);
+    any = true;
+  }
+  s.speed_set = 1.0f;
+  if (s.remote_world != world)
+    REXLOG_INFO("auto cheats ({}): another PC's player is in this game - the launcher's cheats are off here{}", s.spec.game,
+                any ? " (god mode, speed and the cheat manager put back)" : "");
+  s.remote_world = world;
+}
 }  // namespace detail
 
 inline void Configure(const Spec& spec) { detail::S().spec = spec; }
+// Gears 2 with the cheat keys: start the lookup now, so the keys' EnableCheats can use it (no launcher cheat on: Tick
+// would never start it).
+inline void Prepare() { detail::StartResolve(); }
 
 // The console target's enable_cheats (Gears 2's cheat keys): EnableCheats for player 1 as above. false = no player yet.
 inline bool EnableForConsole(PPCContext& ctx, uint8_t* base) {
   using namespace detail;
   State& s = S();
+  StartResolve();
   if (!s.ready.load(std::memory_order_acquire)) {   // before the lookup: the plain command, as before
     bool ignored = false;
     return Ue3ConsoleExecNow(ctx, base, 0, "EnableCheats", &ignored);
@@ -226,12 +282,13 @@ inline bool EnableForConsole(PPCContext& ctx, uint8_t* base) {
 // Game thread, once per engine frame (after Ue3ConsoleRunQueued). Works every 15th call.
 inline void Tick(PPCContext& ctx, uint8_t* base) {
   using namespace detail;
-  if (!AnyOn()) return;
   State& s = S();
+  const bool keys_flip = s.started.load(std::memory_order_relaxed) && s.spec.listen_server_enable;   // Gears 2 keys
+  if (!AnyOn() && !keys_flip) return;
+  if (!Ue3ConsoleIsGameThread()) return;   // the engine loop's thread only (the console's)
   if (++s.ticks % 15) return;
-  static std::atomic<bool> started{false};
   const int verdict = ue3::match::Check();   // also opens the object tables the first time
-  if (!started.exchange(true)) std::thread(Resolve).detach();
+  StartResolve();
   if (s.failed.load(std::memory_order_relaxed) || !s.ready.load(std::memory_order_acquire)) return;
   if (verdict != 0) return;   // Versus (or the lobbies), or the game state is not readable yet
   const int local = LocalCount();
@@ -241,11 +298,10 @@ inline void Tick(PPCContext& ctx, uint8_t* base) {
   const uint32_t game = world ? obj::Read32(world + uint32_t(s.off_game)) : 0;
   if (!game) return;   // a client in someone else's game: nothing applies there
   if (!s.spec.remote_players_ok && !OnlyLocalPlayers(game, local)) {
-    if (s.remote_world != world)
-      REXLOG_INFO("auto cheats ({}): another PC's player is in this game - the launcher's cheats are not applied here", s.spec.game);
-    s.remote_world = world;
+    UndoForRemote(world, game, local);
     return;
   }
+  if (!AnyOn()) return;   // the Gears 2 keys only needed the check above
   if (!s.said_missing) {
     s.said_missing = true;
     if (REXCVAR_GET(ue3_cheat_god) && s.off_god < 0) REXLOG_WARN("auto cheats ({}): no Controller.bGodMode - god mode left out", s.spec.game);
@@ -261,7 +317,7 @@ inline void Tick(PPCContext& ctx, uint8_t* base) {
     const uint32_t pc = i ? ControllerOf(i) : pc0;
     if (!pc) continue;
     const uint32_t pawn = obj::Read32(pc + uint32_t(s.off_pawn));
-    if (!pawn) { p.pawn_seen = 0; continue; }   // the front end, a dead player waiting to respawn, a level loading
+    if (!pawn) { p.pawn_seen = p.pawn_done = 0; continue; }   // the front end, a dead player waiting to respawn, a load
     any_pawn = true;
     if (REXCVAR_GET(ue3_cheat_god) && s.off_god >= 0 && !BitOn(pc, s.off_god, s.mask_god)) {
       SetBit(pc, s.off_god, s.mask_god, true);
@@ -270,13 +326,15 @@ inline void Tick(PPCContext& ctx, uint8_t* base) {
     }
     if (REXCVAR_GET(ue3_cheat_hide_hud) && s.off_hud >= 0 && s.off_show >= 0) {
       const uint32_t hud = obj::Read32(pc + uint32_t(s.off_hud));
-      if (hud && BitOn(hud, s.off_show, s.mask_show)) {
+      if (hud && hud != p.hud) {   // once per HUD: F11 (ToggleHUD) can show it again
         SetBit(hud, s.off_show, s.mask_show, false);
-        if (p.hud != hud) REXLOG_INFO("auto cheats ({}): HUD hidden (player {})", s.spec.game, i + 1);
+        REXLOG_INFO("auto cheats ({}): HUD hidden (player {})", s.spec.game, i + 1);
         p.hud = hud;
       }
     }
-    if (REXCVAR_GET(ue3_cheat_weapons) && s.spec.cheat_manager_possible && pawn != p.pawn_done) {
+    // weapons: on-foot pawns only (a turret or vehicle the player sits in is a pawn too)
+    const bool infantry = !s.infantry || obj::IsA(pawn, s.infantry);
+    if (REXCVAR_GET(ue3_cheat_weapons) && s.spec.cheat_manager_possible && infantry && pawn != p.pawn_done) {
       // a second and a half after the body appears: the game gives its own starting weapons first
       const auto now = std::chrono::steady_clock::now();
       if (pawn != p.pawn_seen) { p.pawn_seen = pawn, p.seen_at = now; continue; }
@@ -302,6 +360,7 @@ inline void Tick(PPCContext& ctx, uint8_t* base) {
       if (s.off_speed >= 0) WriteF(game + uint32_t(s.off_speed), speed);
       if (s.speed_world != world) REXLOG_INFO("auto cheats ({}): game speed {:.2f}", s.spec.game, speed);
       s.speed_world = world;
+      s.speed_set = speed;
     }
   }
 }

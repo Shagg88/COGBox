@@ -146,6 +146,10 @@ bool ExecNow(PPCContext& ctx, uint8_t* base, const std::string& command, bool* h
 }
 }  // namespace
 
+bool Ue3ConsoleIsGameThread() {
+  return g_game_thread != std::thread::id() && std::this_thread::get_id() == g_game_thread;
+}
+
 bool Ue3ConsoleExecNow(PPCContext& ctx, uint8_t* base, int player, const std::string& command, bool* handled) {
   bool ignored = false;
   if (!g_have_target) return false;

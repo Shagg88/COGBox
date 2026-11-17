@@ -51,6 +51,8 @@ void Ue3ConsoleQueue(const std::string& command);
 // GitHub #342: runs one command now through GamePlayers(player)'s Exec (game thread only, no gate, no queue); false when that
 // player does not exist yet. *handled: the engine knew the command.
 bool Ue3ConsoleExecNow(PPCContext& ctx, uint8_t* base, int player, const std::string& command, bool* handled);
+// GitHub #342: true on the thread Ue3ConsoleRunQueued runs its commands on (the engine loop's), once it has run.
+bool Ue3ConsoleIsGameThread();
 // Game thread only (layer 3's override of a once-per-frame engine function, after the original): runs what is queued.
 // Leaves `ctx` as it found it.
 void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base);

@@ -840,7 +840,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
             return no("Gears 3: not with Title Update 6 yet (it shows a dirty-disc error with it).");
     } else if (f == "cheats" && (g == Game::Gears2 || g == Game::Judgment || g == Game::Gears1)) {   // GitHub #264: --gow2_cheats / --gowj_cheats / --gow1_cheats (no package patch, so no TU check)
         // the option's description, a long literal (a short name can be built a few letters at a time - cap_exe)
-        if (!cap_exe(env, "GitHub #264: developer cheats on hotkeys")) return no(not_yet(gi, "needs its next build"));
+        // (0.6.5, #342: the description was rewritten - either text)
+        if (!cap_exe(env, "GitHub #264: developer cheats on hotkeys") && !cap_exe(env, "GitHub #264 / #342: the developers' cheat keys"))
+            return no(not_yet(gi, "needs its next build"));
     } else if (f == "cheats" || f == "mutators") {
         if (g != Game::Gears3) return no(not_yet(gi));
         if (ver == Version::TitleUpdate && env.update_ready)
