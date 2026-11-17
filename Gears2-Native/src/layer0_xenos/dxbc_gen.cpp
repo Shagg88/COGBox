@@ -117,7 +117,9 @@ std::atomic<uint64_t> g_rule_hits[3];  // patch 0087 (CanaryRuleHits)
 
 struct Gen {
   Gen(const Program& program, const hlsl::HlslOptions& options, bool final_pass)
-      : p(program), opt(options), final(final_pass) {}
+      : p(program), opt(options), final(final_pass) {
+    code.reserve(kCodeRoom * 4);  // see Room()
+  }
   const Program& p;
   const hlsl::HlslOptions& opt;
   const bool final;  // the second pass: the first only gathers the facts below
@@ -147,6 +149,18 @@ struct Gen {
   std::vector<uint32_t> code;
   dx::Statistics stat{};
   dx::Assembler a{code, stat};
+  // Shader warm-up speed (Shagg 17 Nov; job 1993: 124-133 s of thread time translating Gears 3's 9,303 shaders, 30 s of
+  // it in the kernel, 2.2 million page faults): the SDK's Assembler reserves exactly size + n words before EVERY
+  // instruction (rex/graphics/format/dxbc.h EmitAluOp), which defeats std::vector's doubling - each instruction moved
+  // the whole shader so far to a new block (quadratic; 41% of the translation in a profile, and on Windows the big
+  // blocks come from the OS each time). Room() keeps at least kCodeRoom words spare, doubling the block when it runs
+  // low, so the SDK's reserve never moves anything. Called before each guest instruction and each larger block; one
+  // guest instruction makes far fewer words than this. Missing a call only costs speed (the SDK's reserve still
+  // works); the code produced is the same either way.
+  static constexpr size_t kCodeRoom = 4096;
+  void Room() {
+    if (code.capacity() - code.size() < kCodeRoom) code.reserve(std::max(code.capacity() * 2, code.size() + kCodeRoom * 2));
+  }
 
   // Temps: the Xenos registers (r0..regs-1, unless in x0), then fixed system temps, then a scratch stack.
   uint32_t base = 0;
@@ -2010,6 +2024,7 @@ struct Gen {
   // ---- Control flow (hlsl.cpp EmitStraightLine / EmitPcLoop) ----
   void EmitExecBody(const ControlFlow& cf) {
     for (const Instruction& ins : cf.instructions) {
+      Room();
       switch (ins.kind) {
         case Instruction::Kind::kAlu: EmitAlu(ins.alu); break;
         case Instruction::Kind::kVertexFetch: EmitVertexFetch(ins.vfetch); break;
@@ -2418,6 +2433,7 @@ struct Gen {
   }
 
   void EmitMemexportFlush() {
+    Room();
     Scope sc(*this);
     const uint32_t w = Push(), c = Push(), ea = Push(), m = Push(), bic = Push(), i = Push(), v = Push(), d = Push(),
                    sz = Push(), t = Push(), u = Push();
@@ -2597,6 +2613,7 @@ struct Gen {
 
   // ---- Shader body: prologue, translated program, epilogue (hlsl.cpp TranslateToHlsl) ----
   void EmitMain() {
+    Room();
     const bool vs = p.is_vertex_shader;
     // Every register and system temp starts at 0.
     for (uint32_t i = 0; i < regs; ++i) a.OpMov(RegDest(i, UINT32_MAX, kXYZW), LF(0.0f));
@@ -3016,7 +3033,7 @@ struct TouchIndex {
   std::vector<std::vector<uint32_t>> by_temp;
   std::vector<uint32_t> flow;
   void Build(const std::vector<Ins>& v) {
-    by_temp.clear();
+    for (auto& l : by_temp) l.clear();  // kept for the next pass (an empty list reads the same as no list)
     flow.clear();
     for (uint32_t i = 0; i < uint32_t(v.size()); ++i) {
       const Ins& in = v[i];
@@ -3312,17 +3329,21 @@ inline uint32_t MergeComponentMovs(std::vector<uint32_t>& c) {
 }
 inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
   uint32_t removed = 0;
+  // Shader warm-up speed (17 Nov): the lists are made once and reused by every pass (cleared, capacity kept) - fewer
+  // heap calls from the warm-up's many threads at once. The same code comes out.
+  std::vector<Ins> v;
+  std::vector<uint32_t> out;
+  TouchIndex touch;
+  Liveness liveness;
   for (int pass = 0; pass < 8; ++pass) {
-    std::vector<Ins> v;
+    v.clear();
     v.reserve(c.size() / 6);
     for (size_t p = 0; p < c.size();) {
       v.emplace_back();
       if (!ParseIns(c, p, v.back())) return removed;  // something we don't parse: leave the code as it is
       p += v.back().len;
     }
-    TouchIndex touch;  // job 637
-    touch.Build(v);
-    Liveness liveness;
+    touch.Build(v);  // job 637
     liveness.Build(v, c);
     struct LiveScope {
       LiveScope(const Liveness* l) { g_live = l; }
@@ -3332,7 +3353,7 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
       TouchScope(const TouchIndex* t) { g_touch = t; }
       ~TouchScope() { g_touch = nullptr; }
     } touch_scope(&touch);
-    std::vector<uint32_t> out;
+    out.clear();
     out.reserve(c.size());
     uint32_t here = 0;
     for (size_t i = 0; i < v.size(); ++i) {
