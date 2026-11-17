@@ -1436,6 +1436,9 @@ In progress = 진행 중
 This match is full. = 이 매치는 가득 찼습니다.
 Join the match in progress: you take a bot's place. = 진행 중인 매치에 참가: 봇의 자리를 대신합니다.
 Join this match. = 이 매치에 참가합니다.
+You have this match's map. = 이 매치의 맵을 가지고 있습니다.
+You may not have this match's map (DLC). Add the map pack in COGBox to join. = 이 매치의 맵(DLC)이 없을 수 있습니다. 참가하려면 COGBox에서 맵 팩을 추가하세요.
+The host hasn't chosen a map yet. = 호스트가 아직 맵을 고르지 않았습니다.
 Match = 매치
 Casual (under level 3) = Casual (레벨 3 미만)
 # deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")

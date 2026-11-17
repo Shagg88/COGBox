@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -33,10 +34,18 @@ struct SocialMatch {
     int players = 0, max = 0;
     int playlist = -1;   // the game's playlist id, -1 when the lobby did not say
     bool in_progress = false;
+    int map = 0;         // 0.6.5: the host's map (its MapName context, id 1), 0 when none is chosen or the server did not say
     bool full() const { return max > 0 && players >= max; }
 };
 // The list; matches of other games or with a lobby id that is not a plain id are dropped.
 std::vector<SocialMatch> parse_matches(const std::string& body);
+// 0.6.5 DLC light (Shagg 16 Nov): the map package a MapName context value names, from each game's GearPlaylist.ini
+// MapNamesToContextValues (job 1921's Coalesced copies), e.g. "MP_Azura"; nullptr for a number the table does not have.
+const char* match_map_package(int game, int map);
+// Green: the player has the host's map (base game or installed DLC); red: they don't, or the number is not in the table;
+// grey: the host has not chosen a map yet. has_package("mp_azura") answers for a lower-case package name.
+enum class MapLight { None, Have, Missing };
+MapLight match_map_light(const SocialMatch& m, const std::function<bool(const std::string&)>& has_package);
 // The mode from the game's playlist id (each game's GearPlaylist.ini, title update included), "Match" when unknown.
 const char* match_mode(const SocialMatch& m);
 // "KOTH · 6/10 · Gears 3 · US" (UTF-8 middle dots).

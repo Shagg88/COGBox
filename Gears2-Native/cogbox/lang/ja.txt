@@ -1436,6 +1436,9 @@ In progress = 進行中
 This match is full. = このマッチは満員です。
 Join the match in progress: you take a bot's place. = 進行中のマッチに参加します: ボットの枠に入ります。
 Join this match. = このマッチに参加します。
+You have this match's map. = このマッチのマップを持っています。
+You may not have this match's map (DLC). Add the map pack in COGBox to join. = このマッチのマップ（DLC）がない可能性があります。参加するには COGBox でマップパックを追加してください。
+The host hasn't chosen a map yet. = ホストはまだマップを選んでいません。
 Match = マッチ
 Casual (under level 3) = Casual (レベル 3 未満)
 # deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")

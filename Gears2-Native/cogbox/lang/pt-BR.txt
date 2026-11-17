@@ -1434,6 +1434,9 @@ In progress = Em andamento
 This match is full. = Esta partida está cheia.
 Join the match in progress: you take a bot's place. = Entrar na partida em andamento: você assume o lugar de um bot.
 Join this match. = Entrar nesta partida.
+You have this match's map. = Você tem o mapa desta partida.
+You may not have this match's map (DLC). Add the map pack in COGBox to join. = Talvez você não tenha o mapa desta partida (DLC). Adicione o pacote de mapas no COGBox para entrar.
+The host hasn't chosen a map yet. = O anfitrião ainda não escolheu um mapa.
 Match = Partida
 Casual (under level 3) = Casual (abaixo do nível 3)
 # deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")

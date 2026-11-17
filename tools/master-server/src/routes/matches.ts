@@ -25,6 +25,18 @@ function playlistOf(json: string | null): number | null {
   }
 }
 
+// 0.6.5 DLC light: the host's map, its MapName context (id 1); the launcher checks the player has that map's package.
+const MAP_CONTEXT = 1;
+function mapOf(json: string | null): number | null {
+  try {
+    const ctx = JSON.parse(json || '[]');
+    const c = Array.isArray(ctx) ? ctx.find((e: any) => e && e.id === MAP_CONTEXT) : undefined;
+    return c && Number.isInteger(c.value) && c.value > 0 ? c.value : null;
+  } catch {
+    return null;
+  }
+}
+
 export const matchRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: Registry }> = async (fastify, opts) => {
   const { db, registry } = opts;
   const me = (req: FastifyRequest, reply: FastifyReply): AuthedUser | null => {
@@ -42,7 +54,7 @@ export const matchRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: R
     const u = me(req, reply);
     if (!u) return reply;
     const rows = db.prepare(`SELECT lobby_id, host_uuid, title_id, region, max_players, current_players, properties_json,
-                                    in_progress, created_at
+                                    contexts_json, in_progress, created_at
                              FROM lobbies WHERE is_public = 1 AND host_uuid != @me AND title_id IN (${TITLES}) AND NOT ${BLOCKED}
                              ORDER BY current_players DESC, created_at DESC LIMIT 200`).all({ me: u.uuid }) as any[];
     const matches = rows.filter((r) => hostPlaying(r)).slice(0, 50).map((r) => ({
@@ -52,6 +64,7 @@ export const matchRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: R
       max_players: r.max_players,
       current_players: r.current_players,
       playlist: playlistOf(r.properties_json),
+      map: mapOf(r.contexts_json),
       in_progress: Boolean(r.in_progress)
     }));
     return { matches };

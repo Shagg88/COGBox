@@ -1435,6 +1435,9 @@ In progress = En cours
 This match is full. = Cette partie est pleine.
 Join the match in progress: you take a bot's place. = Rejoindre la partie en cours : vous prenez la place d'un bot.
 Join this match. = Rejoindre cette partie.
+You have this match's map. = Vous avez la carte de ce match.
+You may not have this match's map (DLC). Add the map pack in COGBox to join. = Il vous manque peut-être la carte de ce match (DLC). Ajoutez le pack de cartes dans COGBox pour rejoindre.
+The host hasn't chosen a map yet. = L'hôte n'a pas encore choisi de carte.
 Match = Partie
 Casual (under level 3) = Casual (sous le niveau 3)
 # deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")

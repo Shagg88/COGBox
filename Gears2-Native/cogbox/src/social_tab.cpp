@@ -14,6 +14,8 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -69,7 +71,7 @@ struct LineButton {
     const char *tip = nullptr;
 };
 int line_row(App &a, const std::string &tag, const std::string &state, ImVec4 state_col, int lamp, const std::string &icon, float x1,
-             const std::vector<LineButton> &buttons, bool two_lines = false)
+             const std::vector<LineButton> &buttons, bool two_lines = false, int map_lamp = -1, const char *map_tip = nullptr)
 {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -89,6 +91,13 @@ int line_row(App &a, const std::string &tag, const std::string &state, ImVec4 st
         dl->AddText(F_BOLD, FS(F_SMALL), ImVec2(tx, y1), U(col::text), tag.c_str());
         dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(tx, y1 + FS(F_SMALL) + gap), U(state_col), state.c_str());
         dl->PopClipRect();
+        if (map_lamp >= 0) {   // 0.6.5 DLC light after the mode's name: 0 grey (no map yet), 1 green (have it), 2 red
+            const float lr = S(4.5f), lx = std::min(right - lr, tx + text_w(F_BOLD, FS(F_SMALL), tag.c_str()) + S(8) + lr);
+            const ImVec2 lc(lx, y1 + FS(F_SMALL) * 0.5f + S(1));
+            dl->AddCircleFilled(lc, lr, U(map_lamp == 1 ? col::good : map_lamp == 2 ? col::bad : col::faint), 16);
+            if (map_tip && ImGui::IsMouseHoveringRect(ImVec2(lc.x - lr * 2, lc.y - lr * 2), ImVec2(lc.x + lr * 2, lc.y + lr * 2)))
+                ImGui::SetTooltip("%s", map_tip);
+        }
     } else {
         avatar(a, dl, c, r, icon, tag, lamp);
         const float tx = c.x + r + S(10), name_w = std::min(S(170), (x1 - S(6) - bw_all - tx) * 0.45f);
@@ -119,6 +128,37 @@ int line_row(App &a, const std::string &tag, const std::string &state, ImVec4 st
     ImGui::SetCursorScreenPos(ImVec2(p.x, q.y + S(3)));
     ImGui::Dummy(ImVec2(x1 - p.x, 0));
     return pressed;
+}
+
+// 0.6.5 DLC light: the lower-case names of the player's map packages (*.xxx) in the game's own folders and its installed
+// DLC, read once per game and again when the DLC list changes (an add or remove).
+bool has_map_package(App &a, int g, const std::string &low)
+{
+    static std::set<std::string> known[4];
+    static std::string sig[4];
+    if (g < 0 || g > 3) return false;
+    std::string now = a.st[g].dataDir + "|" + a.st[g].updateDir;
+    for (const DlcItem &d : dlc_list(g)) now += "|" + d.dir;
+    if (now != sig[g]) {
+        sig[g] = now;
+        known[g].clear();
+        std::vector<std::string> roots{ a.st[g].dataDir, a.st[g].updateDir };
+        for (const DlcItem &d : dlc_list(g)) roots.push_back(d.dir);
+        for (const std::string &root : roots) {
+            if (root.empty()) continue;
+            std::error_code ec;
+            for (std::filesystem::recursive_directory_iterator it(widen(root), std::filesystem::directory_options::skip_permission_denied, ec), end;
+                 !ec && it != end; it.increment(ec)) {
+                if (!it->is_regular_file(ec)) continue;
+                std::string ext = narrow(it->path().extension().wstring()), stem = narrow(it->path().stem().wstring());
+                for (char &c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+                if (ext != ".xxx") continue;
+                for (char &c : stem) c = char(std::tolower(static_cast<unsigned char>(c)));
+                known[g].insert(stem);
+            }
+        }
+    }
+    return known[g].count(low) != 0;
 }
 
 }  // namespace
@@ -451,13 +491,20 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
             const bool ready = m.game >= 0 && a.st[m.game].ready == R_READY, can = ready && !m.full();
             // a match in progress keeps the invite join until a test shows the host's beacon seats matchmaking mid-match
             const bool search = ready && !m.in_progress && joins_through_matchmaking(a, m.game);
+            // 0.6.5 DLC light: does this player have the host's map (base game or their DLC)?
+            const MapLight ml = ready ? match_map_light(m, [&](const std::string &p) { return has_map_package(a, m.game, p); })
+                                      : MapLight::None;
+            const int lamp = !ready ? -1 : ml == MapLight::Have ? 1 : ml == MapLight::Missing ? 2 : 0;
+            const char *lamp_tip = ml == MapLight::Have ? tr("You have this match's map.")
+                                 : ml == MapLight::Missing ? tr("You may not have this match's map (DLC). Add the map pack in COGBox to join.")
+                                 : tr("The host hasn't chosen a map yet.");
             const int b = line_row(a, tr(mode.c_str()), details, m.full() ? col::dim : m.in_progress ? col::amber : col::good,
                                    m.full() ? 0 : (m.in_progress ? 2 : 1), "", x1,
                                    { { "JOIN", can, true, m.full() ? "This match is full." :
                                                           !ready ? "Set up this game in COGBox to join." :
                                                           search ? "Join through Gears 3's own matchmaking: the host's game picks your team." :
                                                           m.in_progress ? "Join the match in progress: you take a bot's place." :
-                                                                          "Join this match." } }, true);
+                                                                          "Join this match." } }, true, lamp, lamp_tip);
             if (b == 0) social_do(search ? SocialAction::JoinMatchSearch : SocialAction::JoinMatch, m.lobby_id);
             ImGui::PopID();
         }
