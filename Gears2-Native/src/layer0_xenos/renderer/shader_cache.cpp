@@ -1253,14 +1253,16 @@ void ShaderCache::QueueSpirv(GuestShader& s, const std::vector<uint8_t>& dxbc, b
   {
     std::lock_guard<std::mutex> lock(mutex_);
     (warm ? spv_warm_queue_ : spv_queue_).push_back(std::move(job));
-    if (spv_workers_.empty()) {
-      const uint32_t hw = std::thread::hardware_concurrency();
-      const uint32_t n = hw > 3 ? hw - 2 : 1;
-      for (uint32_t i = 0; i < n; ++i) spv_workers_.emplace_back([this] { SpvWorker(); });
-      REXLOG_INFO("gow2_renderer: SPIR-V conversion on {} background thread(s)", n);
-    }
+    if (!warm || !spv_hold_) StartSpvWorkersLocked();   // job 1991: warm jobs wait while the warm-up runs
   }
   spv_wake_.notify_one();
+}
+void ShaderCache::StartSpvWorkersLocked() {
+  if (!spv_workers_.empty()) return;
+  const uint32_t hw = std::thread::hardware_concurrency();
+  const uint32_t n = hw > 3 ? hw - 2 : 1;
+  for (uint32_t i = 0; i < n; ++i) spv_workers_.emplace_back([this] { SpvWorker(); });
+  REXLOG_INFO("gow2_renderer: SPIR-V conversion on {} background thread(s)", n);
 }
 void ShaderCache::Promote(const GuestShader& s) {
   if (s.state != ShaderState::kPending || s.spv_promoted) return;
@@ -1487,6 +1489,11 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       g_warm_worker_kernel += kern1 - kern0;
     };
     std::vector<std::thread> threads;
+    {   // job 1991: async mode's background SPIR-V threads started during this adoption and ran beside the warm-up's
+        // workers (PC 100% busy, 40 s of game CPU outside them, 9.0 s vs 8.4 s) - they wait for the warm-up now
+      std::lock_guard<std::mutex> lock(mutex_);
+      spv_hold_ = true;
+    }
     for (uint32_t i = 0; i < n; ++i) threads.emplace_back(worker);
     {   // this thread: adopt in file order as results arrive (only the DXBC results; the rest after the join, as before)
       const auto tm0 = std::chrono::steady_clock::now();
@@ -1507,6 +1514,12 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       stream_make_ms = MsSince(tm0);
     }
     for (auto& t : threads) t.join();
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      spv_hold_ = false;
+      if (!spv_warm_queue_.empty() || !spv_queue_.empty()) StartSpvWorkersLocked();
+    }
+    spv_wake_.notify_all();
     t_warm_split = false;
     REXLOG_INFO("gow2_renderer: shader warm-up: adopted while translating, {:.0f} ms", stream_make_ms);
     {

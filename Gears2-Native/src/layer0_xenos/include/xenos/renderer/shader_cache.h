@@ -332,6 +332,10 @@ class ShaderCache {
   std::condition_variable spv_wake_;
   uint32_t spv_warm_limit_ = UINT32_MAX, spv_warm_active_ = 0;  // under mutex_
   std::vector<std::thread> spv_workers_;
+  // 0.6.5 (job 1991): while the warm-up's own workers run, warm SPIR-V jobs only queue - the background threads start
+  // when it ends (or at once for a live job), as before the streaming adoption. Under mutex_.
+  bool spv_hold_ = false;
+  void StartSpvWorkersLocked();
   uint64_t spv_jobs_done_ = 0, spv_jobs_failed_ = 0;
   double poll_spent_ms_ = 0.0;
   double spv_jobs_ms_ = 0.0;
