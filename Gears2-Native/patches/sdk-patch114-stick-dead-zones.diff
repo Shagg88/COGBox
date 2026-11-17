@@ -1,0 +1,72 @@
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index 6a90321..ed6dd87 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -428,7 +428,7 @@ void InputSystem::UpdateConnectedUser(uint32_t user_index, bool connected) {
+     return;
+   }
+ 
+-  // Deadzone percentages scale against the device's own range.
++  // (Patch 114: the dead zones no longer scale against these - the drivers' capability values are not ranges.)
+   DeviceId chosen = ChooseDeviceForUser(user_index);
+   auto* driver = DriverForDevice(chosen);
+   if (!driver) {
+@@ -530,6 +530,10 @@ X_RESULT InputSystem::GetStateForUI(uint32_t user_index, X_INPUT_STATE* out_stat
+     if (driver->GetDeviceState(id, &state) != X_ERROR_SUCCESS) {
+       continue;
+     }
++    // Patch 114: the launcher's per-stick dead zones on each controller's own sticks, before the merge - never on the
++    // mouse / keyboard's synthetic sticks (the mouse folded into the right stick would lose small moves), as patch 55.
++    // Before Observe (review r114b), so a drifting stick inside its dead zone does not count as that pad being in use.
++    if (!dynamic_cast<mnk::MnkInputDriver*>(driver)) AdjustDeadzoneLevels(user_index, &state.gamepad);
+     active_devices_.Observe(user_index, id, state.gamepad);
+     if (!dynamic_cast<mnk::MnkInputDriver*>(driver)) ApplyPadLayout(state.gamepad);  // patch 55
+     // Patch 38: a controller's right stick, undoing the mouse-look binding change (see the cvars above).
+@@ -555,7 +559,6 @@ X_RESULT InputSystem::GetStateForUI(uint32_t user_index, X_INPUT_STATE* out_stat
+     return X_ERROR_DEVICE_NOT_CONNECTED;
+   }
+   UpdateConnectedUser(user_index, true);
+-  AdjustDeadzoneLevels(user_index, &merged.gamepad);
+   if (static_cast<uint16_t>(merged.gamepad.buttons) != 0 && user_index < kMaxGuestUsers) {
+     last_used_user_ = user_index;
+   }
+@@ -609,23 +612,28 @@ void InputSystem::AdjustDeadzoneLevels(uint32_t user_index, X_INPUT_GAMEPAD* gam
+     return;
+   }
+ 
+-  // Radial: the cutoff follows the stick's angle, so a diagonal is not held to
+-  // a larger displacement than a cardinal push.
+-  auto apply = [](double percentage, const JoystickValue& max, int16_t& axis_x, int16_t& axis_y) {
++  // Radial, rescaled from its edge (as the dead zones of common emulators). COGBox patch 114 (review of the launcher's
++  // per-stick sliders, 16 Nov): the old cutoffs were cos / sin of the angle WITHOUT abs, so a push left or down (a
++  // negative axis) never fell inside the dead zone - it only worked to the right and up. Now: the stick's distance from
++  // the centre, as a fraction of its range per axis; inside the dead zone both axes are 0; outside, the distance is
++  // rescaled so the output starts at 0 at the edge and still reaches full at the stick's limit (no jump).
++  // The range is the axis' own +-32767: the drivers' capability values are not ranges (SDL reports 0xFFFF, XInput a
++  // resolution mask such as 0xFFC0), so the old percentages were about twice what they said.
++  auto apply = [](double percentage, const JoystickValue&, int16_t& axis_x, int16_t& axis_y) {
+     if (percentage <= 0.0 || percentage >= 1.0) {
+       return;
+     }
+-    const double deadzone_x = max.first * percentage;
+-    const double deadzone_y = max.second * percentage;
+-    const double theta = std::atan2(static_cast<double>(axis_y), static_cast<double>(axis_x));
+-    const double cutoff_x = std::cos(theta) * deadzone_x;
+-    const double cutoff_y = std::sin(theta) * deadzone_y;
+-    if (axis_x > -cutoff_x && axis_x < cutoff_x) {
++    constexpr double kRange = 32767.0;
++    const double nx = static_cast<double>(axis_x) / kRange, ny = static_cast<double>(axis_y) / kRange;
++    const double r = std::sqrt(nx * nx + ny * ny);
++    if (r <= percentage) {
+       axis_x = 0;
+-    }
+-    if (axis_y > -cutoff_y && axis_y < cutoff_y) {
+       axis_y = 0;
++      return;
+     }
++    const double scale = std::min(1.0, (r - percentage) / (1.0 - percentage)) / r;
++    axis_x = static_cast<int16_t>(std::clamp(std::lround(nx * scale * kRange), -32768L, 32767L));
++    axis_y = static_cast<int16_t>(std::clamp(std::lround(ny * scale * kRange), -32768L, 32767L));
+   };
+ 
+   const auto& maxima = user_max_joystick_value_[user_index];
