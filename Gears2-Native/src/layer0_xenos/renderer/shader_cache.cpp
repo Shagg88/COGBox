@@ -1036,11 +1036,32 @@ void ShaderCache::SetSpirvAsync(bool on) { g_spv_async.store(on); }
 bool ShaderCache::SpirvAsync() { return g_spv_async.load(); }
 // (spv_pending, 0.6.2: given and async on -> a store miss is NOT converted here; the bytecode stays DXBC and
 // *spv_pending is set, for AdoptDxbc to queue the conversion. Null = convert here, as always.)
+// Job 1962 (Gears 3 Vulkan warm-up 34 s with every module a store hit, D3D12 8.4 s for the same shaders): where the time
+// goes, summed over all threads (thread time, not wall time), logged at the end of the warm-up.
+struct WarmSplit {
+  std::atomic<uint64_t> decode_ns{0}, dxbc_ns{0}, key_ns{0}, get_ns{0}, convert_ns{0}, optimise_ns{0}, put_ns{0};
+  std::atomic<uint64_t> dxbc_bytes{0}, spv_bytes{0}, items{0}, hits{0}, converted{0};
+  void Reset() {
+    for (auto* a : {&decode_ns, &dxbc_ns, &key_ns, &get_ns, &convert_ns, &optimise_ns, &put_ns, &dxbc_bytes, &spv_bytes,
+                    &items, &hits, &converted})
+      a->store(0);
+  }
+};
+static WarmSplit g_warm_split;
+static thread_local bool t_warm_split = false;   // set by the warm-up's workers only
+static uint64_t NsSince(std::chrono::steady_clock::time_point t0) {
+  return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+}
 static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program, const hlsl::HlslOptions& options,
                                                   bool spirv, bool* spv_pending = nullptr) {
+  const bool split = t_warm_split;
+  auto tq = std::chrono::steady_clock::now();
   dxbc_gen::DxbcTranslation dt = dxbc_gen::TranslateToDxbc(program, options);
+  if (split) g_warm_split.dxbc_ns += NsSince(tq), g_warm_split.dxbc_bytes += dt.bytecode.size();
   if (dt.ok && spirv) {
+    tq = std::chrono::steady_clock::now();
     const uint64_t store_key = SpvKey(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise, g_spv_store.switches);
+    if (split) g_warm_split.key_ns += NsSince(tq);
     dxbc_spirv::SpirvResult sv;
     if (spv_pending && g_spv_async.load()) {
       if (SpvStoreGet(store_key, sv.words)) {
@@ -1052,14 +1073,25 @@ static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program,
       return dt;
     }
     // (A store hit skips the conversion, so patch 0102's discard counts only cover shaders converted in this run.)
+    tq = std::chrono::steady_clock::now();
     const bool stored = SpvStoreGet(store_key, sv.words);  // 0.6.1: converted in an earlier run
+    if (split) g_warm_split.get_ns += NsSince(tq), g_warm_split.hits += stored ? 1 : 0;
     if (stored) sv.ok = true;
-    else sv = dxbc_spirv::ConvertDxbcToSpirv(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise);
+    else {
+      tq = std::chrono::steady_clock::now();
+      sv = dxbc_spirv::ConvertDxbcToSpirv(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise);
+      if (split) g_warm_split.convert_ns += NsSince(tq), ++g_warm_split.converted;
+    }
     if (sv.ok) {
       if (!stored) {
+        tq = std::chrono::steady_clock::now();
         OptimiseSpirv(sv.words);  // 0.6.1
+        if (split) g_warm_split.optimise_ns += NsSince(tq);
+        tq = std::chrono::steady_clock::now();
         SpvStorePut(store_key, sv.words);
+        if (split) g_warm_split.put_ns += NsSince(tq);
       }
+      if (split) g_warm_split.spv_bytes += sv.words.size() * 4;
       dt.bytecode.resize(sv.words.size() * 4);
       std::memcpy(dt.bytecode.data(), sv.words.data(), dt.bytecode.size());
     } else {
@@ -1353,7 +1385,9 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     const uint32_t n = uint32_t(std::min<size_t>(std::max(1u, hw > 2 ? hw - 2 : 1u), std::max<size_t>(1, items.size() / 32)));
     const ucode::DecodeOptions decode_options = DecodeOptions();
     std::atomic<size_t> next{0};
+    g_warm_split.Reset();
     auto worker = [&]() {
+      t_warm_split = true;
       for (size_t i; (i = next.fetch_add(1)) < items.size();) {
         const Item& it = items[i];
         if (it.dwords.empty()) continue;
@@ -1364,8 +1398,11 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
         s->ucode_hash = it.hash;
         s->is_vertex = it.is_vertex;
         s->drawn = true;  // patch 0045: recorded in an earlier session = drawn before
+        const auto td = std::chrono::steady_clock::now();
         const ucode::Program program = ucode::Decode(it.dwords.data(), it.dwords.size(), it.is_vertex, decode_options);
         Analyse(program, *s);
+        g_warm_split.decode_ns += NsSince(td);
+        ++g_warm_split.items;
         const hlsl::HlslOptions wo = TranslateOptions(it.is_vertex, 0, it.dwords.data(), it.dwords.size());
         bool pending = false;
         made[i].dt = TranslateDxbcFor(program, wo, spirv, &pending);
@@ -1378,6 +1415,15 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     for (uint32_t i = 1; i < n; ++i) threads.emplace_back(worker);
     worker();
     for (auto& t : threads) t.join();
+    t_warm_split = false;
+    const auto ms = [](const std::atomic<uint64_t>& a) { return double(a.load()) / 1e6; };
+    REXLOG_INFO("gow2_renderer: shader warm-up split ({} threads, {} shaders, thread ms summed): decode+analyse {:.0f}, "
+                "DXBC {:.0f} ({:.1f} MB), store key {:.0f}, store read {:.0f} ({} hits), SPIR-V convert {:.0f} ({}), "
+                "optimise {:.0f}, store write {:.0f}; SPIR-V {:.1f} MB",
+                n, g_warm_split.items.load(), ms(g_warm_split.decode_ns), ms(g_warm_split.dxbc_ns),
+                double(g_warm_split.dxbc_bytes.load()) / 1048576.0, ms(g_warm_split.key_ns), ms(g_warm_split.get_ns),
+                g_warm_split.hits.load(), ms(g_warm_split.convert_ns), g_warm_split.converted.load(),
+                ms(g_warm_split.optimise_ns), ms(g_warm_split.put_ns), double(g_warm_split.spv_bytes.load()) / 1048576.0);
   }
   r.translate_ms = MsSince(t2);
   const auto t3 = std::chrono::steady_clock::now();
