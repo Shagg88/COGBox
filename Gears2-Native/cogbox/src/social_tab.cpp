@@ -493,8 +493,8 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
             const bool search = ready && !m.in_progress && joins_through_matchmaking(a, m.game);
             // 0.6.5 DLC light: does this player have the host's map (base game or their DLC)?
             const MapLight ml = ready ? match_map_light(m, [&](const std::string &p) { return has_map_package(a, m.game, p); })
-                                      : MapLight::None;
-            const int lamp = !ready ? -1 : ml == MapLight::Have ? 1 : ml == MapLight::Missing ? 2 : 0;
+                                      : MapLight::Unknown;
+            const int lamp = !ready || ml == MapLight::Unknown ? -1 : ml == MapLight::Have ? 1 : ml == MapLight::Missing ? 2 : 0;
             const char *lamp_tip = ml == MapLight::Have ? tr("You have this match's map.")
                                  : ml == MapLight::Missing ? tr("You may not have this match's map (DLC). Add the map pack in COGBox to join.")
                                  : tr("The host hasn't chosen a map yet.");

@@ -278,7 +278,7 @@ int main() {
     // 0.6.5 DLC light: the host's map (context 1) against the player's packages
     {
         const auto ms = parse_matches(R"({"matches":[{"lobby_id":"1","title_id":"4D5308AB","map":11},
-            {"lobby_id":"2","title_id":"4D5308AB","map":3},{"lobby_id":"3","title_id":"4D5308AB"},
+            {"lobby_id":"2","title_id":"4D5308AB","map":3},{"lobby_id":"3","title_id":"4D5308AB","map":null},
             {"lobby_id":"4","title_id":"4D5308AB","map":99},{"lobby_id":"5","title_id":"4D5308AB","map":-4}]})");
         CHECK(ms.size() == 5);
         if (ms.size() == 5) {
@@ -290,6 +290,9 @@ int main() {
             CHECK(match_map_light(ms[3], base) == MapLight::Missing);   // a number not in the table
             CHECK(ms[4].map == 0 && match_map_light(ms[4], base) == MapLight::None);
             CHECK(match_map_light(ms[1], nullptr) == MapLight::Missing);
+            const auto old = parse_matches(R"({"matches":[{"lobby_id":"6","title_id":"4D5308AB"},{"lobby_id":"7","title_id":"4D53082D","map":3}]})");
+            CHECK(old.size() == 2 && old[0].map == -1 && match_map_light(old[0], base) == MapLight::Unknown);
+            CHECK(old.size() == 2 && match_map_light(old[1], base) == MapLight::Unknown);   // Gears 2: not checked yet
         }
         CHECK(std::string(match_map_package(0, 10)) == "MP_Stasis" && !match_map_package(0, 11) && !match_map_package(0, 0));
         CHECK(std::string(match_map_package(2, 20)) == "MP_Haven_ALT" && !match_map_package(2, 21));

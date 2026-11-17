@@ -311,7 +311,7 @@ std::vector<SocialMatch> parse_matches(const std::string& body) {
         m.players = num(e, "current_players", 0);
         m.max = num(e, "max_players", 0);
         m.playlist = num(e, "playlist", -1);
-        m.map = std::max(0, num(e, "map", 0));
+        m.map = !e.contains("map") ? -1 : std::max(0, num(e, "map", 0));   // null (no map yet) = 0
         m.in_progress = e.is_object() && e.contains("in_progress") && e["in_progress"].is_boolean() && e["in_progress"].get<bool>();
         if (!plain_id(m.lobby_id) || m.game < 0 || m.game > 2) continue;   // Gears 2, Gears 3, Judgment
         out.push_back(m);
@@ -336,7 +336,8 @@ const char* match_map_package(int game, int map) {
 }
 
 MapLight match_map_light(const SocialMatch& m, const std::function<bool(const std::string&)>& has_package) {
-    if (m.map <= 0) return MapLight::None;
+    if (m.map < 0 || m.game == 0) return MapLight::Unknown;
+    if (m.map == 0) return MapLight::None;
     const char* p = match_map_package(m.game, m.map);
     if (!p) return MapLight::Missing;
     std::string low(p);

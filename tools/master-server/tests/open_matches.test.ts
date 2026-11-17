@@ -52,6 +52,10 @@ describe('open matches', () => {
     await game(h);
     const withMap = await host(h, { map: 11 });
     expect((await list(v)).find((x) => x.lobby_id === withMap.lobby_id)?.map).toBe(11);
+    const h2 = await claim();
+    await game(h2);
+    const noMap = await host(h2);
+    expect((await list(v)).find((x) => x.lobby_id === noMap.lobby_id)?.map).toBeNull();
   });
 
   it('lists a public match with its game, playlist, players and region, and nothing that names the host', async () => {

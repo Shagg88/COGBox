@@ -34,7 +34,7 @@ struct SocialMatch {
     int players = 0, max = 0;
     int playlist = -1;   // the game's playlist id, -1 when the lobby did not say
     bool in_progress = false;
-    int map = 0;         // 0.6.5: the host's map (its MapName context, id 1), 0 when none is chosen or the server did not say
+    int map = -1;        // 0.6.5: the host's map (MapName context, id 1); 0 = none chosen yet; -1 = the server does not say
     bool full() const { return max > 0 && players >= max; }
 };
 // The list; matches of other games or with a lobby id that is not a plain id are dropped.
@@ -44,7 +44,8 @@ std::vector<SocialMatch> parse_matches(const std::string& body);
 const char* match_map_package(int game, int map);
 // Green: the player has the host's map (base game or installed DLC); red: they don't, or the number is not in the table;
 // grey: the host has not chosen a map yet. has_package("mp_azura") answers for a lower-case package name.
-enum class MapLight { None, Have, Missing };
+// Unknown (no light): an older server, or Gears 2 (its lobbies' MapName context is not checked yet).
+enum class MapLight { Unknown, None, Have, Missing };
 MapLight match_map_light(const SocialMatch& m, const std::function<bool(const std::string&)>& has_package);
 // The mode from the game's playlist id (each game's GearPlaylist.ini, title update included), "Match" when unknown.
 const char* match_mode(const SocialMatch& m);
