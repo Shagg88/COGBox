@@ -196,7 +196,7 @@ class ShaderCache {
   void SetPrepareNativeUi(bool on) { prepare_native_ui_ = on; }
   void SetPrepareNativeEffects(bool on) { prepare_native_effects_ = on; }
   void SetPrepareNativeJudgment(bool on) { prepare_native_judgment_ = on; }
-  gpu::ShaderHandle GetJudgmentFxaaPair(uint64_t hash, const uint32_t* dwords, size_t count);
+  gpu::ShaderHandle GetJudgmentFxaaPair(uint64_t hash,const uint32_t* dwords,size_t count);
   gpu::ShaderHandle GetNativeSceneUi(const uint32_t* dwords, size_t count);
   // True when `s` is no longer pending (ready or failed) on return; waits at most budget_ms.
   bool WaitReady(const GuestShader& s, double budget_ms);
@@ -301,12 +301,11 @@ class ShaderCache {
   std::unordered_map<uint64_t, std::unique_ptr<GuestShader>> shaders_[2];  // [vertex]
   std::unordered_map<std::string, gpu::ShaderHandle> builtins_;
   std::unordered_map<uint64_t, gpu::ShaderHandle> native_hdr_shaders_;
-  std::unordered_map<uint64_t, std::unordered_map<uint8_t, std::unique_ptr<GuestShader>>>
-      native_hdr_overlays_;
+  std::unordered_map<uint64_t, std::unordered_map<uint8_t, std::unique_ptr<GuestShader>>> native_hdr_overlays_;
   bool prepare_native_ui_ = false;
   bool prepare_native_effects_ = false;
   bool prepare_native_judgment_ = false;
-  std::unordered_map<uint64_t, gpu::ShaderHandle> judgment_fxaa_pairs_;
+  std::unordered_map<uint64_t,gpu::ShaderHandle> judgment_fxaa_pairs_;
   ShaderCacheStats stats_;
   bool compact_float_constants_ = false;
   bool tex_sign_by_swizzle_ = false;  // patch 0024

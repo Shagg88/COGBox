@@ -1,9 +1,10 @@
 # Experimental native HDR options
 
-The existing Gears 2/3 HDR behavior remains the default. New renderer features require explicit launch switches:
+The existing Gears 2/3 native HDR paths remain available. Gears 3 compressed LUT sampling defaults to on and can be disabled independently; experimental transport features require explicit launch switches:
 
 | Switch | Default | Purpose |
 | --- | --- | --- |
+| `gow3_hdr_compressed_lut` | true | Gears 3 native-HDR LUT compress/sample/restore; false restores edge-gradient sampling |
 | `gowj_hdr_native` | false | Judgment native grading and post-scene HDR FXAA; exposure readback is unchanged |
 | `gow1_hdr_native` | false | Gears 1 native analytic grading and HDR motion blur |
 | `gow2_hdr_ui_automatic` | false | Additional bounded screen-space UI variants |
@@ -11,9 +12,11 @@ The existing Gears 2/3 HDR behavior remains the default. New renderer features r
 | `gowj_hdr_single_pass` | false | Paired Judgment scene/FXAA; requires Judgment native HDR |
 | `gow2_hdr_compact_targets` | false | Visible-height HDR color targets when mixed attachment dimensions are supported |
 
-`present_hdr` and the existing `gow2_hdr_native` remain prerequisites. Options are selected at launch. The improved Gears 3 LUT sampling remains enabled without a separate switch, as requested after review; Gears 2 uses analytic grading rather than a LUT.
+HDR scene images in all four game paths use the current render-target and visible-region dimensions, not a fixed 3840x2160 size. Internal rendering uses the existing supported scale/mode combinations; presentation may resample that output to a larger display. Hardware image-size limits and the effect allocation budget still apply.
 
-Compact targets query D3D12 OPTIONS19 support; Vulkan supports this layout. Every HDR draw is scissored to the common visible region. Unsupported D3D12 devices retain the matching-height attachment layout. At 3840x2160, replacing a 3840x6144 FP16 color target with a visible-height target saves 116.72 MiB of texture payload. Judgment retains two visible FP16 images for scene-to-FXAA dependencies, but no-FXAA completion swaps their handles instead of copying. An unused previous-frame encoded proxy may be evicted to preserve the effect budget and is released after successful paired FXAA, so steady paired operation does not retain that third image. These are resource payload calculations; driver VRAM usage also includes heaps, alignment and other resources.
+`present_hdr` and the existing `gow2_hdr_native` remain prerequisites. Options are selected at launch. `gow3_hdr_compressed_lut` only affects Gears 3 native HDR and is read when its scene shader is created; restart the game when comparing modes. Gears 2 uses analytic grading rather than a LUT.
+
+Compact targets query D3D12 OPTIONS19 support when compiled with verified header revision 616 or newer (Windows SDK 10.0.26100.0 headers were checked; the review build used 10.0.28000.0). Older headers conservatively retain matching-height targets without referencing OPTIONS19. Runtime query failures also retain that layout. The periodic transport-payload diagnostic requires `gow2_hdr_compact_targets`; Vulkan supports this layout. Every HDR draw is scissored to the common visible region. Unsupported D3D12 devices retain the matching-height attachment layout. At 3840x2160, replacing a 3840x6144 FP16 color target with a visible-height target saves 116.72 MiB of texture payload. Judgment retains two visible FP16 images for scene-to-FXAA dependencies, but no-FXAA completion swaps their handles instead of copying. An unused previous-frame encoded proxy may be evicted to preserve the effect budget and is released after successful paired FXAA, so steady paired operation does not retain that third image. These are resource payload calculations; driver VRAM usage also includes heaps, alignment and other resources.
 
 The effect allocation cap remains 128 MiB. Refused dimensions and resident bytes are logged once per resolution rather than silently disabling the paired path. No unsupported allocation is forced through the cap.
 
@@ -28,9 +31,7 @@ Both comparison variants explicitly opt into Judgment native HDR and automatic U
 
 Use `tools/hdr-frame-summary.py` with the frame CSV and explicit `--start-frame` / `--end-frame` markers for the warmed gameplay interval. It reports median/p95/p99 and maximum frame times, average frame-to-frame change, spikes, stalls, and renderer CPU/GPU averages. GPU averages use available positive asynchronous timestamp samples and are renderer timings, not whole-system GPU utilization. Keep menu/loading/warm-up intervals outside the selected window; do not discard stutters inside it.
 
-## Review status and measured results
-
-The review diff is assessed against upstream `dev`. Retargeting PR #326 from `main` to `dev` remains outstanding: the GitHub integration rejected the attempted update with HTTP 403. Local changes remain on the existing HDR branch and have not been committed or pushed by this review pass.
+## Validation and measured results
 
 The pending-scene ownership, paired depth/stencil, texture-pack rejection and allocation-warning changes are implemented. Depth/stencil and real texture-pack fixtures passed on D3D12 and Vulkan; the HDR/texture unit selection passed 247 assertions in 19 cases. Changed C++ ranges were formatted with clang-format while retaining comment text. Machine-specific session notes were removed from `docs/`; this document describes portable behavior.
 
@@ -48,3 +49,25 @@ These are single manual samples, not deterministic benchmark results. The candid
 The follow-up baseline log confirms both switches were disabled. FXAA shader `16CBC2E3D5BEC0A5` reported an initial pending/failed pipeline and later stale/incompatible HDR resolve input. Presentation repeatedly used the reference path. The scene allocation also changed between output-size and input-size dimensions. These observations identify HDR input tracking and resolution transitions for investigation; the log's combined rejection reason does not establish which lease or compatibility condition failed, nor does it establish the cause of object/shadow flicker. DLSS reported zero upscaled frames in that follow-up scene, so selection of DLSS alone is not evidence that its reconstruction caused the flicker.
 
 Transport texture payload decreased from approximately 243 MiB (180 MiB padded scene plus 63 MiB proxy) to 126 MiB (two visible-height images) in the paired/compact run. This confirms the allocation saving, not visual correctness or a speedup. The baseline comparison is the current review build with experimental switches disabled, not an older executable from before the review. Reusing the game's existing images to remove dedicated HDR allocations altogether has not been implemented or verified.
+
+Judgment DLSS remains selectable through COGBox, or with `gow2_upscaler=dlss` / `gow2_upscaler=off`. The tester reported flickering with DLSS selected and its disappearance with DLSS off. Those reports came from the original A/B build, before the resolution-tracking correction below. DLSS remains selectable; the affected menu was subsequently confirmed fixed. Temporary A/B arguments override launcher choices until restored with the comparison script.
+
+## Judgment DLSS resolution tracking correction
+
+DevKit captures showed a native-HDR grading target at visible 2560x1440 while FXAA sampled a 3840x2160 scaled resolve. Another captured frame used matching 3840x2160 resources. The mismatch is sufficient to reject HDR FXAA and explains the repeated reference/native presentation with DLSS selected.
+
+The renderer now switches to the output phase before Judgment's identified grading pass, including menu frames where DLSS cannot evaluate. This keeps grading, HDR, FXAA and subsequent UI at the output scale while leaving earlier scene rendering and DLSS evaluation in their existing phase. HDR resolve validation locates the exact producing target by its lease owner ID rather than selecting a twin from the current phase. Frame, memory-version, write-generation and dimension checks remain intact.
+
+The correction uses the configured scales without fixed 4K dimensions. A display larger than the internal render output is handled by the existing final presentation resampling. This does not add arbitrary internal resolutions or new DLSS ratios: the existing integer-scale modes and backend texture-size limits still apply. In particular, Quality uses the existing 2x-to-3x pair; unsupported pairs retain the existing native-mode fallback and warning. Higher display resolution alone does not increase the 128 MiB scene-effect budget.
+
+Validation: 375 assertions in 22 HDR/texture/render-target cases passed, including lease ownership through all 1x–4x target phase changes and revocation after new writes, new frames or changed memory. Judgment grading fixtures passed on D3D12 and Vulkan. The corrected executable was installed and the tester confirmed that flickering stopped in the affected scene. The follow-up log recorded 1,188 native FP16 frames with the reference count unchanged at 12 startup frames. DLSS was selected but had not evaluated in that scene; reconstruction during gameplay and a monitor-above-5K test remain unverified.
+
+## Gears 1 highlight color correction
+
+The Gears 1 candidate maps extended-grade luminance with PsychoV35, then applies a shared RGB scale to the unclipped game grade. It avoids reconstructing bright effect hue/chroma from a clipped SDR companion. The original shadow offsets, negative clamps and low-range grading remain intact; the earlier black-crush investigation did not add a global shadow lift, so there was no separate black-level correction to revert. The change is confined to Gears 1 and adds no full-frame copies.
+
+D3D12 and Vulkan authored fixtures pass for colored-highlight RGB ratios, peak fitting, original shadow floor/diffuse values, fades and invalid normalization coverage. The candidate was installed and the tester reported that muzzle-flash colors looked better.
+
+## Gears 1 aim-release transition
+
+The post-processing output-phase boundary also covers Gears 1's identified grading pass. The aim-release log showed sporadic skipped DLSS scene resolves, an input-scale 2560x1440 motion-blur viewport, a stale/incompatible HDR resolve warning and new reference presentations, while stable frames rendered post-processing at 3840x2160. Forcing the known grading/motion-blur chain to output scale addresses this mismatch without reusing previous-frame HDR or changing the low-resolution scene/DLSS input phase. The correction retains the highlight-color change and authored shadow grading. The follow-up build was installed and the tester confirmed that the aim-release dark flicker stopped. The inspected follow-up log showed DLSS Quality evaluating successfully (2560x1440 to 3840x2160, zero failed evaluations) and a stable reference-frame count in the latest logged intervals. Other reference frames occurred earlier in the session; this is not a claim that all fallback paths are eliminated.

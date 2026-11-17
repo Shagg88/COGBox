@@ -138,36 +138,27 @@ int main(int argc,char** argv) {
   if(!backend || !backend->Init(options,error)) { std::printf("FAIL backend: %s\n",error.c_str());return 2; }
   auto compiler=xenos::renderer::CreateDxcCompiler({},error);
   if(!compiler) { std::printf("FAIL compiler: %s\n",error.c_str());return 3; }
-  if (mode == "ui_cache" && argc == 4)
-    return AsyncUiCacheCheck(*backend, *compiler, argv[3]);
-  if (mode == "scene_filter_cache" && argc == 4)
-    return AsyncUiCacheCheck(*backend, *compiler, argv[3], true);
-  if (mode == "scene_pack" && argc == 4)
+  if(mode=="ui_cache" && argc==4)return AsyncUiCacheCheck(*backend,*compiler,argv[3]);
+  if(mode=="scene_filter_cache" && argc==4)return AsyncUiCacheCheck(*backend,*compiler,argv[3],true);
+  if(mode== "scene_pack" && argc == 4)
     return ScenePackInputCheck(*backend, argv[3]);
   if (mode == "paired_depth")
     return PairedDepthCheck(*backend, *compiler);
-  if (mode == "ui_direct")
-    return DirectUiAttachmentCheck(*backend, *compiler);
-  if (mode == "judgment_fxaa_bench" && argc == 5)
-    return JudgmentFxaaPairCheck(*backend, *compiler, argv[3], argv[4], true);
-  if (mode == "judgment_fxaa_pair" && argc == 5)
-    return JudgmentFxaaPairCheck(*backend, *compiler, argv[3], argv[4]);
-  if (mode == "judgment_calibration") {
-    const int result = JudgmentCheck(*backend, *compiler, false, true);
-    return result ? result : JudgmentCheck(*backend, *compiler, true, true);
+  if (mode == "ui_direct")return DirectUiAttachmentCheck(*backend,*compiler);
+  if(mode=="judgment_fxaa_bench" && argc==5)return JudgmentFxaaPairCheck(*backend,*compiler,argv[3],argv[4],true);
+  if(mode=="judgment_fxaa_pair" && argc==5)return JudgmentFxaaPairCheck(*backend,*compiler,argv[3],argv[4]);
+  if(mode=="judgment_calibration") {
+    const int result=JudgmentCheck(*backend,*compiler,false,true);
+    return result?result:JudgmentCheck(*backend,*compiler,true,true);
   }
-  if (mode == "judgment") {
-    const int result = JudgmentCheck(*backend, *compiler);
-    return result ? result : JudgmentCheck(*backend, *compiler, true);
+  if(mode=="judgment") {
+    const int result=JudgmentCheck(*backend,*compiler);
+    return result?result:JudgmentCheck(*backend,*compiler,true);
   }
-  if (mode == "scene_effects")
-    return SceneEffectCheck(*backend, *compiler);
-  if (mode == "scene_encode_bench")
-    return SceneEncodeBench(*backend, *compiler);
-  if (mode == "ui_padding_bench")
-    return UiPaddingBench(*backend, *compiler);
-  if (mode == "ui_automatic")
-    return AutomaticOverlayCheck(*backend, *compiler);
+  if(mode=="scene_effects")return SceneEffectCheck(*backend,*compiler);
+  if(mode=="scene_encode_bench")return SceneEncodeBench(*backend,*compiler);
+  if(mode=="ui_padding_bench")return UiPaddingBench(*backend,*compiler);
+  if(mode=="ui_automatic")return AutomaticOverlayCheck(*backend,*compiler);
   if(mode=="ui")return UiCompositeCheck(*backend,*compiler);
   if(mode=="modulation_values" && argc==4)return ModulationValuesCheck(*backend,*compiler,argv[3]);
   if (mode == "gears1")
@@ -246,29 +237,17 @@ int main(int argc,char** argv) {
     }
     return 0;
   }
-  if ((mode == "profile" || mode == "scene_profile" || mode == "binary_profile" ||
-       mode == "modulation_profile" || mode == "judgment_scene_mrt" ||
-       mode == "judgment_fxaa_mrt") &&
-      argc == 5) {
+  if((mode=="profile" || mode=="scene_profile" || mode=="binary_profile" || mode=="modulation_profile" || mode=="judgment_scene_mrt" || mode=="judgment_fxaa_mrt") && argc==5) {
     const auto load=[](const char* path) {std::ifstream file(path,std::ios::binary);return std::string(std::istreambuf_iterator<char>(file),{});};
     const auto vs=load(argv[3]),ps=load(argv[4]);
     gpu::GraphicsPipelineDesc p;
     const bool binary=mode=="binary_profile" || mode=="modulation_profile";
     p.vs=binary?backend->CreateShader(gpu::ShaderStage::kVertex,vs.data(),vs.size()):shader(vs.c_str(),gpu::ShaderStage::kVertex);
     p.ps=binary?backend->CreateShader(gpu::ShaderStage::kPixel,ps.data(),ps.size()):shader(ps.c_str(),gpu::ShaderStage::kPixel);
-    p.color_count =
-        (mode == "profile" || mode == "judgment_scene_mrt" || mode == "judgment_fxaa_mrt") ? 2 : 1;
-    p.depth_clip = false;
+    p.color_count=(mode=="profile" || mode=="judgment_scene_mrt" || mode=="judgment_fxaa_mrt")?2:1;p.depth_clip=false;
     for(unsigned i=0;i<p.color_count;++i) {
-      p.color_formats[i] =
-          ((mode == "judgment_scene_mrt" && i == 1) || (mode == "judgment_fxaa_mrt" && i == 0))
-              ? gpu::Format::kR8G8B8A8Unorm
-              : gpu::Format::kR16G16B16A16Float;
-      p.color_write_masks[i] = 15;
-      p.color_blend[i].enable =
-          mode != "scene_profile" && mode != "judgment_scene_mrt" && mode != "judgment_fxaa_mrt";
-      p.color_blend[i].src = gpu::BlendFactor::kSrcAlpha;
-      p.color_blend[i].dst = gpu::BlendFactor::kInvSrcAlpha;
+      p.color_formats[i]=((mode=="judgment_scene_mrt" && i==1)||(mode=="judgment_fxaa_mrt" && i==0))?gpu::Format::kR8G8B8A8Unorm:gpu::Format::kR16G16B16A16Float;p.color_write_masks[i]=15;
+      p.color_blend[i].enable=mode!="scene_profile" && mode!="judgment_scene_mrt" && mode!="judgment_fxaa_mrt";p.color_blend[i].src=gpu::BlendFactor::kSrcAlpha;p.color_blend[i].dst=gpu::BlendFactor::kInvSrcAlpha;
       if(mode=="modulation_profile") {
         p.color_blend[i].src=gpu::BlendFactor::kDestColor;p.color_blend[i].dst=gpu::BlendFactor::kZero;
         p.color_blend[i].src_alpha=gpu::BlendFactor::kZero;p.color_blend[i].dst_alpha=gpu::BlendFactor::kOne;

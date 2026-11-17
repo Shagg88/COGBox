@@ -31,6 +31,20 @@ float3 NativeGears1Grade(float3 scene,bool bounded=false) {
   float3 output=max(mixed*$C7.xyz,0.0);
   return pow(bounded?saturate(output):output,($C7.w*2.2).xxx);
 }
+// The clipped SDR companion cannot supply the hue of a bright muzzle flash.
+// Roll off luminance with PsychoV35, then apply one RGB scale to the actual
+// extended grade. Preserve the authored shadow/diffuse reference unchanged.
+float3 NativeGears1Map(float3 extendedGrade,float3 reference,float peak) {
+  reference=max(reference,0.0);
+  if(all(reference==0.0))return 0.0;
+  extendedGrade=max(extendedGrade,0.0);
+  float y=dot(extendedGrade,float3(0.2126,0.7152,0.0722));
+  float referenceY=dot(reference,float3(0.2126,0.7152,0.0722));
+  float mappedY=NativeUe3DisplayMap(y.xxx,peak,max(12.0,peak*2.0)).x;
+  float3 mapped=y>1e-8?extendedGrade*(max(mappedY,referenceY)/y):reference;
+  float weight=smoothstep(0.5,1.0,max(extendedGrade.r,max(extendedGrade.g,extendedGrade.b)));
+  return NativeFitHdr(lerp(reference,mapped,weight),peak);
+}
 )";
   for (unsigned index : {3u, 4u, 5u, 6u, 7u, 8u}) {
     const auto token = "$C" + std::to_string(index);
@@ -72,8 +86,7 @@ float3 NativeGears1Grade(float3 scene,bool bounded=false) {
       "nativeGrade=NativeGears1Grade(nativeGears1Scene)*pow(max(xe_color_exp_scale.x,0.0),2.2);\n"
       "  float nativePeak=max(asfloat(xe_sys2.x),1e-4);\n"
       "  "
-      "o.color0.rgb=NativeUe3MapExtendedGrade(nativeGrade,nativeGrade,nativeReference,nativePeak,1."
-      "0,0.75,max(12.0,nativePeak*2.0));\n");
+      "o.color0.rgb=NativeGears1Map(nativeGrade,nativeReference,nativePeak);\n");
   return std::string(kPsycho35Hlsl) + kUe3GradeHlsl + source;
 }
 }  // namespace xenos::renderer::native_hdr

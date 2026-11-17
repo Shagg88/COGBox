@@ -835,10 +835,9 @@ struct Gen {
       (void)replicate;
       Line("float4 vr = " + e + ";");
       if (a.vector_result.clamp) {
-        if (opt.native_hdr_filter && a.vector_result.write_mask == 7)
+        if(opt.native_hdr_filter && a.vector_result.write_mask==7)
           Line("vr = max(vr, 0.0); // preserve HDR RGB; alpha is unchanged");
-        else
-          Line("vr = xe_sat4(vr);");
+        else Line("vr = xe_sat4(vr);");
       }
       vr = "vr";
       if (a.vector_opcode >= AluVectorOpcode::kKillEq && a.vector_opcode <= AluVectorOpcode::kKillNe) EmitKill("vr.x != 0.0");
@@ -1542,8 +1541,8 @@ Translation TranslateToHlsl(const Program& program, const HlslOptions& options) 
         s += "  o.color0.a = uiAlpha;\n";
       } else if (options.native_hdr_modulation) {
         s += options.native_hdr_modulation_x2
-                 ? "  float3 nativeColor = pow(max(saturate(o.color0.rgb) * 2.0, 0.0), 2.2);\n"
-                 : "  float3 nativeColor = pow(saturate(o.color0.rgb), 2.2);\n";
+            ? "  float3 nativeColor = pow(max(saturate(o.color0.rgb) * 2.0, 0.0), 2.2);\n"
+            : "  float3 nativeColor = pow(saturate(o.color0.rgb), 2.2);\n";
         s += "  o.color0.a = saturate(o.color0.a);\n";
       } else {
         s += "  float3 nativeColor = pow(min(max(o.color0.rgb, 0.0), 65504.0), 2.2);\n";
@@ -1558,14 +1557,13 @@ Translation TranslateToHlsl(const Program& program, const HlslOptions& options) 
       }
       s += "  o.color0.rgb = nativeColor;\n";
     }
-    if (options.native_hdr_filter && options.native_hdr_linear) {
+    if(options.native_hdr_filter && options.native_hdr_linear) {
       s += "  o.color0.a = saturate(o.color0.a);\n";
-      if (options.native_hdr_premultiplied)
+      if(options.native_hdr_premultiplied)
         s += "  float filterAlpha = o.color0.a > 1e-6 ? o.color0.a : 1.0;\n"
              "  o.color0.rgb = min(pow(max(o.color0.rgb / filterAlpha, 0.0), 2.2) * filterAlpha, "
              "65504.0);\n";
-      else
-        s += "  o.color0.rgb = min(pow(max(o.color0.rgb, 0.0), 2.2), 65504.0);\n";
+      else s += "  o.color0.rgb = min(pow(max(o.color0.rgb, 0.0), 2.2), 65504.0);\n";
     }
     if (g.writes_depth) s += "  o.depth = xe_odepth.x;\n";
     s += "  return o;\n";

@@ -1267,11 +1267,15 @@ class D3D12Backend final : public Backend {
       error = b;
       return false;
     }
+    // Older Windows SDK headers retain the matching-size attachment layout.
+    // 616 is the oldest header revision verified here, not a runtime requirement.
+#if defined(D3D12_SDK_VERSION) && D3D12_SDK_VERSION >= 616
     D3D12_FEATURE_DATA_D3D12_OPTIONS19 mixed_outputs{};
     mixed_attachment_sizes_ =
         SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS19, &mixed_outputs,
                                                sizeof(mixed_outputs))) &&
         mixed_outputs.MismatchingOutputDimensionsSupported;
+#endif
     REXLOG_INFO("gow2_renderer: Direct3D 12 runtime: {}; Shader Model {}.{}", runtime, unsigned(sm.HighestShaderModel) >> 4,
                 unsigned(sm.HighestShaderModel) & 15u);
     {

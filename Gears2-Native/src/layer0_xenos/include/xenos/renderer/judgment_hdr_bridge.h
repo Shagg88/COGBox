@@ -7,22 +7,17 @@
 #include <xenos/renderer/ue3_grade_bridge.h>
 
 namespace xenos::renderer::native_hdr {
-inline std::string JudgmentSceneSource(std::string source, uint32_t low, uint32_t high,
-                                       bool alternate = false, bool optimized = true,
-                                       bool calibrated = true, bool compressed_lut = true) {
-  const auto constant = [=](uint32_t index) {
-    if (low != high && index >= high)
-      index = low + index - high;
-    return "xe_c[" + std::to_string(index) + "]";
+inline std::string JudgmentSceneSource(std::string source,uint32_t low,uint32_t high,bool alternate=false,bool optimized=true,bool calibrated=true,bool compressed_lut=true) {
+  const auto constant=[=](uint32_t index) {
+    if(low!=high && index>=high)index=low+index-high;
+    return "xe_c["+std::to_string(index)+"]";
   };
-  const auto replace = [&](const std::string& from, const std::string& to) {
-    const auto at = source.find(from);
-    if (at == std::string::npos || source.find(from, at + from.size()) != std::string::npos)
-      return false;
-    source.replace(at, from.size(), to);
-    return true;
+  const auto replace=[&](const std::string& from,const std::string& to) {
+    const auto at=source.find(from);
+    if(at==std::string::npos || source.find(from,at+from.size())!=std::string::npos)return false;
+    source.replace(at,from.size(),to);return true;
   };
-  std::string grade = R"(
+  std::string grade=R"(
 // Original exposed scene -> exponential/power neutral curve. The vanilla
 // program below retains packed-light decoding, DOF, bloom and eye adaptation.
 float3 NativeJudgmentNeutral(float3 exposed) {
@@ -122,83 +117,62 @@ float3 NativeJudgmentHdrBoost(float3 color,float strength) {
   return color*(1.0+(boosted/y-1.0)*max(strength,0.0));
 }
 )";
-  const std::string lutToken = "$LUT_BRIDGE";
-  const auto lutAt = grade.find(lutToken);
-  if (lutAt == std::string::npos)
-    return {};
-  grade.replace(lutAt, lutToken.size(),
-                compressed_lut ? "NativeJudgmentCompressedLut" : "NativeJudgmentGradientLut");
+  const std::string lutToken="$LUT_BRIDGE";
+  const auto lutAt=grade.find(lutToken);
+  if(lutAt==std::string::npos)return {};
+  grade.replace(lutAt,lutToken.size(),compressed_lut?"NativeJudgmentCompressedLut":"NativeJudgmentGradientLut");
   // The second captured permutation packs the same neutral/LUT parameters
   // differently, and folds exposure into c250.z before the first ceiling.
-  if (alternate) {
-    const auto parameter = [&](const std::string& from, const std::string& to) {
-      size_t at = 0;
-      while ((at = grade.find(from, at)) != std::string::npos) {
-        grade.replace(at, from.size(), to);
-        at += to.size();
+  if(alternate) {
+    const auto parameter=[&](const std::string& from,const std::string& to) {
+      size_t at=0;while((at=grade.find(from,at))!=std::string::npos) {
+        grade.replace(at,from.size(),to);at+=to.size();
       }
     };
-    parameter("abs(q*$C250.y)", "abs(q*$C252.w)");
-    parameter("q*$C251.y", "q*$C251.w");
-    parameter("+$C251.y*0.6931471805599453", "+$C251.w*0.6931471805599453");
-    parameter("))*$C250.w", "))*$C251.x");
-    parameter("encoded*$C250.z+$C252.z", "encoded*$C250.y+$C251.y");
-    parameter("*$C3.w+$C251.x", "*$C3.w+$C252.y");
+    parameter("abs(q*$C250.y)","abs(q*$C252.w)");
+    parameter("q*$C251.y","q*$C251.w");
+    parameter("+$C251.y*0.6931471805599453","+$C251.w*0.6931471805599453");
+    parameter("))*$C250.w","))*$C251.x");
+    parameter("encoded*$C250.z+$C252.z","encoded*$C250.y+$C251.y");
+    parameter("*$C3.w+$C251.x","*$C3.w+$C252.y");
   }
-  for (unsigned index : {0u, 3u, 250u, 251u, 252u}) {
-    const auto token = "$C" + std::to_string(index);
-    size_t at = 0;
-    while ((at = grade.find(token, at)) != std::string::npos) {
-      const auto value = constant(index);
-      grade.replace(at, token.size(), value);
-      at += value.size();
+  for(unsigned index:{0u,3u,250u,251u,252u}) {
+    const auto token="$C"+std::to_string(index);size_t at=0;
+    while((at=grade.find(token,at))!=std::string::npos) {
+      const auto value=constant(index);grade.replace(at,token.size(),value);at+=value.size();
     }
   }
-  if (!replace("XePsOut main(XePsIn xe_in) {", grade + R"(
+  if(!replace("XePsOut main(XePsIn xe_in) {",grade+R"(
 XePsOut main(XePsIn xe_in) {
   float3 nativeScene=0.0;
   float3 nativeEncodedGrade=0.0;
   float nativeGrain=0.0;
-)"))
-    return {};
-  const std::string capture =
-      alternate ? "float4 s0 = r[1].xxzy;\n        float4 s1 = " + constant(250) + ".zzzz;"
-                : "float4 s0 = r[1].wwww;\n        float4 s1 = r[1].xxzy;";
-  const std::string scene = alternate ? "r[1].xzy * " + constant(250) + ".z" : "r[1].xzy * r[1].w";
-  const std::string grain = alternate ? "r[3].x + " + constant(252) + ".x" : "r[3].y";
-  if (!replace(capture, "nativeScene = max(" + scene + ", 0.0);\n        nativeGrain = " + grain +
-                            ";\n        " + capture))
-    return {};
-  const std::string reference =
-      "float4 s0 = r[1].xyzz;\n        float4 s1 = " + constant(0) + ".xxxx;";
-  if (!replace(reference, "nativeEncodedGrade = max(r[1].xyz, 0.0);\n        " + reference))
-    return {};
+)"))return {};
+  const std::string capture=alternate ? "float4 s0 = r[1].xxzy;\n        float4 s1 = "+constant(250)+".zzzz;" :
+      "float4 s0 = r[1].wwww;\n        float4 s1 = r[1].xxzy;";
+  const std::string scene=alternate ? "r[1].xzy * "+constant(250)+".z" : "r[1].xzy * r[1].w";
+  const std::string grain=alternate ? "r[3].x + "+constant(252)+".x" : "r[3].y";
+  if(!replace(capture,"nativeScene = max("+scene+", 0.0);\n        nativeGrain = "+grain+";\n        "+capture))return {};
+  const std::string reference="float4 s0 = r[1].xyzz;\n        float4 s1 = "+constant(0)+".xxxx;";
+  if(!replace(reference,"nativeEncodedGrade = max(r[1].xyz, 0.0);\n        "+reference))return {};
   // Output 0 remains HDR for compatibility with the replay path. Output 1
   // retains the exact original encoded result for the paired single draw.
-  if (!replace("  o.color1 = xe_oc[1] * xe_color_exp_scale.y;", "  o.color1 = o.color0;"))
-    return {};
-  const std::string begin = "  // Linear-light composition in scene reference-white units.\n";
-  const std::string end = "  o.color0.rgb = nativeColor;";
-  const auto start = source.find(begin), finish = source.find(end);
-  if (start == std::string::npos || finish == std::string::npos || finish < start ||
-      source.find(begin, start + begin.size()) != std::string::npos ||
-      source.find(end, finish + end.size()) != std::string::npos)
-    return {};
-  source.replace(
-      start, finish + end.size() - start,
+  if(!replace("  o.color1 = xe_oc[1] * xe_color_exp_scale.y;",
+      "  o.color1 = o.color0;"))return {};
+  const std::string begin="  // Linear-light composition in scene reference-white units.\n";
+  const std::string end="  o.color0.rgb = nativeColor;";
+  const auto start=source.find(begin),finish=source.find(end);
+  if(start==std::string::npos || finish==std::string::npos || finish<start ||
+     source.find(begin,start+begin.size())!=std::string::npos || source.find(end,finish+end.size())!=std::string::npos)return {};
+  source.replace(start,finish+end.size()-start,
       "  // Judgment's extended curve / actual LUT, then the shared primary display mapper.\n"
       "  float nativePeak=max(asfloat(xe_sys2.x),1e-4);\n"
       "  float nativeHighlights=xe_sys2.z!=0u?asfloat(xe_sys2.z)-1.0:1.0;\n"
       "  float3 nativeVanillaGrade=pow(max(nativeEncodedGrade,0.0),2.2);\n"
-      "  float nativeFade=pow(max(" +
-          constant(0) + ".x*xe_color_exp_scale.x,0.0),2.2);\n" +
-          std::string(
-              optimized
-                  ? std::string("  [branch] if(all(nativeVanillaGrade==0.0) || nativeFade==0.0) "
-                                "o.color0.rgb=0.0;\n") +
-                        std::string(
-                            calibrated
-                                ? "  else "
+      "  float nativeFade=pow(max("+constant(0)+".x*xe_color_exp_scale.x,0.0),2.2);\n"
+      + std::string(optimized ? std::string("  [branch] if(all(nativeVanillaGrade==0.0) || nativeFade==0.0) "
+                                "o.color0.rgb=0.0;\n")
+      + std::string(calibrated ? "  else "
                                   "if(max(nativeScene.r,max(nativeScene.g,nativeScene.b))<=0.18)\n"
                                 : "  else "
                                   "if(max(nativeScene.r,max(nativeScene.g,nativeScene.b))<=0.5)"
@@ -206,23 +180,20 @@ XePsOut main(XePsIn xe_in) {
                         "    "
                         "o.color0.rgb=NativeFitHdr(nativeVanillaGrade*max(nativeFade,1.0),"
                         "nativePeak)*min(nativeFade,1.0);\n"
-                        "  else {\n"
-                  : "  {\n") +
-          "    float nativeNeutralBrightness;\n"
+                        "  else {\n" : "  {\n") +
+      "    float nativeNeutralBrightness;\n"
           "    float3 "
           "nativeExtendedGrade=NativeJudgmentHdrBoost(NativeJudgmentExtendedGrade(nativeScene,"
           "nativeGrain,nativeNeutralBrightness),nativeHighlights);\n"
           // Judgment captures exposed lighting. Blend on its continued neutral
-          // grade rather than applying Gears 3's raw scene thresholds to it.
-          "    o.color0.rgb=NativeUe3MapExtendedGrade(" +
-          std::string(calibrated ? "nativeNeutralBrightness.xxx" : "nativeScene") +
+      // grade rather than applying Gears 3's raw scene thresholds to it.
+      "    o.color0.rgb=NativeUe3MapExtendedGrade("+std::string(calibrated?"nativeNeutralBrightness.xxx":"nativeScene")+
           ",nativeExtendedGrade,nativeVanillaGrade,nativePeak,nativeFade,.75,max(12.0,nativePeak*2."
           "0));\n"
           "  }\n");
   // Match the original UNORM target's alpha precision before FP16 storage.
   // The later FXAA pass must use SDR luma, never recomputed HDR luminance.
-  if (!replace("  return o;", "  o.color0.a=round(saturate(o.color0.a)*255.0)/255.0;\n  return o;"))
-    return {};
-  return std::string(kPsycho35Hlsl) + kUe3GradeHlsl + source;
+  if(!replace("  return o;", "  o.color0.a=round(saturate(o.color0.a)*255.0)/255.0;\n  return o;"))return {};
+  return std::string(kPsycho35Hlsl)+kUe3GradeHlsl+source;
 }
-}  // namespace xenos::renderer::native_hdr
+} // namespace xenos::renderer::native_hdr

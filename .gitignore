@@ -6,3 +6,4 @@
 /_backups/
 build/
 Testing/
+__pycache__/

@@ -68,41 +68,25 @@ static int ToneExtensionCheck(gpu::Backend& backend, Pipeline pipeline,
   }
   // A wide plateau defeats the old local gradient search; range restoration
   // must still separate upstream bright inputs after sampling the bounded LUT.
-  for (unsigned z = 0; z < 16; ++z)
-    for (unsigned y = 0; y < 16; ++y)
-      for (unsigned x = 0; x < 16; ++x)
-        for (unsigned c = 0; c < 3; ++c)
-          chart[4 * (x + 16 * (y + 16 * z)) + c] = ToHalf(float(std::min(y, 3u)) / 15.f);
-  backend.UploadTexture(lut, 0, 0, chart.data(), 16 * 8, 16, 16);
-  result = dispatch(11);
-  if (result.empty())
-    return 60;
-  if (Half(result[4 * 6 + 1]) <= Half(result[4 * 6]) * 4 ||
-      Half(result[4 * 6 + 1]) <= Half(result[4 * 5 + 1])) {
-    std::puts("FAIL compressed LUT lost range on wide plateau");
-    return 67;
+  for(unsigned z=0;z<16;++z)for(unsigned y=0;y<16;++y)for(unsigned x=0;x<16;++x)
+    for(unsigned c=0;c<3;++c)chart[4*(x+16*(y+16*z))+c]=ToHalf(float(std::min(y,3u))/15.f);
+  backend.UploadTexture(lut,0,0,chart.data(),16*8,16,16);
+  result=dispatch(11);if(result.empty())return 60;
+  if(Half(result[4*6+1])<=Half(result[4*6])*4 || Half(result[4*6+1])<=Half(result[4*5+1])) {
+    std::puts("FAIL compressed LUT lost range on wide plateau");return 67;
   }
-  std::printf("PASS flat-edge LUT at input 64: gradient %g, restored %g\n", Half(result[4 * 6]),
-              Half(result[4 * 6 + 1]));
+  std::printf("PASS flat-edge LUT at input 64: gradient %g, restored %g\n",Half(result[4*6]),Half(result[4*6+1]));
   // Black authored grades cannot acquire scene emission during restoration.
-  for (auto& value : chart)
-    value = 0;
+  for(auto& value:chart)value=0;
   backend.UploadTexture(lut,0,0,chart.data(),16*8,16,16);
   result=dispatch(1);if(result.empty())return 60;
-  for (unsigned i = 0; i < count; ++i)
-    for (unsigned c = 0; c < 3; ++c)
-      if (Half(result[4 * i + c]) != 0) {
-        std::puts("FAIL black LUT acquired emission");
-        return 68;
-      }
+  for(unsigned i=0;i<count;++i)for(unsigned c=0;c<3;++c)if(Half(result[4*i+c])!=0) {
+    std::puts("FAIL black LUT acquired emission");return 68;
+  }
   backend.UploadTexture(lut,0,0,originalLut.data(),16*8,16,16);
-  result = dispatch(12);
-  if (result.empty())
-    return 60;
-  if (std::abs(Half(result[0]) - Half(result[1])) > .02f ||
-      std::abs(Half(result[2]) - .5f) > .003f) {
-    std::puts("FAIL compressed LUT knee continuity");
-    return 69;
+  result=dispatch(12);if(result.empty())return 60;
+  if(std::abs(Half(result[0])-Half(result[1]))>.02f || std::abs(Half(result[2])-.5f)>.003f) {
+    std::puts("FAIL compressed LUT knee continuity");return 69;
   }
   std::puts(
       "PASS curve/LUT extension: analytic tangent, linear-unit identity, boundary continuity, "

@@ -114,8 +114,8 @@ XePsOut main(XePsIn xe_in) {
         backend.ReleaseReadback(rb);
         return result;
       };
-      const auto bounded = read(2, 1, 20), sdr = read(3, 1, 20);
-      if (bounded.empty() || sdr.empty())
+      const auto bounded = read(2, 1, 20), sdr = read(3, 1, 20), extended = read(1, 1, 20);
+      if (bounded.empty() || sdr.empty() || extended.empty())
         return 154;
       for (unsigned i = 0; i < count; ++i)
         for (unsigned c = 0; c < 3; ++c)
@@ -145,6 +145,23 @@ XePsOut main(XePsIn xe_in) {
               }
               if (i == 27 && value != 0)
                 return 158;
+            }
+          // Colored highlights retain the unclipped grade's RGB ratios even
+          // when the SDR companion has clipped channels and the peak fit runs.
+          if (fade == 1 && peak > 1)
+            for (unsigned i = 28; i < count; ++i) {
+              float maximum = 0, mappedMaximum = 0;
+              for (unsigned c = 0; c < 3; ++c) {
+                maximum = std::max(maximum, Half(extended[4 * i + c]));
+                mappedMaximum = std::max(mappedMaximum, Half(result[4 * i + c]));
+              }
+              if (maximum < 1.01f || mappedMaximum <= 0) continue;
+              for (unsigned c = 0; c < 3; ++c)
+                if (std::abs(Half(result[4 * i + c]) / mappedMaximum -
+                             Half(extended[4 * i + c]) / maximum) > .004f) {
+                  std::printf("FAIL Gears 1 highlight hue pixel %u channel %u\n", i, c);
+                  return 161;
+                }
             }
           if (peak > 19 && fade == 1 && Half(result[4 * 25 + 1]) <= 1.f)
             return 159;
