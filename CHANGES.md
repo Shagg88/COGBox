@@ -1,5 +1,39 @@
 # COGBox changes
 
+## 0.6.5
+
+- **Vulkan starts about 3x faster** (Gears 3: shader warm-up 29.7 s -> 9.6 s, close to DirectX 12's 8.4 s): converted
+  shaders are now handed to the driver as soon as each is ready, instead of the whole 1.2 GB being held in memory until
+  the end; the PC was left mostly waiting on memory. Vulkan also keeps converted shaders between starts by default. The
+  "Vulkan is slow to start" known issue is gone.
+- **Gears 1: 16:10** (Steam Deck, 16:10 laptops): the Aspect ratio setting now covers Gears 1, and the picture fills the
+  screen in gameplay instead of keeping 16:9 bars. All four games: Aspect ratio 16:10, and Auto picks it on a 16:10 screen.
+- **Stick dead zones** (Controls tab): separate Left stick and Right stick dead zone sliders (0-50 %), as in popular
+  emulators - a round dead zone in every direction, with the stick still reaching full at its edge. The old dead zone
+  only worked to the right and up, and was about twice as big as it said.
+- **Cheats reworked** (GitHub #342, #359):
+  - **Always on, in the launcher:** God mode, Game speed (slow motion), All weapons and ammo, Hide the HUD.
+  - **Cheat keys** (Cheat keys option): F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show
+    the HUD. God mode, slow motion and all weapons are no longer keys.
+  - **A small popup** shows what a cheat key did (God mode ON / OFF, Freeze the world ON, ...) or why it can't run.
+  - **Gears 2:** cheats now work when the campaign is started from the menus ("not recognised" in 0.6.3).
+- **Gears 3 Horde bots get their own characters** (Discord): bots added with the Horde-bots button were all Marcus,
+  whatever their name. They now come back as their own character from the next wave (their first life is still Marcus).
+- **Open matches: DLC light** - a dot next to each match: green when you have the host's map (base game or your
+  installed DLC), red when you don't, grey while the host hasn't picked one. Gears 3 and Judgment; needs the updated
+  online server.
+- **Recent players** (GitHub #353): the tags of players you just played with, with ADD, in the Social tab and the in-game
+  Social page. Needs the updated online server.
+- **HDR for Judgment and Gears 1** (PR #351 by legoliamneeson), more SDR-fallback fixes and a Gears 3 LUT option; all new
+  options off by default.
+- **Each game has its own icon** (GitHub #355).
+- **Scene resolution note** (GitHub #345): when an upscaler can't shrink the scene at your render resolution (e.g.
+  DLSS Performance at 4K), the setting now says it only anti-aliases.
+
+### Fixes
+- Kernel fixes from the Xenia Canary / Edge comparison (timers, semaphores, a read/write lock, XMA): none of our four games
+  was seen to use the changed paths, so no change is expected in play.
+
 ## 0.6.4
 
 - **Built for AVX2 CPUs only** (all four games): the game code now uses the AVX2 / FMA / BMI2 instructions of Intel Core
