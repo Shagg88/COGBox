@@ -1429,6 +1429,13 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     uint32_t spv_flags = 0;  // 0.6.2: bit 2 = SPIR-V still to be made (async), bit 0 precise, bit 1 warm
   };
   std::vector<Made> made(dxbc_path ? items.size() : 0);
+  // 0.6.5 (job 1975, Vulkan 4x slower): with the SPIR-V store every result (1.2 GB of SPIR-V for Gears 3) was held until
+  // all workers finished; the PC sat 29% busy, the workers' kernel time doubled and their DXBC time grew 3.5x while the
+  // same work without SPIR-V (D3D12, or async) took 8.4 s. Now this thread takes each result into the cache, in file
+  // order, as soon as it is ready (the driver's module is made and the SPIR-V freed at once) while the workers go on.
+  std::unique_ptr<std::atomic<uint8_t>[]> ready(dxbc_path ? new std::atomic<uint8_t>[items.size()]() : nullptr);
+  std::vector<uint8_t> adopted(dxbc_path ? items.size() : 0, 0);
+  double stream_make_ms = 0.0;
   const auto t2 = std::chrono::steady_clock::now();
   if (dxbc_path) {
     const uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
@@ -1451,6 +1458,10 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       t_warm_split = true;
       for (size_t i; (i = next.fetch_add(1)) < items.size();) {
         const Item& it = items[i];
+        struct Done {   // every path marks the item ready for the adopting thread
+          std::atomic<uint8_t>& r;
+          ~Done() { r.store(1, std::memory_order_release); r.notify_one(); }
+        } done{ready[i]};
         if (it.dwords.empty()) continue;
         if (!HlslOverride(it.hash, it.is_vertex).empty()) continue;  // built on first use, from its replacement
         if (!it.is_vertex && PcssOn() && PcssShader(it.hash)) continue;  // built on first use, with the PCSS patch
@@ -1476,8 +1487,25 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       g_warm_worker_kernel += kern1 - kern0;
     };
     std::vector<std::thread> threads;
-    for (uint32_t i = 1; i < n; ++i) threads.emplace_back(worker);
-    worker();
+    for (uint32_t i = 0; i < n; ++i) threads.emplace_back(worker);
+    {   // this thread: adopt in file order as results arrive (only the DXBC results; the rest after the join, as before)
+      const auto tm0 = std::chrono::steady_clock::now();
+      for (size_t i = 0; i < items.size(); ++i) {
+        ready[i].wait(0, std::memory_order_acquire);
+        Item& it = items[i];
+        if (it.dwords.empty() || !made[i].s || !made[i].dt.ok || shaders_[it.is_vertex ? 1 : 0].count(it.hash)) continue;
+        ++stats_.lookups;
+        ++stats_.translated;
+        stats_.translate_ms += made[i].ms;
+        const GuestShader& gs = AdoptDxbc(it.hash, std::move(made[i].s), made[i].dt.bytecode, made[i].dt.meta,
+                                          (made[i].spv_flags & 4u) != 0, made[i].spv_flags & 3u);
+        if (gs.state == ShaderState::kFailed) ++r.failed;
+        if (gs.state == ShaderState::kPending) ++r.queued;
+        made[i] = Made{};
+        adopted[i] = 1;
+      }
+      stream_make_ms = MsSince(tm0);
+    }
     for (auto& t : threads) t.join();
     t_warm_split = false;
     {
@@ -1531,7 +1559,9 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kFilterLinear,true);
       GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kFilterPremultiplied,true);
     }
-    if (dxbc_path && made[i].s && made[i].dt.ok && !shaders_[it.is_vertex ? 1 : 0].count(it.hash)) {
+    if (dxbc_path && adopted[i]) {
+      // taken while the workers ran (above)
+    } else if (dxbc_path && made[i].s && made[i].dt.ok && !shaders_[it.is_vertex ? 1 : 0].count(it.hash)) {
       ++stats_.lookups;
       ++stats_.translated;
       stats_.translate_ms += made[i].ms;
@@ -1549,7 +1579,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     }
     std::vector<uint32_t>().swap(it.dwords);
   }
-  r.make_ms = MsSince(t3);
+  r.make_ms = MsSince(t3) + stream_make_ms;
   r.ms = MsSince(t0);
   return r;
 }
