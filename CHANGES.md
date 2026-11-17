@@ -2,10 +2,12 @@
 
 ## 0.6.5
 
-- **Vulkan starts about 3x faster** (Gears 3: shader warm-up 29.7 s -> 9.6 s, close to DirectX 12's 8.4 s): converted
-  shaders are now handed to the driver as soon as each is ready, instead of the whole 1.2 GB being held in memory until
-  the end; the PC was left mostly waiting on memory. Vulkan also keeps converted shaders between starts by default, and
-  the async shader mode no longer competes with the start-up work.
+- **Much faster start-up: shader warm-up about 9x faster** (Gears 3 on Vulkan: 8.9 s -> 1.0 s; 29.7 s in 0.6.4). Our
+  shader translator re-copied each shader it was writing for every instruction, and on Windows each copy was a new
+  memory request - with 14 threads at once the PC spent most of the warm-up waiting on memory. It now writes straight
+  through and does about 60% less work, with exactly the same shaders out. DirectX 12 uses the same translator.
+  Vulkan also hands each converted shader to the driver as soon as it is ready, keeps converted shaders between starts by
+  default, and the async shader mode no longer competes with the start-up work.
 - **Gears 1: 16:10** (Steam Deck, 16:10 laptops): the Aspect ratio setting now covers Gears 1, and the picture fills the
   screen in gameplay instead of keeping 16:9 bars. All four games: Aspect ratio 16:10, and Auto picks it on a 16:10 screen.
 - **Stick dead zones** (Controls tab): separate Left stick and Right stick dead zone sliders (0-50 %), as in popular
@@ -31,7 +33,8 @@
 - **HDR for Judgment and Gears 1** (PR #351 by legoliamneeson - thank you), more SDR-fallback fixes, and improved
   sampling of Gears 3's colour grading in HDR (Improved HDR LUT sampling, on by default; turn it off for the previous
   look).
-- **Each game has its own icon** (GitHub #355).
+- **Each game has its own icon in the taskbar and Alt+Tab** (GitHub #355): the game's own title picture, read from your
+  game files as it starts (nothing extra is shipped).
 - **Scene resolution note** (GitHub #345): when an upscaler can't shrink the scene at your render resolution (e.g.
   DLSS Performance at 4K), a note under the setting now says it will only anti-alias (no extra frames) and what to pick
   instead.
