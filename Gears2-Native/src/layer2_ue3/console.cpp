@@ -1,6 +1,9 @@
 // Layer 2 (Unreal Engine 3): engine console commands from the PC side (ue3/console.h, notes/25). Shared: Gears 3 builds
 // this file from here (GN_LAYER0_HOME), Gears 2 for --gow2_cheats (GitHub #264), Judgment for --gowj_cheats, Gears 1 for --gow1_cheats. Our code (MIT).
 #include <ue3/console.h>
+#include <ue3/auto_cheats.h>   // GitHub #359: the cheat key notice reads the cheats' state back
+
+#include <xenos/cheat_popup.h>  // GitHub #359
 
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
@@ -12,6 +15,7 @@
 #include <chrono>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -39,7 +43,7 @@ REXCVAR_DEFINE_STRING(ue3_exec, "", GN_UE3_CONSOLE_GROUP,
                       "ue3_exec God)");
 REXCVAR_DEFINE_STRING(ue3_exec_at, "", GN_UE3_CONSOLE_GROUP,
                       "Scripted console commands, '<game tick>:<command>,...' or '<seconds>s:<command>,...' counted from "
-                      "the first engine tick (tests)");
+                      "the first engine tick (tests); '@F9' presses that cheat key (GitHub #359)");
 // GitHub #342 (next update): the cheats the player picks in the launcher, simply on - no keys. Read by ue3/auto_cheats.h
 // (each game's cheats.cpp), which applies them whenever a player (or a new level's player) exists, never in Versus.
 REXCVAR_DEFINE_BOOL(ue3_cheat_god, false, GN_UE3_CONSOLE_GROUP,
@@ -55,7 +59,14 @@ REXCVAR_DEFINE_BOOL(ue3_cheat_hide_hud, false, GN_UE3_CONSOLE_GROUP,
 
 namespace {
 std::mutex g_mutex;
-std::deque<std::string> g_queue;
+// GitHub #359: `key` is the cheat key that queued the command (empty: --ue3_exec, scripted, the launcher) - only those get
+// the on-screen notice.
+struct Queued {
+  std::string command, key;
+};
+std::deque<Queued> g_queue;
+// GitHub #359 (tests): each cheat key's press, by key name, so --ue3_exec_at="30s:@F9" presses F9 as the player would.
+std::map<std::string, std::function<void()>> g_key_press;
 Ue3ConsoleTarget g_target;
 std::atomic<bool> g_have_target{false};
 std::thread::id g_game_thread;
@@ -168,10 +179,27 @@ void Ue3ConsoleSetTarget(const Ue3ConsoleTarget& target) {
   }
 }
 
-void Ue3ConsoleQueue(const std::string& command) {
+namespace {
+void QueueFrom(const std::string& command, const std::string& key) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  g_queue.push_back(command);
+  g_queue.push_back({command, key});
 }
+
+// GitHub #359: the notice for a cheat key's command, from what the command did (outcome: 0 done, 1 not recognised, 2
+// refused) and the cheat's state read back now (ue3/auto_cheats.h DescribeKey). One log line per notice, also with the
+// notices turned off, so a test can check every key.
+void NoteKey(const std::string& key, const std::string& command, int outcome) {
+  const ue3::cheats::KeyNotice n = ue3::cheats::DescribeKey(command, outcome);
+  const std::string shown = n.state.empty() ? n.label : n.tone == 3 ? n.label + ": " + n.state : n.label + " " + n.state;
+  REXLOG_INFO("cheat_popup: {} {} {} -> {} (state read: {}){}", GN_UE3_CONSOLE_GROUP, key, command, shown, n.read,
+              REXCVAR_GET(cogbox_cheat_popups) ? "" : " [popups off]");
+  static constexpr XenosCheatTone kTones[] = {XenosCheatTone::On, XenosCheatTone::Off, XenosCheatTone::Value,
+                                              XenosCheatTone::Refused};
+  XenosCheatPopupPush(n.label, n.state, kTones[n.tone < 0 || n.tone > 3 ? 2 : n.tone], XenosCheatIcon(n.icon));
+}
+}  // namespace
+
+void Ue3ConsoleQueue(const std::string& command) { QueueFrom(command, std::string()); }
 
 void Ue3ConsoleInstallHotkeys(const std::string& defaults) {
   std::string spec = REXCVAR_GET(ue3_hotkeys);
@@ -189,12 +217,20 @@ void Ue3ConsoleInstallHotkeys(const std::string& defaults) {
     }
     auto next = std::make_shared<size_t>(0);
     const std::string desc = "Engine command: " + item.substr(eq + 1);
-    rex::ui::RegisterBind("bind_ue3_" + std::to_string(++n), key, desc, [commands, next] {
-      Ue3ConsoleQueue((*commands)[*next]);
+    auto press = [commands, next, key] {
+      QueueFrom((*commands)[*next], key);   // GitHub #359: from a key - it gets the notice
       *next = (*next + 1) % commands->size();
-    });
+    };
+    {
+      std::lock_guard<std::mutex> lock(g_mutex);
+      g_key_press[key] = press;
+    }
+    rex::ui::RegisterBind("bind_ue3_" + std::to_string(++n), key, desc, press);
     REXLOG_INFO("ue3_hotkeys: {} -> {}", key, item.substr(eq + 1));
   }
+  // GitHub #359: the notice reads the cheats' state through the engine's classes - look them up now, so the first key
+  // press already finds them (each game configures ue3/auto_cheats.h before installing its keys)
+  if (n) ue3::cheats::Prepare();
 }
 
 void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
@@ -221,11 +257,24 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
     g_scripted_time.erase(g_scripted_time.begin());
   }
   for (;;) {
-    std::string command;
+    std::string command, key;
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       if (g_queue.empty()) return;
-      command = g_queue.front();
+      command = g_queue.front().command;
+      key = g_queue.front().key;
+    }
+    if (command.size() > 1 && command[0] == '@') {   // GitHub #359 (tests): "@F9" = a press of the cheat key F9
+      std::function<void()> press;
+      {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_queue.pop_front();
+        const auto it = g_key_press.find(command.substr(1));
+        if (it != g_key_press.end()) press = it->second;
+      }
+      if (press) press();   // queues that key's next command, run below in this same loop
+      else REXLOG_WARN("ue3_console: '{}': no such cheat key", command);
+      continue;
     }
     bool handled = false;
     // 0.6.3: cheats are refused in Versus matches (g_target.gate = ue3/match_guard.h, asked for every command at the moment
@@ -239,6 +288,7 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
           g_queue.pop_front();
         }
         REXLOG_DEBUG("ue3_console: tick {} ({:.1f} s): '{}' refused", g_ticks, secs, command);
+        if (!key.empty()) NoteKey(key, command, 2);   // GitHub #359: "Cheats are off in Versus"
         continue;
       }
     }
@@ -255,5 +305,6 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
     }
     REXLOG_INFO("ue3_console: tick {} ({:.1f} s): '{}' {}", g_ticks, secs, command,
                 handled ? "done" : "not recognised by the engine");
+    if (!key.empty()) NoteKey(key, command, handled ? 0 : 1);   // GitHub #359
   }
 }

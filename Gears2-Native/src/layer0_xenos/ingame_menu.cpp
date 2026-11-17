@@ -26,6 +26,7 @@
 #include <xenos/social_ingame.h>
 #include <xenos/social_page.h>
 #include <xenos/social_popup.h>
+#include <xenos/cheat_popup.h>   // GitHub #359
 #include <rex/kernel/xam/net/social_ui.h>   // social step 5: the game's own Invite button   // F-8: XenosAchievementSettingsMutex   // --cogbox_ui_lang: XenosTr
 #include <rex/cvar.h>
 #include <rex/filesystem.h>   // 0.4.9: rex::path_to_utf8
@@ -1480,6 +1481,7 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDraw
     else if (!g_open.load()) OpenNow(MenuPage::kAchievements);
   });
   XenosInstallSocialPopup(drawer, window);   // social step 5
+  XenosInstallCheatPopup(drawer, window);    // GitHub #359: the cheat key notice
   // Social step 5: F8 opens the menu on its Social page (and closes it again), when the game runs online.
   rex::kernel::xam::net::SetFriendsUiHandler([] { OpenSocialOnUIThread(); });   // the game's own Invite button
   rex::ui::RegisterBind("bind_cogbox_social", "F8", "COGBox social (friends, invites)", [] { ToggleSocial(); });
@@ -1504,6 +1506,7 @@ void XenosShutdownInGameMenu() {
   g_stop.store(true);
   if (g_poller.joinable()) g_poller.join();
   XenosShutdownSocialPopup();   // social step 5 (after the pad thread that feeds it)
+  XenosShutdownCheatPopup();    // GitHub #359
   g_menu.reset();
   if (g_open.load()) RestoreMouseState();   // PR #134
   g_unblock_pending.store(false);

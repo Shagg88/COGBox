@@ -42,6 +42,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -85,7 +87,8 @@ struct State {
   int off_game = -1, off_td = -1, off_netmode = -1, off_numplayers = -1, off_travelling = -1, off_speed = -1, off_inv = -1;
   int off_inf = -1, off_cine = -1, off_players_only = -1, off_po_pending = -1;
   uint32_t mask_god = 0, mask_show = 0, mask_inf = 0, mask_cine = 0, mask_players_only = 0, mask_po_pending = 0, infantry = 0,
-           pc_class = 0;
+           pc_class = 0, debug_cam = 0;
+  const char* unavailable = nullptr;            // GitHub #359: why the game knows no cheat command (Gears 3 TU6), or none
   // game thread only
   PlayerState player[kMaxPlayers];
   uint32_t speed_world = 0, remote_world = 0, nomgr_logged = 0;
@@ -168,6 +171,7 @@ inline void Resolve() {
     s.off_inv = obj::PropertyOffset(pawn, "InvManager");
     if (inv) s.off_inf = obj::PropertyOffset(inv, "bInfiniteAmmo"), s.mask_inf = obj::BoolMask(inv, "bInfiniteAmmo");
     s.infantry = infantry;
+    s.debug_cam = obj::FindClass("DebugCameraController");   // GitHub #359: F9's free camera on (0: not in this game)
     if (s.off_actor < 0 || s.off_world < 0 || s.off_pawn < 0 || s.off_game < 0) continue;
     if (!s.mask_god) s.off_god = -1;
     if (!s.mask_show) s.off_show = -1;
@@ -284,6 +288,118 @@ inline void SetKeysOn(bool on) { detail::S().keys = on; }
 // Gears 2 with the cheat keys: start the lookup now, so the keys' EnableCheats can use it (no launcher cheat on: Tick
 // would never start it).
 inline void Prepare() { detail::StartResolve(); }
+
+// GitHub #359: the cheat key notice's text when a command the game knows nothing of is "not recognised" for a known
+// reason (Gears 3 with Title Update 6: no cheat manager). A string literal; nullptr = the plain wording.
+inline void SetUnavailableReason(const char* reason) { detail::S().unavailable = reason; }
+
+// GitHub #359: what a cheat key did, for its on-screen notice (xenos/cheat_popup.h) and its log line. Game thread, right
+// after THAT key's command ran (outcome 0 = done, 1 = not recognised by the engine, 2 = refused by the gate). Each cheat
+// has its own entry below; ON / OFF is the engine's own flag read back after the command (the flags the launcher's
+// cheats write), never a guess or a remembered toggle - so it is right whatever the state was before (the game's own god
+// mode in Gears 1's opening ride, a launcher cheat, the key pressed twice). When the flag can't be read the chip says
+// DONE and `read` says why. English; the popup translates.
+//   God               Controller.bGodMode of GamePlayers(0)'s controller           ON / OFF
+//   ToggleDebugCamera GamePlayers(0).Actor is a DebugCameraController               ON / OFF
+//   Ghost / Fly / Walk  no flag: the command sets the mode (Gears 1's F9 cycles Ghost|Walk) ON / OFF
+//   PlayersOnly       WorldInfo.bPlayersOnlyPending (later engines) or .bPlayersOnly  ON (frozen) / OFF
+//   ToggleHUD         the controller's myHUD.bShowHUD                               ON (shown) / OFF (hidden)
+//   Slomo <x>         WorldInfo.TimeDilation as it is now                            <x>x / OFF (1)
+//   AllWeapons / AllAmmo  the engine's answer only (items are given by script)      GIVEN
+// tone: 0 on, 1 off, 2 a value / given / done, 3 not done (no chip: the popup shows the label, or "label: state").
+// icon: xenos/cheat_popup.h XenosCheatIcon's order (0 generic, 1 shield, 2 stopwatch, 3 weapon, 4 eye, 5 camera,
+// 6 freeze, 7 fly).
+struct KeyNotice {
+  std::string label, state, read;   // read: what was read back, for the log
+  int tone = 2, icon = 0;
+};
+inline KeyNotice DescribeKey(const std::string& command, int outcome) {
+  using namespace detail;
+  State& s = S();
+  std::string verb = command.substr(0, command.find(' ')), arg;
+  if (verb.size() < command.size()) arg = command.substr(verb.size() + 1);
+  for (char& c : verb) c = char(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+  KeyNotice n;
+  n.label = command;   // a command with no entry of its own is shown as typed
+  if (verb == "god") n.label = "God mode", n.icon = 1;
+  else if (verb == "toggledebugcamera") n.label = "Free camera", n.icon = 5;
+  else if (verb == "ghost" || verb == "fly" || verb == "walk") n.label = "Fly mode", n.icon = 7;
+  else if (verb == "playersonly") n.label = "Freeze the world", n.icon = 6;
+  else if (verb == "togglehud") n.label = "HUD", n.icon = 4;
+  else if (verb == "slomo") n.label = "Slow motion", n.icon = 2;
+  else if (verb == "allweapons") n.label = "All weapons", n.icon = 3;
+  else if (verb == "allammo") n.label = "All ammo", n.icon = 3;
+  if (outcome == 2) {
+    n.tone = 3;
+    const bool versus = ue3::match::Check() == 2;
+    n.label = versus ? "Cheats are off in Versus" : "Cheats are off with another PC's player in the game";
+    n.read = versus ? "refused: Versus or lobby" : "refused: not only this PC's players";
+    return n;
+  }
+  if (outcome == 1) {
+    n.tone = 3;
+    n.state = s.unavailable ? s.unavailable : "not recognised by the game";   // shown as "<cheat>: <state>"
+    n.read = "not recognised by the engine";
+    return n;
+  }
+  n.state = "DONE";
+  n.read = "nothing read";
+  auto on_off = [&](bool on, const char* flag) {
+    n.tone = on ? 0 : 1;
+    n.state = on ? "ON" : "OFF";
+    n.read = std::string(flag) + (on ? " = 1" : " = 0");
+  };
+  if (!s.ready.load(std::memory_order_acquire)) {
+    n.read = "engine classes not looked up yet";
+    if (verb == "allweapons" || verb == "allammo") n.state = "GIVEN", n.read = "engine said done";
+    return n;
+  }
+  const uint32_t pc = LocalCount() ? ControllerOf(0) : 0;   // the controller the command ran on
+  const uint32_t world = pc ? obj::Read32(pc + uint32_t(s.off_world)) : 0;
+  if (verb == "god") {
+    if (pc && s.off_god >= 0) {
+      on_off(BitOn(pc, s.off_god, s.mask_god), "Controller.bGodMode");
+      // the launcher's God mode turns it back on within a moment (Tick above): say so rather than OFF
+      if (n.tone == 1 && REXCVAR_GET(ue3_cheat_god)) n.tone = 0, n.state = "ON", n.read += " (the launcher's God mode puts it back)";
+    } else {
+      n.read = "no Controller.bGodMode";
+    }
+  } else if (verb == "toggledebugcamera") {
+    if (pc && s.debug_cam) on_off(obj::IsA(pc, s.debug_cam), "player is DebugCameraController");
+    else n.read = "no DebugCameraController class";
+  } else if (verb == "ghost" || verb == "fly" || verb == "walk") {
+    n.tone = verb == "walk" ? 1 : 0;
+    n.state = verb == "walk" ? "OFF" : "ON";
+    n.read = "set by the command (" + command + ")";
+  } else if (verb == "playersonly") {
+    if (world && s.off_po_pending >= 0) on_off(BitOn(world, s.off_po_pending, s.mask_po_pending), "WorldInfo.bPlayersOnlyPending");
+    else if (world && s.off_players_only >= 0) on_off(BitOn(world, s.off_players_only, s.mask_players_only), "WorldInfo.bPlayersOnly");
+    else n.read = "no WorldInfo.bPlayersOnly";
+  } else if (verb == "togglehud") {
+    const uint32_t hud = pc && s.off_hud >= 0 && s.off_show >= 0 ? obj::Read32(pc + uint32_t(s.off_hud)) : 0;
+    if (hud) on_off(BitOn(hud, s.off_show, s.mask_show), "HUD.bShowHUD");
+    else n.read = "no HUD";
+  } else if (verb == "slomo") {
+    if (world && s.off_td >= 0) {
+      const float td = ReadF(world + uint32_t(s.off_td));
+      char text[48];
+      std::snprintf(text, sizeof(text), "%gx", double(td));
+      const bool normal = std::fabs(td - 1.0f) < 0.001f;
+      n.tone = normal ? 1 : 2;
+      n.state = normal ? "OFF" : text;
+      std::snprintf(text, sizeof(text), "WorldInfo.TimeDilation = %g", double(td));
+      n.read = text;
+      // the launcher's Game speed comes back at normal speed (Tick above)
+      if (normal && Speed() != 1.0f) n.read += " (the launcher's Game speed puts it back)";
+    } else {
+      n.read = "no WorldInfo.TimeDilation";
+    }
+  } else if (verb == "allweapons" || verb == "allammo") {
+    n.state = "GIVEN";
+    n.read = "engine said done";
+  }
+  return n;
+}
 
 // The console target's gate for Gears 1 and 2 (their cheats are for this PC's games only): the match guard's answer, and
 // also "refuse" while another PC's player is in the game this PC runs - F10's freeze (PlayersOnly, an engine command

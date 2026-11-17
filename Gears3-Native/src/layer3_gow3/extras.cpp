@@ -91,6 +91,11 @@ void Gow3InstallExtras() {
   ue3::cheats::Configure({"Gears 3", true, false, REXCVAR_GET(gow3_cheats), target.engine_global,
                           target.players_data_offset, target.players_num_offset, "GearPawn"});
   ue3::cheats::SetKeysOn(REXCVAR_GET(gow3_cheats));   // F11 = ToggleHUD: Hide the HUD leaves it a say
+#if defined(GOW3_TU6) && GOW3_TU6
+  // GitHub #359: Title Update 6 runs the unpatched AllowCheats (the launcher never sends --gow3_cheats with it), so a key's
+  // command that needs the cheat manager (AllWeapons, Slomo, ToggleDebugCamera, ...) is "not recognised": say why.
+  if (!REXCVAR_GET(gow3_cheats)) ue3::cheats::SetUnavailableReason("not available with Title Update 6");
+#endif
   if (REXCVAR_GET(gow3_cheats)) {
     AddPackagePatch(kCheatsPatch);
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
