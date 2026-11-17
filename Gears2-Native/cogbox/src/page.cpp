@@ -1146,6 +1146,20 @@ static void option_row(App &a, int g, const gs::Option &o)
     if (!av.ok) ImGui::EndDisabled();
     if (o.id == "FrameGen" && av.ok && gs::fg_vk_nvidia_warning(a.cur[g], a.env[g]))   // vkfreeze049
         ui_note(gs::k_fgVkNvidiaWarning, col::amber);
+    // #345 (Shagg 17 Nov): a Scene resolution the render resolution can't divide only anti-aliases - say so under the
+    // setting, with what to pick instead (4K "Match my monitor" draws at 3x, where Performance runs as DLAA)
+    if (o.id == "SceneMode" && av.ok && v >= 1 && v <= 3) {
+        const int aa = a.cur[g].i("AAMode");
+        const int out = gs::expected_render_scale((gs::Game)g, a.cur[g], a.env[g]);
+        if (aa >= 2 && aa <= 4 && !gs::scene_mode_fits((int)v, out))
+            ui_note(v == 2 ? (out == 3 ? "At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only "
+                                         "anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution."
+                                       : "At this render resolution Performance keeps the scene at full size, so the upscaler only "
+                                         "anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution.")
+                           : "At this render resolution this choice keeps the scene at full size, so the upscaler only anti-aliases "
+                             "(no extra frames). Quality and Ultra performance need a 3x render resolution (4K).",
+                    col::amber);
+    }
     if (changed && nv != v) {
         // 0.6.3: Custom chosen with no custom layout saved yet starts from the layout that was chosen (Southpaw ...)
         const bool seed = o.id == "PadLayout" && (int)nv == 4 && v >= 1 && v <= 3 && a.ini.get("Pad", "Remap").empty();

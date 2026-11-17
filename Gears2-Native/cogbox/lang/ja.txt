@@ -1604,3 +1604,6 @@ RECENT PLAYERS = 最近のプレイヤー
 Played with you recently = 最近一緒にプレイしました
 Played {1} with you recently = 最近一緒に{1}をプレイしました
 Send a friend request. = フレンドリクエストを送ります。
+At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution. = このレンダー解像度（3x）では、パフォーマンスはシーンをフルサイズのままにするため、アップスケーラーはアンチエイリアスのみになります（フレームは増えません）。クオリティかウルトラパフォーマンス、または 2x のレンダー解像度を選んでください。
+At this render resolution Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution. = このレンダー解像度では、パフォーマンスはシーンをフルサイズのままにするため、アップスケーラーはアンチエイリアスのみになります（フレームは増えません）。パフォーマンスには 2x か 4x のレンダー解像度が必要です。
+At this render resolution this choice keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Quality and Ultra performance need a 3x render resolution (4K). = このレンダー解像度では、この選択はシーンをフルサイズのままにするため、アップスケーラーはアンチエイリアスのみになります（フレームは増えません）。クオリティとウルトラパフォーマンスには 3x（4K）のレンダー解像度が必要です。
