@@ -10568,8 +10568,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->SetTextures(nullptr, nullptr);
       native_hdr_ui_views_current_=false;
       if (scene_ui_bind || native_ui_bind) native_hdr_ui_view_count_ = native_hdr_ui_sampler_count_ = 0;
-      if (report_on_ || StatsTexturesNow()) RepNoteTextures(nullptr, nullptr, 0, 0);  // patch 0101, 0124
-      if (scene_ui_bind) native_hdr_ui_view_count_ = 0;
       if (report_on_) RepNoteTextures(nullptr, nullptr, 0, 0);  // patch 0101
       if (t2d | tcube | t3d) stand_ins = uint32_t(std::popcount(t2d | tcube | t3d));  // texture cache switched off
     }
@@ -11009,28 +11007,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (uint32_t i = 0; i < 4; ++i) rts[i] = colour_rt[i] ? colour_rt[i]->texture : 0;
       if (hdr_target) rts[0] = hdr_target;
       if (hdr_second) rts[1] = hdr_second;
-      if (!hdr_target && stats_frame_ && frame_ == uint64_t(stats_frame_)) {  // patch 0121
-        std::vector<const rr::RenderTarget*> now;
-        for (uint32_t i = 0; i < 4; ++i) if (colour_rt[i]) now.push_back(colour_rt[i]);
-        // Patch 0122: after each of the first N draws too (the previous draw's targets, before this one is issued).
-        // Patch 0123: the readouts can start later (each_from) and be spaced out (each_step): after draw
-        // from + k*step for k = 1..N. Draws with no colour target are counted too (0123 logs how many).
-        const uint32_t d = stats_draws_, from = uint32_t(stats_from_), step = uint32_t(stats_step_);
-        const bool each = stats_each_ > 0 && d > from && (d - from) % step == 0 && (d - from) / step <= uint32_t(stats_each_);
-        if (now != stats_prev_ || each) {
-          TargetStats(stats_prev_);
-          if (stats_textures_) SampledStats();  // patch 0124: the previous draw's sampled textures
-        }
-        stats_prev_ = now;
-        if (stats_textures_) {  // patch 0124: this draw's textures, read at the next readout
-          // Patch 0125: only the 2D slots (t0-31). 0124 copied all of rep_view_count_ (up to 96, with the cube and 3D
-          // slots) into this 32-entry array and wrote past its end (Gears 2 job 434: crash in the stats frame).
-          stats_view_count_ = std::min<uint32_t>(rep_view_count_, 32);
-          for (uint32_t i = 0; i < stats_view_count_; ++i) stats_views_[i] = rep_views_[i];
-        }
-        if (now.empty()) ++stats_no_colour_;
-        ++stats_draws_;
-      }
       backend_->SetRenderTargets(hdr_second ? 2 : d.color_count, rts, depth ? depth->texture : 0);
       if (gpu_by_target_) NoteDrawTarget(colour_rt[0] ? colour_rt[0] : depth);
       if (report_on_)  // patch 0101: this draw's own GPU timestamp and its description

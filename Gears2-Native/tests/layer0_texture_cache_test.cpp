@@ -418,6 +418,7 @@ TEST_CASE("HDR scene effects: allocation arithmetic enforces the fixed budget", 
   CHECK_FALSE(h::SceneEffectAllocationFits(0,1,1,1));
   CHECK_FALSE(h::SceneEffectAllocationFits(0,0,0,2160));
   CHECK_FALSE(h::SceneEffectAllocationFits(h::kSceneEffectBudget,0,1,1));
+}
 // 0.6.4 (GitHub #341): texture packs - one host texture per pack file, shared by every guest address that holds the same
 // content; kept (counted) when nothing shows it, reused when the content comes back, freed only when the cap needs it.
 TEST_CASE("texture_cache: a pack texture is read once and shared across guest addresses", "[texture_cache][texture_pack]") {
