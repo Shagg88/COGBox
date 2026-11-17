@@ -19,8 +19,8 @@
 // The change is to the loaded script in memory (as main_menu_exit.cpp), never to the package file, so Title Update 6's
 // package check (dirty disc) never sees it. Found by its bytes and its class, not by an address of one game build.
 //
-// --gow3_log_bot_classes (diagnostic, read only): every 2 s, each player's name, character number and actual body
-// (GearPRI PlayerName / PreferredCOGIndex / PawnClass), logged when they change.
+// --gow3_log_bot_classes (diagnostic, read only): every 2 s, each player's name and character number (GearPRI), each
+// player's body (the class of their GearPawn) and the game's loaded character classes, logged when they change.
 //
 // Worker threads only: object scans on the game thread froze the game (main_menu_exit.cpp). Our code (MIT).
 
@@ -133,35 +133,67 @@ std::string FString(uint32_t a) {   // TArray<TCHAR> {data, count incl. the term
   return s;
 }
 
+// Job 1982 lesson: GearPRI has no PawnClass in Gears 3 (the body is the pawn's own class), and an offset read before the
+// class was fully linked came back -1 - so the offsets are looked up again until every one is found, and the body is read
+// from each live GearPawn (its class) and the pawn's PlayerReplicationInfo (its name and character number).
 void LogWorker() {
-  int off_name = -1, off_class = -1, off_cog = -1, cog_size = 0;
-  uint32_t pri_cls = 0;
+  int off_name = -1, off_cog = -1, cog_size = 0, off_pawn_pri = -1, off_loaded = -1, off_pending = -1;
+  uint32_t pri_cls = 0, pawn_cls = 0, store_cls = 0;
   std::map<uint32_t, std::string> last;
+  std::string last_store;
   for (;; std::this_thread::sleep_for(std::chrono::seconds(2))) {
     if (!obj::Ready() && !Open()) continue;
-    if (!pri_cls) {
+    if (off_name < 0 || off_cog < 0 || off_pawn_pri < 0) {
       pri_cls = obj::FindClass("GearPRI");
-      if (!pri_cls) continue;
+      pawn_cls = obj::FindClass("GearPawn");
+      const uint32_t base_pawn = obj::FindClass("Pawn");
+      if (!pri_cls || !pawn_cls || !base_pawn) continue;
       off_name = obj::PropertyOffset(pri_cls, "PlayerName");
-      off_class = obj::PropertyOffset(pri_cls, "PawnClass");
       off_cog = obj::PropertyOffset(pri_cls, "PreferredCOGIndex");
       cog_size = obj::PropertySize(pri_cls, "PreferredCOGIndex");
-      REXLOG_INFO("gow3_log_bot_classes: GearPRI PlayerName +{} PawnClass +{} PreferredCOGIndex +{} ({} bytes)", off_name, off_class,
-                  off_cog, cog_size);
+      off_pawn_pri = obj::PropertyOffset(base_pawn, "PlayerReplicationInfo");
+      if (off_name < 0 || off_cog < 0 || off_pawn_pri < 0) continue;
+      REXLOG_INFO("gow3_log_bot_classes: GearPRI PlayerName +{} PreferredCOGIndex +{} ({} bytes), Pawn.PlayerReplicationInfo +{}", off_name,
+                  off_cog, cog_size, off_pawn_pri);
     }
+    if (!store_cls && (store_cls = obj::FindClass("GearMPCharacterStore")) != 0) {
+      off_loaded = obj::PropertyOffset(store_cls, "LoadedClasses");
+      off_pending = obj::PropertyOffset(store_cls, "PendingClasses");
+    }
+    auto who = [&](uint32_t pri) {
+      if (!pri || !obj::IsLive(pri)) return std::string("no player");
+      const int cog = cog_size == 1 ? Byte(pri + uint32_t(off_cog)) : int32_t(obj::Read32(pri + uint32_t(off_cog)));
+      return "'" + FString(pri + uint32_t(off_name)) + "' character " + std::to_string(cog);
+    };
     std::map<uint32_t, std::string> now;
-    for (uint32_t p : obj::FindInstancesOf(pri_cls)) {
-      if (!obj::IsLive(p)) continue;
-      const std::string name = off_name >= 0 ? FString(p + uint32_t(off_name)) : "?";
-      const uint32_t cls = off_class >= 0 ? obj::Read32(p + uint32_t(off_class)) : 0;
-      int cog = -1;
-      if (off_cog >= 0) cog = cog_size == 1 ? Byte(p + uint32_t(off_cog)) : int32_t(obj::Read32(p + uint32_t(off_cog)));
-      now[p] = "'" + name + "' character " + std::to_string(cog) + " body " + (cls ? obj::ObjectName(cls) : std::string("none"));
+    for (uint32_t p : obj::FindInstancesOf(pri_cls))
+      if (obj::IsLive(p)) now[p] = "player " + who(p);
+    for (uint32_t pawn : obj::FindInstancesOf(pawn_cls)) {   // the bodies (Locust too: their names show it)
+      if (!obj::IsLive(pawn)) continue;
+      const uint32_t pri = obj::Read32(pawn + uint32_t(off_pawn_pri));
+      if (!pri) continue;   // enemies without a player entry
+      now[pawn] = "body " + obj::ObjectName(obj::ClassOf(pawn)) + " for " + who(pri);
     }
-    if (now == last) continue;
-    for (const auto& [p, line] : now) REXLOG_INFO("gow3_log_bot_classes: {:08X} {}", p, line);
-    if (now.empty()) REXLOG_INFO("gow3_log_bot_classes: no players");
-    last = std::move(now);
+    if (now != last) {
+      for (const auto& [o, line] : now) REXLOG_INFO("gow3_log_bot_classes: {:08X} {}", o, line);
+      if (now.empty()) REXLOG_INFO("gow3_log_bot_classes: no players");
+      last = std::move(now);
+    }
+    // the game's character store: which character classes are loaded / loading (the fix should add the bots' ones)
+    if (store_cls && off_loaded >= 0) {
+      std::string st;
+      for (uint32_t c : obj::FindInstancesOf(store_cls)) {
+        if (!obj::IsLive(c)) continue;
+        const uint32_t data = obj::Read32(c + uint32_t(off_loaded)), n = obj::Read32(c + uint32_t(off_loaded) + 4);
+        st += "loaded " + std::to_string(n) + ":";
+        for (uint32_t i = 0; data && i < n && i < 24; ++i) st += " " + obj::ObjectName(obj::Read32(data + 4 * i));
+        if (off_pending >= 0) st += " | pending " + std::to_string(obj::Read32(c + uint32_t(off_pending) + 4));
+      }
+      if (st != last_store) {
+        REXLOG_INFO("gow3_log_bot_classes: character store {}", st.empty() ? std::string("none") : st);
+        last_store = st;
+      }
+    }
   }
 }
 
