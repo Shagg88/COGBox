@@ -298,7 +298,11 @@ void run_publish(const std::shared_ptr<FabTransfer> &t, const FabPublish &p)
         fab_load_creator();
         return;
     }
-    if (e == "cancelled") { t->phase = FabTransfer::Cancelled; return; }
+    if (e == "cancelled") {
+        t->phase = FabTransfer::Cancelled;
+        fab_load_creator();   // (a finish may have gone live meanwhile: the Creator tab says)
+        return;
+    }
     std::vector<std::string> lines;
     for (size_t at = 0; at < e.size();) {
         size_t n = e.find('\n', at);
@@ -695,6 +699,7 @@ void fab_publish(const FabPublish &p)
     t->mod_id = p.mod_id;
     t->name = p.name;
     t->game = game_of_key(p.game_key);
+    t->request = std::make_shared<FabPublish>(p);
     {
         std::lock_guard<std::mutex> l(sh().mu);
         for (auto &o : sh().v.transfers)
@@ -720,13 +725,28 @@ void fab_cancel(const std::shared_ptr<FabTransfer> &t)
 
 void fab_discard(const std::shared_ptr<FabTransfer> &t)
 {
-    if (!t || t->kind != FabTransfer::Upload || active(t->phase) || !t->resumable) return;
-    t->resumable = false;
+    if (!t || t->kind != FabTransfer::Upload || active(t->phase) || !t->resumable || t->discarding.exchange(true)) return;
     uploads().post([t] {
         Ctx c = ctx();
-        if (c.server && c.acct && !t->zip.empty()) fab_upload_discard(*c.server, *c.acct, t->zip);
-        if (t->zip_made) fab_pack_drop(t->zip);
+        const bool gone = c.server && c.acct && (t->zip.empty() || fab_upload_discard(*c.server, *c.acct, t->zip));
+        if (gone) {
+            if (t->zip_made) fab_pack_drop(t->zip);
+            t->resumable = false;
+            fab_dismiss(t);
+        } else {
+            // the server still checks it (409) or could not be reached: the session and the zip are kept
+            say("The server is still finishing this upload - try Discard again in a moment.", true);
+        }
+        t->discarding = false;
     });
+}
+
+void fab_retry(const std::shared_ptr<FabTransfer> &t)
+{
+    if (!t || t->kind != FabTransfer::Upload || active(t->phase) || !t->request || t->discarding) return;
+    const FabPublish p = *t->request;
+    fab_dismiss(t);
+    fab_publish(p);   // the same folder or zip: the kept session goes on (or is followed) from where it stopped
 }
 
 void fab_dismiss(const std::shared_ptr<FabTransfer> &t)

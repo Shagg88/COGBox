@@ -139,6 +139,13 @@ static std::string sha256_hex(const std::string &data)
     return out;
 }
 
+static std::string read_all(const std::string &path)
+{
+    std::string t;
+    read_file(path, t, 256u << 20);
+    return t;
+}
+
 static int count(const std::string &hay, const std::string &needle)
 {
     int n = 0;
@@ -340,6 +347,11 @@ int main()
         const std::string state = sj.is_object() ? sj.value("state", "") : "";
         printf("  cancelled while the server checks: the session is \"%s\"\n", state.c_str());
         CHECK(state == "finishing" || state == "done");
+        if (state == "finishing") {
+            // Discard while the server is finishing it: the server answers 409, the session stays remembered
+            CHECK(!fab_upload_discard(*server, *acct, zipS));
+            CHECK(remembered_upload_id() == id);
+        }
         const int chunks = count(server_log(), "\"url\":\"/api/v1/fabricator/uploads/" + id + "/chunks/");
         FabProgress pr;
         const std::string rr = fab_upload(*server, *acct, m2, 0, zipS, { png }, pr, &mod);
@@ -413,6 +425,73 @@ int main()
         CHECK(count(log, "\"method\":\"POST\",\"url\":\"/api/v1/fabricator/uploads/" + id + "/finish\"") == 1);
         CHECK(remembered_upload_id().empty());
         CHECK(!fab_upload_remembered(*server, *acct, zipR));
+    }
+
+    // ---- a zip that is live already is not uploaded again: published as a new version of its own mod, or after its
+    //      remembered session is gone (expired) - success with that mod, no new session, no chunk ----
+    {
+        const std::string zipV = join(d, "live.zip");
+        make_zip(zipV, 2500000, 12);
+        const std::string m = meta("Net Test Live");
+        FabProgress p;
+        int64_t modV = 0;
+        CHECK(fab_upload(*server, *acct, m, 0, zipV, { png }, p, &modV) == "" && modV > 0);
+        const std::string starts = "\"method\":\"POST\",\"url\":\"/api/v1/fabricator/uploads\"";
+        const int startsBefore = count(server_log(), starts), chunksBefore = count(server_log(), "/chunks/");
+        // the same zip as a new version of that mod
+        FabProgress p2;
+        int64_t mod = 0;
+        const std::string r2 = fab_upload(*server, *acct, meta("Net Test Live"), modV, zipV, { png }, p2, &mod);
+        if (!r2.empty()) printf("  same zip as a new version: %s\n", r2.c_str());
+        CHECK(r2.empty() && mod == modV);
+        // a remembered session the server no longer has (it expired after its finish): found live, not sent again
+        const std::string fileSha = sha256_hex(read_all(zipV));
+        json rec = { { "id", "gonegonegonegone" }, { "server", serverText }, { "account", acct->uuid }, { "path", zipV },
+                     { "size", file_size(zipV) }, { "sha256", fileSha }, { "meta_sha256", sha256_hex(m) }, { "mod_id", 0 },
+                     { "chunk_bytes", 1 << 20 } };
+        CHECK(write_file(join(fab_state_dir(), "uploads.json"), json{ { "uploads", { rec } } }.dump()));
+        FabProgress p3;
+        mod = 0;
+        const std::string r3 = fab_upload(*server, *acct, m, 0, zipV, { png }, p3, &mod);
+        if (!r3.empty()) printf("  gone session of a live zip: %s\n", r3.c_str());
+        CHECK(r3.empty() && mod == modV);
+        CHECK(count(server_log(), starts) == startsBefore);   // no new session
+        CHECK(count(server_log(), "/chunks/") == chunksBefore);
+        CHECK(remembered_upload_id().empty());
+    }
+
+    // ---- a finish that fails for the server's own reason (retryable: a restart) keeps the session; publishing again
+    //      finishes it ----
+    {
+        const std::string zipF = join(d, "retry.zip");
+        make_zip(zipF, 2500000, 13);
+        const std::string m = meta("Net Test Retry");
+        std::atomic<int> phase{0};   // 0 before the finish, 1 finish posted, 2 one answer replaced
+        fab_set_test_rewrite_answer([&](const std::string &method, const std::string &path, int &status, std::string &body) {
+            if (method == "POST" && path.size() > 7 && path.compare(path.size() - 7, 7, "/finish") == 0) { phase = 1; return; }
+            if (phase == 1 && method == "GET" && path.rfind("/api/v1/fabricator/uploads/", 0) == 0) {
+                phase = 2;
+                status = 200;
+                body = R"({"state":"failed","chunks":3,"chunks_done":3,"retryable":true,)"
+                       R"("problems":["the server restarted while it was checking this upload: finish it again"]})";
+            }
+        });
+        FabProgress p;
+        int64_t mod = 0;
+        const std::string r1 = fab_upload(*server, *acct, m, 0, zipF, { png }, p, &mod);
+        fab_set_test_rewrite_answer(nullptr);
+        printf("  retryable failure: %s\n", r1.c_str());
+        CHECK(phase == 2 && r1.find("server restarted") != std::string::npos && mod == 0);
+        const std::string id = remembered_upload_id();
+        CHECK(!id.empty() && fab_upload_remembered(*server, *acct, zipF));   // kept
+        CHECK(count(server_log(), "\"method\":\"DELETE\",\"url\":\"/api/v1/fabricator/uploads/" + id + "\"") == 0);
+        const int chunks = count(server_log(), "\"url\":\"/api/v1/fabricator/uploads/" + id + "/chunks/");
+        FabProgress p2;
+        const std::string r2 = fab_upload(*server, *acct, m, 0, zipF, { png }, p2, &mod);
+        if (!r2.empty()) printf("  retried: %s\n", r2.c_str());
+        CHECK(r2.empty() && mod > 0);
+        CHECK(count(server_log(), "\"url\":\"/api/v1/fabricator/uploads/" + id + "/chunks/") == chunks);   // nothing sent again
+        CHECK(remembered_upload_id().empty());
     }
 
     // ---- I2: a folder publish resumes. The same unchanged folder reuses its packed zip (same path, same bytes), so

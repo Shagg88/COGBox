@@ -125,6 +125,7 @@ describe('fabricator: asynchronous finish and route limits', () => {
     const s = (await status(me, id)).json();
     expect(s.state).toBe('failed');
     expect(s.problems.join()).toContain('server restarted');
+    expect(s.retryable).toBe(true);   // the server's own reason: the client keeps the session and finishes again
     // the creator can finish again (or DELETE it)
     await finish(me, id);
     expect((await awaitFinish(async () => (await status(me, id)).json())).state).toBe('done');
@@ -138,6 +139,37 @@ describe('fabricator: asynchronous finish and route limits', () => {
     const s = await awaitFinish(async () => (await status(me, id)).json());
     expect(s.state).toBe('failed');
     expect(s.problems.join()).toContain('server');
+    expect(s.retryable).toBe(true);
+  });
+
+  it("a finish refused for the mod's own problems is not retryable", async () => {
+    const me = await claim('Baird');
+    const zip = await modZip('[Mod]\nName=No Shot\n', 2300);
+    const st = await app.inject({ method: 'POST', url: `${API}/uploads`, headers: auth(me), payload: { meta: meta({ name: 'No Shot' }), size: zip.length, sha256: sha256(zip) } });
+    const { id, chunks } = st.json();
+    for (let n = 0; n < chunks; n++) expect((await putChunk(me, id, n, zip.subarray(n * 1024, (n + 1) * 1024))).statusCode).toBe(204);
+    expect((await finish(me, id)).statusCode).toBe(202);
+    const s = await awaitFinish(async () => (await status(me, id)).json());
+    expect(s.state).toBe('failed');
+    expect(s.problems.join()).toContain('screenshot');
+    expect(s.retryable).toBe(false);
+  });
+
+  it('a finish started just before the session expires stays pollable while it runs and after', async () => {
+    const me = await claim('Baird');
+    const { id } = await ready(me);
+    clock += DAY - 1000;   // a second before the session's 24 h are up
+    const hold = holdFinish();
+    expect((await finish(me, id)).statusCode).toBe(202);
+    await hold.entered;
+    clock += 60 * 1000;    // past the session's own expiry, while the server still checks it
+    const mid = await status(me, id);
+    expect(mid.statusCode).toBe(200);
+    expect(mid.json().state).toBe('finishing');
+    hold.release();
+    expect((await awaitFinish(async () => (await status(me, id)).json())).state).toBe('done');
+    clock += 30 * 60 * 1000;   // still readable within the hour kept after the finish started
+    expect((await status(me, id)).json().state).toBe('done');
   });
 
   it('chunk and screenshot PUTs have their own per-account limit, other routes keep the shared one', async () => {

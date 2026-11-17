@@ -85,6 +85,12 @@ bool drop_answer(const std::string& method, const std::string& path) {
     std::lock_guard<std::mutex> lock(g_hook_mutex);
     return g_drop_answer && g_drop_answer(method, path);
 }
+// fab_set_test_rewrite_answer: tests replace an answer
+std::function<void(const std::string&, const std::string&, int&, std::string&)> g_rewrite_answer;
+void rewrite_answer(const std::string& method, const std::string& path, int& status, std::string& body) {
+    std::lock_guard<std::mutex> lock(g_hook_mutex);
+    if (g_rewrite_answer) g_rewrite_answer(method, path, status, body);
+}
 
 Response send_request(const ServerUrl& server, const Request& q) {
     Response res;
@@ -151,6 +157,7 @@ Response send_request(const ServerUrl& server, const Request& q) {
     if (c) WinHttpCloseHandle(c);
     WinHttpCloseHandle(s);
     if (res.status != 0 && drop_answer(q.method, q.path)) return Response();   // (tests: sent, but no answer)
+    if (res.status != 0 && !q.sink) rewrite_answer(q.method, q.path, res.status, res.body);    // (tests: another answer)
     return res;
 }
 
@@ -347,6 +354,10 @@ void fab_set_test_drop_answer(std::function<bool(const std::string& method, cons
     std::lock_guard<std::mutex> lock(g_hook_mutex);
     g_drop_answer = std::move(drop);
 }
+void fab_set_test_rewrite_answer(std::function<void(const std::string& method, const std::string& path, int& status, std::string& body)> f) {
+    std::lock_guard<std::mutex> lock(g_hook_mutex);
+    g_rewrite_answer = std::move(f);
+}
 
 HttpResult fab_call(const ServerUrl& server, const std::string& method, const std::string& path, const std::string& json_body,
                     const SocialAccount* account) {
@@ -456,8 +467,35 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
         return std::string();
     };
 
+    // This zip already published as a live version of the creator's mod (of mod_id when it is set, else of their mod of
+    // this name): its id, else 0. A session that expired after its finish, or one forgotten here, must not upload the same
+    // file again as another version (quota, the day's uploads, an older version pushed out).
+    auto already_live = [&]() -> int64_t {
+        std::string ignored;
+        auto r = call_rl("GET", "/api/v1/fabricator/creator/mods", "", &ignored);
+        if (!r || r->status != 200) return 0;
+        json j = json::parse(r->body, nullptr, false);
+        if (!j.is_object() || !j.contains("mods") || !j["mods"].is_array()) return 0;
+        for (const auto& m : j["mods"]) {
+            if (!m.is_object() || !m.contains("versions") || !m["versions"].is_array()) continue;
+            const int64_t id = m.value("id", (int64_t)0);
+            if (id <= 0 || (mod_id > 0 && id != mod_id) || m.value("state", "") == "removed") continue;
+            // a new mod: the one of this name (the same zip may be in another mod of theirs too)
+            if (mod_id <= 0 && lower(m.value("name", "")) != lower(meta.value("name", ""))) continue;
+            for (const auto& v : m["versions"])
+                if (v.is_object() && v.value("sha256", "") == key.sha256 && v.value("state", "") == "live") return id;
+        }
+        return 0;
+    };
+    auto live_found = [&](int64_t id) {
+        if (mod_out) *mod_out = id;
+        progress.done = size;
+        return std::string();
+    };
+
     std::string buf;   // one chunk
     int retries = 0;   // real failures (busy, damaged on the way, out of step) in this upload; 429s do not count
+    bool session_lost = false;   // a remembered session the server no longer has
     for (int attempt = 0; attempt < 3; attempt++) {
         // the session: the remembered one when the server still has it, else a new one
         std::vector<std::string> stale;
@@ -494,18 +532,27 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
             } else if (st->status == 404 || st->status == 410) {
                 forget_upload(s.id);
                 s = Session();
+                session_lost = true;
             } else {
                 return problem_of(*st);
             }
         }
         if (s.id.empty()) {
+            // a new version, or a session that is gone: is this very zip live already?
+            if (mod_id > 0 || session_lost)
+                if (const int64_t live = already_live()) return live_found(live);
             json body = { { "meta", meta }, { "size", size }, { "sha256", key.sha256 } };
             body["mod_id"] = mod_id > 0 ? json(mod_id) : json(nullptr);
             std::string problem;
             auto st = call_rl("POST", base, body.dump(), &problem);
             if (!st) return problem;
             json j = json::parse(st->body, nullptr, false);
-            if (st->status != 200 || !j.is_object()) return problem_of(*st);
+            if (st->status != 200 || !j.is_object()) {
+                // refused (for a new mod: "name taken" when an earlier try did publish it): published already?
+                if (st->status != 0 && mod_id <= 0 && !session_lost)
+                    if (const int64_t live = already_live()) return live_found(live);
+                return problem_of(*st);
+            }
             s.id = j.value("id", "");
             s.chunk_bytes = j.value("chunk_bytes", (int64_t)0);
             s.chunks = j.value("chunks", (int64_t)0);
@@ -641,6 +688,7 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
             json j = json::parse(st.body, nullptr, false);
             if (st.status == 404 || st.status == 410) {
                 forget_upload(s.id);
+                if (const int64_t live = already_live()) return live_found(live);   // published before it went
                 return "the upload is no longer on the server (it expired or was removed): publish it again";
             }
             if (st.status != 200 || !j.is_object() || !j.contains("state") || !j["state"].is_string()) {
@@ -657,11 +705,15 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
                 continue;   // no overall time limit while the server says it is checking
             }
             if (state == "failed") {
-                // refused (or the server restarted meanwhile): the problems are the answer, the session goes
+                std::string out = problem_of(st);
+                if (out.rfind("the server answered", 0) == 0) out = "the server could not publish the mod: try again";
+                // the server's own reason (an error, a restart): the session and its chunks are kept, publishing again
+                // finishes it again
+                if (j.contains("retryable") && j["retryable"].is_boolean() && j["retryable"].get<bool>()) return out;
+                // refused for the mod's own problems: the problems are the answer, the session goes
                 call("DELETE", at, "");
                 forget_upload(s.id);
-                std::string out = problem_of(st);
-                return out.rfind("the server answered", 0) == 0 ? "the server could not publish the mod: try again" : out;
+                return out;
             }
             // open: the finish never reached the server (a lost request) - asked again, a few times
             if (refinish++ >= 3) return "the server did not start checking the mod: try again";

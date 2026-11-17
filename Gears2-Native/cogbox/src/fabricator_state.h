@@ -52,6 +52,8 @@ struct FabQuery {
 };
 constexpr int kFabPerPage = 12;
 
+struct FabPublish;
+
 // One Get (a download, then the install on the UI thread) or one publish. phase is read by the UI each frame.
 struct FabTransfer {
     enum Kind { Download, Upload };
@@ -74,6 +76,8 @@ struct FabTransfer {
     std::atomic<bool> zip_made{false};   // a publish: COGBox packed the zip from a folder (kept while it can be resumed)
     std::atomic<bool> resumable{false};  // a publish that stopped (cancelled, no answer): the server session and the packed
                                          // zip are kept for the next publish of the same folder or zip (fab_discard drops them)
+    std::atomic<bool> discarding{false}; // fab_discard is asking the server
+    std::shared_ptr<FabPublish> request; // a publish: what was asked (fab_retry sends it again)
     FabInstallPlan plan;                 // a Get: written by the UI thread before Installing, read by the install worker
     std::atomic<int> failed_phase{Queued};   // the phase it failed in (a publish: Packing, Checking = local checks, Uploading)
     std::vector<std::string> problems_;   // why it failed: written under the state's lock, read with fab_transfer_problems
@@ -142,8 +146,11 @@ struct FabPublish {
 void fab_publish(const FabPublish &p);
 void fab_cancel(const std::shared_ptr<FabTransfer> &t);
 // A stopped publish given up for good: its server session is deleted (it stops counting toward the daily limit and the
-// quota) and the zip COGBox packed is deleted. resumable is cleared.
+// quota), the zip COGBox packed is deleted and the transfer leaves the list. A session the server is still finishing
+// (409), or a server that can't be reached, keeps both: the player is told to try again in a moment.
 void fab_discard(const std::shared_ptr<FabTransfer> &t);
+// A stopped publish sent again as it was asked (its kept session goes on from where it stopped).
+void fab_retry(const std::shared_ptr<FabTransfer> &t);
 void fab_dismiss(const std::shared_ptr<FabTransfer> &t);   // a finished one leaves the list
 std::vector<std::string> fab_transfer_problems(const FabTransfer &t);
 // The first running Get or publish's percent (0-100), -1 when none runs (the front screen's FABRICATOR button).

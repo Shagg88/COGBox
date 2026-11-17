@@ -40,7 +40,10 @@ struct FabProgress {
 // session the server is finishing, or has published, is followed and never sent again. A 429 waits for its Retry-After
 // (2 s without one, 60 s at most a time, 30 min in all) and is not counted as a failure. "" on success (*mod_out = the
 // mod's id), else the problems, one per line ("cancelled" when cancelled). Whether the session is kept for a resume
-// afterwards: fab_upload_remembered.
+// afterwards: fab_upload_remembered. A failed finish the server marks retryable (its own error, a restart) keeps the
+// session: publishing again finishes it again. Before starting a session for a new version, and whenever a remembered
+// session is gone, GET /creator/mods is asked whether this zip (its SHA-256) is live already in that mod (a new mod:
+// the creator's mod of this name); if so that is the success, and nothing is uploaded again.
 std::string fab_upload(const ServerUrl& server, const SocialAccount& account, const std::string& meta_json, int64_t mod_id,
                        const std::string& zip_path, const std::vector<std::string>& screenshot_paths, FabProgress& progress,
                        int64_t* mod_out);
@@ -70,3 +73,5 @@ void fab_set_state_dir(const std::string& dir);
 // Tests only: for a request drop(method, path) answers true for, the request is sent and its answer thrown away (as if
 // the connection broke before the answer came). Empty: none.
 void fab_set_test_drop_answer(std::function<bool(const std::string& method, const std::string& path)> drop);
+// Tests only: every text answer (status != 0) is passed to f, which may replace its status and body. Empty: none.
+void fab_set_test_rewrite_answer(std::function<void(const std::string& method, const std::string& path, int& status, std::string& body)> f);

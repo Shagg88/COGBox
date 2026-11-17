@@ -215,12 +215,19 @@ export type FinishResult = { ok: true; modId: number; versionId: number } | { ok
 // What GET /uploads/:id answers (the finish protocol in routes.ts).
 export interface UploadStatus {
   state: UploadState; chunks: number; chunks_done: number; mod_id?: number; version_id?: number; problems?: string[];
+  retryable?: boolean;   // failed: only for the server's own reasons (an error, a restart): finishing again may work
 }
+// The problems a failed finish records for the server's own reasons, not the mod's: a client keeps the session and
+// finishes again.
+export const FINISH_SERVER_ERROR = 'publishing failed on the server: try again';
+export const FINISH_RESTARTED = 'the server restarted while it was checking this upload: finish it again';
 export function uploadStatus(row: UploadRow): UploadStatus {
   const st: UploadStatus = { state: row.state, chunks: chunkCount(row), chunks_done: row.chunks_done };
   if (row.state === 'done') { st.mod_id = row.mod_id as number; st.version_id = row.version_id as number; }
   if (row.state === 'failed') {
     try { st.problems = JSON.parse(row.problems ?? '[]'); } catch { st.problems = []; }
+    const p = st.problems ?? [];
+    st.retryable = p.length > 0 && p.every((x) => x === FINISH_SERVER_ERROR || x === FINISH_RESTARTED);
   }
   return st;
 }
@@ -245,7 +252,9 @@ export function startFinish(db: DatabaseInstance, store: FabStore, s: FabSetting
   const chunks = chunkCount(row);
   if (row.chunks_done < chunks) return { problems: [`only ${row.chunks_done} of ${chunks} chunks are uploaded`] };
   busy.add(uploadId);
-  db.prepare("UPDATE fab_uploads SET state = 'finishing', problems = NULL WHERE id = ?").run(uploadId);
+  // pollable for at least DONE_KEEP_MS from now, even when the finish starts just before the session would expire
+  db.prepare("UPDATE fab_uploads SET state = 'finishing', problems = NULL, expires_at = MAX(expires_at, ?) WHERE id = ?")
+    .run(now + DONE_KEEP_MS, uploadId);
   const failed = (problems: string[]) => {
     try {
       db.prepare("UPDATE fab_uploads SET state = 'failed', problems = ? WHERE id = ? AND state = 'finishing'").run(JSON.stringify(problems), uploadId);
@@ -254,7 +263,7 @@ export function startFinish(db: DatabaseInstance, store: FabStore, s: FabSetting
   const p: Promise<FinishResult> = finishLocked(db, store, s, row, now)
     .then((r) => { if (!r.ok) failed(r.problems); return r; })
     .catch((): FinishResult => {
-      const r = { ok: false as const, problems: ['publishing failed on the server: try again'] };
+      const r = { ok: false as const, problems: [FINISH_SERVER_ERROR] };
       failed(r.problems);
       return r;
     })
@@ -285,7 +294,7 @@ export function recoverInterruptedFinishes(db: DatabaseInstance): number {
   const ids = (db.prepare("SELECT id FROM fab_uploads WHERE state = 'finishing'").all() as { id: string }[])
     .map((r) => r.id).filter((id) => !busy.has(id));
   const mark = db.prepare("UPDATE fab_uploads SET state = 'failed', problems = ? WHERE id = ? AND state = 'finishing'");
-  const problems = JSON.stringify(['the server restarted while it was checking this upload: finish it again']);
+  const problems = JSON.stringify([FINISH_RESTARTED]);
   for (const id of ids) mark.run(problems, id);
   return ids.length;
 }
@@ -400,7 +409,7 @@ async function finishLocked(db: DatabaseInstance, store: FabStore, s: FabSetting
 
 export interface CreatorMod {
   id: number; name: string; game: string; state: string;
-  versions: { id: number; version: string; created_at: number; size: number; state: string }[];
+  versions: { id: number; version: string; created_at: number; size: number; state: string; sha256: string }[];
   downloads: number; rating: number; ratings: number; reports_open: number;
 }
 
@@ -412,7 +421,7 @@ export function creatorMods(db: DatabaseInstance, account: string): CreatorMod[]
       (SELECT COALESCE(SUM(stars), 0) FROM fab_ratings WHERE mod_id = m.id) AS stars,
       (SELECT COUNT(*) FROM fab_reports WHERE mod_id = m.id AND handled_by IS NULL) AS reports_open
     FROM fab_mods m WHERE m.owner = ? ORDER BY m.created_at DESC, m.id DESC`).all(account) as any[];
-  const versions = db.prepare('SELECT id, version, created_at, size, state FROM fab_versions WHERE mod_id = ? ORDER BY created_at DESC, id DESC');
+  const versions = db.prepare('SELECT id, version, created_at, size, state, sha256 FROM fab_versions WHERE mod_id = ? ORDER BY created_at DESC, id DESC');
   return mods.map((m) => ({
     id: m.id, name: m.name, game: m.game, state: m.state,
     versions: versions.all(m.id) as CreatorMod['versions'],

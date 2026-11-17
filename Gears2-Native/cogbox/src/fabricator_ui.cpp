@@ -980,9 +980,17 @@ std::shared_ptr<FabTransfer> latest_upload(const FabView &v)
 void discard_button(const std::shared_ptr<FabTransfer> &t)
 {
     if (!t->resumable) return;
+    if (t->discarding) {
+        ImGui::SameLine();
+        note("Discarding...", col::dim);
+        return;
+    }
+    ImGui::SameLine();
+    if (btn("Try again##upretry")) { fab_retry(t); return; }
+    tip("Publishes it again as it was asked: what the server already has is kept, so it goes on from there.");
     ImGui::SameLine();
     const bool made = t->zip_made;
-    if (btn("Discard the upload")) { fab_discard(t); fab_dismiss(t); }
+    if (btn("Discard the upload")) fab_discard(t);
     tip(made ? "OK keeps what was sent: publishing the same folder again goes on from there. Discard deletes it from the server "
                "(it stops counting toward today's uploads and your space) and deletes the zip COGBox packed."
              : "OK keeps what was sent: publishing the same .zip again goes on from there. Discard deletes it from the server "

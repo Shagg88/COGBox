@@ -257,7 +257,9 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
     //                A DELETE forgets it (the mod stays published).
     //   'failed'     problems says why; the session and its chunks are kept (as an open one): the client puts it right
     //                and finishes again, or DELETEs it. A server restart during a finish ends there too
-    //                ('the server restarted ...'), never stuck in 'finishing'.
+    //                ('the server restarted ...'), never stuck in 'finishing'. retryable: true when every problem is
+    //                the server's own (an error, a restart): finishing again may work, so the client keeps it.
+    //   A finish keeps the session readable for at least an hour from its start, even past the session's expiry.
     up.get<{ Params: { id: string } }>('/uploads/:id', async (req, reply) => {
       const row = session(req, reply);
       if (!row) return reply;

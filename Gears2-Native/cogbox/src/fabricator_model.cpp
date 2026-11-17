@@ -211,6 +211,58 @@ static bool bad_path(const std::string &raw)
     return false;
 }
 
+// The path's segments split on '/' or '\'
+static std::vector<std::string> segments(const std::string &name)
+{
+    std::vector<std::string> v;
+    std::string cur;
+    for (char c : name) {
+        if (c == '/' || c == '\\') { v.push_back(cur); cur.clear(); }
+        else cur += c;
+    }
+    v.push_back(cur);
+    return v;
+}
+static std::string trim_dots_spaces(std::string s)
+{
+    while (!s.empty() && (s.back() == '.' || s.back() == ' ')) s.pop_back();
+    return s;
+}
+// checks.ts deviceName: the first segment whose stem (trailing dots and spaces off, the part before the first dot,
+// trailing spaces off) is CON, PRN, AUX, NUL, COM1-9 / LPT1-9 or COM / LPT with a superscript 1, 2 or 3 ("" none).
+static std::string device_segment(const std::string &name)
+{
+    for (const std::string &seg : segments(name)) {
+        std::string stem = trim_dots_spaces(seg);
+        stem = stem.substr(0, stem.find('.'));
+        while (!stem.empty() && stem.back() == ' ') stem.pop_back();
+        std::string low = stem;
+        for (char &c : low) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        if (low == "con" || low == "prn" || low == "aux" || low == "nul") return seg;
+        if (low.size() >= 4 && (low.compare(0, 3, "com") == 0 || low.compare(0, 3, "lpt") == 0)) {
+            const std::string d = low.substr(3);
+            if ((d.size() == 1 && d[0] >= '1' && d[0] <= '9') || d == "\xC2\xB9" || d == "\xC2\xB2" || d == "\xC2\xB3") return seg;
+        }
+    }
+    return "";
+}
+// checks.ts windowsKey: one separator, no empty or "." segments, trailing dots and spaces off, case folded (Unicode
+// lower case, as JavaScript's toLowerCase for the scripts mod names use)
+static std::string windows_key(const std::string &name)
+{
+    std::string key;
+    for (const std::string &seg : segments(name)) {
+        if (seg.empty() || seg == ".") continue;
+        key += (key.empty() ? "" : "/") + trim_dots_spaces(seg);
+    }
+    std::wstring w = widen(key), low(w.size(), L'\0');
+    if (!w.empty() && LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, w.c_str(), (int)w.size(), &low[0], (int)low.size(), nullptr,
+                                    nullptr, 0) == (int)w.size())
+        return narrow(low);
+    for (char &c : key) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    return key;
+}
+
 // Counts the bytes really inflated (not the declared size) and stops the entry once the total is over the limit.
 struct CountSink {
     uint64_t *total;
@@ -244,9 +296,11 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
     if (n > kMaxFiles) { note("too many files: more than " + std::to_string(kMaxFiles) + " files in the zip"); return problems; }
 
     static const std::set<std::string> refused = {".exe", ".dll", ".xex", ".xexp", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".msi", ".scr", ".com", ".lnk"};
-    int refusedShown = 0, iniIdx = -1, iniDepth = 99;
+    int refusedShown = 0, iniIdx = -1, iniDepth = 99, devicesShown = 0;
     uint64_t declared = 0;
     std::vector<mz_uint> toInflate;
+    std::set<std::string> fileKeys, dirKeys;
+    bool sameName = false;
     for (mz_uint i = 0; i < n; i++) {
         mz_zip_archive_file_stat st;
         if (!mz_zip_reader_file_stat(&z, i, &st)) { note("the zip is damaged: not a valid zip file"); return problems; }
@@ -255,7 +309,17 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
         if (st.m_is_encrypted) note("encrypted entry: " + name);
         if (bad_path(name)) note("unsafe path in the zip (outside the mod folder)");
         if ((st.m_version_made_by >> 8) == 3 && ((st.m_external_attr >> 16) & 0xf000) == 0xa000) note("the zip contains a link (symlink), which is not allowed");
-        if (!name.empty() && name.back() == '/') continue;   // a directory, as the server decides it
+        const bool isDir = !name.empty() && name.back() == '/';
+        const std::string dev = device_segment(name);
+        if (!dev.empty() && devicesShown++ < 5)
+            note("Windows device name not allowed as a file or folder name (CON, PRN, AUX, NUL, COM1-9, LPT1-9): " + dev);
+        const std::string key = windows_key(name);
+        if (!key.empty()) {
+            for (size_t at = key.find('/'); at != std::string::npos; at = key.find('/', at + 1)) dirKeys.insert(key.substr(0, at));
+            if (isDir) dirKeys.insert(key);
+            else if (!fileKeys.insert(key).second) sameName = true;
+        }
+        if (isDir) continue;   // a directory, as the server decides it
         std::string norm = name;
         for (char &c : norm) if (c == '\\') c = '/';
         std::string base = norm.substr(norm.find_last_of('/') == std::string::npos ? 0 : norm.find_last_of('/') + 1);
@@ -270,6 +334,8 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
         if (!st.m_is_encrypted) toInflate.push_back(i);
         if (declared > kMaxUnpackedBytes) { note("unpacked size is over the limit of " + std::to_string(kMaxUnpackedBytes) + " bytes"); return problems; }
     }
+    for (const std::string &k : fileKeys) if (dirKeys.count(k)) sameName = true;   // a file and a folder of one name
+    if (sameName) note("two entries in the zip have the same path or paths that differ only in case: Windows cannot keep both");
     if (!problems.empty()) return problems;
 
     // really inflate every entry and count the true bytes (the declared sizes can lie)

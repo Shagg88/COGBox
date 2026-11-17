@@ -176,6 +176,33 @@ int main()
         FILE *f = _wfopen(widen(zp).c_str(), L"wb"); fputs("not a zip at all", f); fclose(f);
         CHECK(has(fab_check_zip(zp, "gears3"), "not a valid zip"));
         CHECK(has(fab_check_zip(join(tmp, "missing.zip"), "gears3"), "cannot be opened"));
+
+        // Windows device names, as checks.ts refuses them (any extension, trailing dots / spaces, superscript digits)
+        for (const char *bad : {"aux.txt", "GearGame/CON", "dir/com1.ini", "Lpt9", "nul.tar.gz", "COM\xC2\xB9.dat", "x/lpt\xC2\xB3",
+                                "prn .txt", "AUX/readme.txt", "con."}) {
+            make_zip(zp, {{"mod.ini", "[Mod]\nName=x\n"}, {bad, "z"}});
+            const std::vector<std::string> p = fab_check_zip(zp, "gears3");
+            if (!has(p, "Windows device name not allowed as a file or folder name (CON, PRN, AUX, NUL, COM1-9, LPT1-9): "))
+                printf("  not refused: %s\n", bad);
+            CHECK(has(p, "Windows device name not allowed as a file or folder name (CON, PRN, AUX, NUL, COM1-9, LPT1-9): "));
+        }
+        for (const char *ok : {"console.txt", "auxiliary.ini", "com10.txt", "com0.txt", "lptx.bin", "nulls/a.bin", "my.con"}) {
+            make_zip(zp, {{"mod.ini", "[Mod]\nName=x\n"}, {ok, "z"}});
+            if (!fab_check_zip(zp, "gears3").empty()) printf("  refused: %s\n", ok);
+            CHECK(fab_check_zip(zp, "gears3").empty());
+        }
+        // paths that differ only in case (Windows keeps one), a file and a folder of one name; one folder in two cases is fine
+        const char *dupText = "two entries in the zip have the same path or paths that differ only in case: Windows cannot keep both";
+        make_zip(zp, {{"mod.ini", "x"}, {"Data/A.bin", "1"}, {"data/a.BIN", "2"}});
+        CHECK(has(fab_check_zip(zp, "gears3"), dupText));
+        make_zip(zp, {{"mod.ini", "x"}, {"Data/\xC3\x89t\xC3\xA9.bin", "1"}, {"Data/\xC3\xA9t\xC3\xA9.bin", "2"}});   // "Été" / "été"
+        CHECK(has(fab_check_zip(zp, "gears3"), dupText));
+        make_zip(zp, {{"mod.ini", "x"}, {"a.bin. ", "1"}, {"a.bin", "2"}});   // the same name as Windows reads it
+        CHECK(has(fab_check_zip(zp, "gears3"), dupText));
+        make_zip(zp, {{"mod.ini", "x"}, {"Data", "file"}, {"data/b.bin", "folder"}});
+        CHECK(has(fab_check_zip(zp, "gears3"), dupText));
+        make_zip(zp, {{"mod.ini", "x"}, {"Data/", ""}, {"DATA/b.bin", "1"}, {"data/c.bin", "2"}});
+        CHECK(fab_check_zip(zp, "gears3").empty());
     }
 
     std::error_code ec;
