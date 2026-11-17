@@ -2963,6 +2963,18 @@ struct Op {  // no member defaults (cheap to hold in arrays): ParseOp sets every
   uint8_t read_comps;   // components a read of it can touch (from the swizzle / select)
 };
 static_assert(sizeof(Op) <= 24);
+// 17 Nov: the components a 4-component swizzle (8 bits) reads, as a table made from the loop it replaces.
+struct SwizzleReads {
+  uint8_t v[256];
+  constexpr SwizzleReads() : v() {
+    for (uint32_t s = 0; s < 256; ++s) {
+      uint32_t r = 0;
+      for (int i = 0; i < 4; ++i) r |= 1u << ((s >> (2 * i)) & 3);
+      v[s] = uint8_t(r);
+    }
+  }
+};
+inline constexpr SwizzleReads kSwizzleReads{};
 inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, Small<Op, 4>* nested) {
   o.at = uint32_t(p);
   o.len = 0;
@@ -2979,8 +2991,7 @@ inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, Small<Op,
   if (o.comps == 2) {
     if (o.sel == 0) o.mask = cdata & 0xF;
     else if (o.sel == 1) {
-      o.read_comps = 0;
-      for (int i = 0; i < 4; ++i) o.read_comps |= 1u << ((cdata >> (2 * i)) & 3);
+      o.read_comps = kSwizzleReads.v[cdata];
     } else o.read_comps = 1u << (cdata & 3);
   } else if (o.comps == 1) {
     o.read_comps = 1;
@@ -3064,7 +3075,7 @@ struct DefaultInit : std::allocator<T> {
 };
 using InsList = std::vector<Ins, DefaultInit<Ins>>;
 // Opcodes that write their first operand and work per component (or replicate one value): the ones I may be.
-inline bool PerComponent(uint32_t op) {
+constexpr bool PerComponentSwitch(uint32_t op) {
   switch (op) {
     case 0: case 1: case 14: case 15: case 16: case 17: case 24: case 25: case 26: case 27: case 28: case 29: case 30:
     case 32: case 33: case 34: case 35: case 36: case 37: case 39: case 41: case 42: case 43: case 47: case 49:
@@ -3076,8 +3087,8 @@ inline bool PerComponent(uint32_t op) {
   }
 }
 // Opcodes whose first operand is a destination (others: every operand is read).
-inline uint32_t DestCount(uint32_t op) {
-  if (PerComponent(op)) return 1;
+constexpr uint32_t DestCountSwitch(uint32_t op) {
+  if (PerComponentSwitch(op)) return 1;
   switch (op) {
     case 77: case 38: case 78: case 81:  // sincos, imul, udiv, umul: two destinations
       return 2;
@@ -3087,6 +3098,17 @@ inline uint32_t DestCount(uint32_t op) {
     default: return 0;
   }
 }
+// 17 Nov: the two above as tables made from them at compile time (an opcode is 11 bits) - they are asked for every
+// operand of every instruction in every pass; the switches stay the single source.
+struct OpClass {
+  uint8_t per_component[2048], dests[2048];
+  constexpr OpClass() : per_component(), dests() {
+    for (uint32_t o = 0; o < 2048; ++o) per_component[o] = PerComponentSwitch(o) ? 1 : 0, dests[o] = uint8_t(DestCountSwitch(o));
+  }
+};
+inline constexpr OpClass kOpClass{};
+inline bool PerComponent(uint32_t op) { return op < 2048 ? kOpClass.per_component[op] != 0 : PerComponentSwitch(op); }
+inline uint32_t DestCount(uint32_t op) { return op < 2048 ? kOpClass.dests[op] : DestCountSwitch(op); }
 inline bool FlowOut(uint32_t op) {  // leaves the block backwards / sideways: endloop, continue(c), break(c), case, default
   return op == 22 || op == 7 || op == 8 || op == 2 || op == 3 || op == 6 || op == 10 || op == 23;
 }
@@ -3454,12 +3476,21 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
     auto keep = [&](const Ins& I) {
       const size_t na = out.size();
       out.insert(out.end(), c.begin() + I.at, c.begin() + I.at + I.len);
-      v_next.push_back(I);
+      v_next.emplace_back();  // default-initialised (InsList): only the used operand slots are copied
       Ins& m = v_next.back();
       m.at = na;
-      if (m.ops_at) m.ops_at = m.ops_at - I.at + na;
-      for (size_t o = 0; o < m.ops.n; ++o) m.ops.a[o].at = uint32_t(m.ops.a[o].at - I.at + na);
-      for (size_t o = 0; o < m.rel_ops.n; ++o) m.rel_ops.a[o].at = uint32_t(m.rel_ops.a[o].at - I.at + na);
+      m.len = I.len;
+      m.ops_at = I.ops_at ? I.ops_at - I.at + na : 0;
+      m.op = I.op;
+      m.sat = I.sat;
+      m.ext = I.ext;
+      m.ops.n = I.ops.n;
+      m.ops.overflow = I.ops.overflow;
+      m.rel_ops.n = I.rel_ops.n;
+      m.rel_ops.overflow = I.rel_ops.overflow;
+      for (size_t o = 0; o < I.ops.n; ++o) m.ops.a[o] = I.ops.a[o], m.ops.a[o].at = uint32_t(I.ops.a[o].at - I.at + na);
+      for (size_t o = 0; o < I.rel_ops.n; ++o)
+        m.rel_ops.a[o] = I.rel_ops.a[o], m.rel_ops.a[o].at = uint32_t(I.rel_ops.a[o].at - I.at + na);
     };
     // a new instruction written to the end of `out`, parsed there
     auto add_new = [&](const std::vector<uint32_t>& ni) {
