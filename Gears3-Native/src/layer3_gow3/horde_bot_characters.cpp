@@ -56,7 +56,7 @@ uint32_t Word(uint32_t a) { return (uint32_t(Byte(a)) << 24) | (uint32_t(Byte(a 
 
 // The && of `IsInState('PendingMatch') && ...` in GearGameMP_Base.SetPlayerClassFromPlayerSelection: 82 | 61 19 (native
 // 281, IsInState) | 21 <FName 'PendingMatch', number 0> | 4A (empty optional) 16 (end of parameters) | 18 (skip, the
-// right side). 0 unless exactly one such byte is found (anything else: not the expected script - left alone).
+// right side). FindCondition: 0 unless exactly one such byte is found (anything else: not the expected script - left alone).
 bool IsCondition(uint32_t at) {
   const uint8_t b0 = Byte(at);
   return (b0 == kAnd || b0 == kOr) && Byte(at + 1) == 0x61 && Byte(at + 2) == 0x19 && Byte(at + 3) == 0x21 && Byte(at + 12) == 0x4A &&
