@@ -37,7 +37,6 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/renderer/dlss_framegen.cpp
     src/layer0_xenos/renderer/xess_framegen.cpp
     src/layer0_xenos/draw_stats.cpp
-    src/layer0_xenos/prim_detail.cpp
     src/layer0_xenos/renderer/d3d12_backend.cpp
     src/layer0_xenos/renderer/vulkan_backend.cpp
     src/layer0_xenos/renderer/dxc_compiler.cpp
@@ -54,16 +53,12 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/renderer/ao.cpp
     src/layer0_xenos/hold_guest.cpp
     src/layer0_xenos/draw_log.cpp
-    src/layer0_xenos/shader_watch.cpp
     src/layer0_xenos/ucode.cpp
     src/layer0_xenos/hlsl.cpp
     src/layer0_xenos/dxbc_gen.cpp
     src/layer0_xenos/dxbc_spirv.cpp
     src/layer0_xenos/shader_dump.cpp
-    src/layer0_xenos/buffer_dump.cpp
     src/layer0_xenos/resolve_log.cpp
-    src/layer0_xenos/query_log.cpp
-    src/layer0_xenos/state_coverage.cpp
     src/layer0_xenos/pm4.cpp
     src/layer0_xenos/pm4_shadow.cpp
     src/layer0_xenos/display_gamma.cpp
@@ -196,14 +191,19 @@ endif()
 rexglue_setup_target(gow2 GPU_PLUGINS xenos)
 # CPU work (notes/60). GN_RECOMP_NO_PERF_COUNTERS: the SDK's RelWithDebInfo build defines REXGLUE_ENABLE_PROFILING, so
 # every indirect call in the recompiled code bumps one shared atomic counter nothing of ours reads. GN_CPU_ARCH: the CPU
-# level our code and the recompiled code are built for (empty = the compiler's x86-64 baseline); multiply-adds are
+# level our code and the recompiled code are built for (x86-64-v3 by default since 0.6.4); multiply-adds are
 # never fused (-ffp-contract=off), as the PowerPC code keeps them separate.
 option(GN_RECOMP_NO_PERF_COUNTERS "Recompiled code: no SDK perf counter on every indirect call" ON)
-set(GN_CPU_ARCH "" CACHE STRING "CPU level for our code and the recompiled code, e.g. x86-64-v3 (empty = baseline)")
-if(DEFINED ENV{GN_CPU_ARCH})  # a queue job's choice (job 218 checks the CPU for AVX2 first)
+# 0.6.4 (Shagg: "I want to move to the AVX2 only"): x86-64-v3 (AVX2 / FMA / BMI2) is the default for all four games;
+# an empty value (an older build folder's cache) means the default too. x86-64 = the old baseline build.
+set(GN_CPU_ARCH "x86-64-v3" CACHE STRING "CPU level for our code and the recompiled code: x86-64-v3 (default, AVX2) or x86-64 (baseline)")
+if(DEFINED ENV{GN_CPU_ARCH})  # a queue job's choice
     set(GN_CPU_ARCH "$ENV{GN_CPU_ARCH}")
 endif()
-message(STATUS "Gears2-Native: CPU level '${GN_CPU_ARCH}' (empty = x86-64 baseline), perf counters off: ${GN_RECOMP_NO_PERF_COUNTERS}")
+if(GN_CPU_ARCH STREQUAL "")
+    set(GN_CPU_ARCH "x86-64-v3")
+endif()
+message(STATUS "Gears2-Native: CPU level '${GN_CPU_ARCH}', perf counters off: ${GN_RECOMP_NO_PERF_COUNTERS}")
 if(TARGET gow2_recomp AND GN_RECOMP_NO_PERF_COUNTERS)
     target_compile_options(gow2_recomp PRIVATE -UREXGLUE_ENABLE_PROFILING)
 endif()
@@ -222,7 +222,7 @@ endif()
 # --gow2_pgo_dump_frame to LLVM_PROFILE_FILE); GN_PGO=use builds with the merged profile GN_PGO_PROFILE (.profdata).
 # Empty or off = as before. A queue job's environment sets both, like GN_CPU_ARCH (not written to the cache, so a build
 # without them is a normal build); the profile is made from runs of the game, so it stays in out\ and is never committed.
-set(GN_PGO "" CACHE STRING "Profile-guided optimisation: empty/off, gen or use")
+set(GN_PGO "" CACHE STRING "Profile-guided optimisation: empty/auto/off, gen, use, irgen or iruse")
 set(GN_PGO_PROFILE "" CACHE FILEPATH "Merged .profdata for GN_PGO=use")
 if(DEFINED ENV{GN_PGO})
     set(GN_PGO "$ENV{GN_PGO}")
@@ -230,16 +230,18 @@ endif()
 if(DEFINED ENV{GN_PGO_PROFILE})
     set(GN_PGO_PROFILE "$ENV{GN_PGO_PROFILE}")
 endif()
-# Patch 0160 (Shagg 12:58 "PGO should be the default"): with no GN_PGO given, a build uses the game version's stored
-# profile out\pgo\gow2-<base|tu6>.profdata when it is there (a training job puts it there) and is a normal build when it
-# is not. GN_PGO=off / gen / use given by a job still win.
-if(NOT DEFINED ENV{GN_PGO} AND (GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto"))
+# Patch 0160 made the stored profile the default; 0.6.4 turns that off again (below).
+# 0.6.4 (Shagg 16 Nov: "We can just do PGO off" - the stored profiles are from 25 Oct, before AVX2 and patch 110, and job
+# 1936's PGO-off Gears 3 ran faster than job 1925's with the profile): no GN_PGO given = a normal build. The next profiles
+# are to be trained after the move to the latest rexglue. GN_PGO=use with no GN_PGO_PROFILE takes the stored one (new in 0.6.4).
+if(GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto")
+    set(GN_PGO "off")
+    message(STATUS "Gears2-Native: PGO off (the default; GN_PGO=use for a profile-guided build)")
+endif()
+if((GN_PGO STREQUAL "use" OR GN_PGO STREQUAL "iruse") AND GN_PGO_PROFILE STREQUAL "")
     set(gn_pgo_stored "${CMAKE_SOURCE_DIR}/out/pgo/gow2-${GN_GAME_VERSION}.profdata")
     if(EXISTS "${gn_pgo_stored}")
-        set(GN_PGO "use")
         set(GN_PGO_PROFILE "${gn_pgo_stored}")
-    else()
-        message(STATUS "Gears2-Native: no stored profile ${gn_pgo_stored} - normal build (no PGO)")
     endif()
 endif()
 set(gn_pgo_targets gow2_recomp gow2 gn_layer0_xenos gn_layer1_xdk7645 gn_layer2_ue3)
@@ -265,7 +267,7 @@ if(GN_PGO STREQUAL "gen" OR GN_PGO STREQUAL "irgen")
     message(STATUS "Gears2-Native: PGO training build (execution counters, ${gn_pgo_gen_flag})")
 elseif(GN_PGO STREQUAL "use" OR GN_PGO STREQUAL "iruse")
     if(NOT EXISTS "${GN_PGO_PROFILE}")
-        message(FATAL_ERROR "GN_PGO=${GN_PGO}: profile '${GN_PGO_PROFILE}' not found")
+        message(FATAL_ERROR "GN_PGO=${GN_PGO}: profile '${GN_PGO_PROFILE}' not found (with no GN_PGO_PROFILE, the stored out/pgo profile is used when it exists)")
     endif()
     # Patch 0160: the profile's hash on the command line, so the compiler cache (sccache) never reuses an object built
     # with an older profile at the same path.

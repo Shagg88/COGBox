@@ -257,8 +257,8 @@ endif()
 # 135500 / 141500). GN_PGO=gen builds execution counters into the recompiled game code and ours; layer 0's
 # --gow2_pgo_dump_frame=N (shared shadow_renderer.cpp, patch 0159) writes them to LLVM_PROFILE_FILE at swap N, because the
 # harness closes the game. GN_PGO=use builds with the merged profile GN_PGO_PROFILE. irgen / iruse = the IR-level kind.
-# With no GN_PGO given, a build uses out\pgo\gow3-<base|tu6>.profdata when a training job has put it there, else it is a
-# normal build. The profile is made from game runs, so it stays in out\ and is never committed. Read from the environment
+# With no GN_PGO given, a build is a normal build (0.6.4; below); GN_PGO=use with no GN_PGO_PROFILE uses
+# out\pgo\gow3-<base|tu6>.profdata (a training job puts it there). The profile is made from game runs, so it stays in out\ and is never committed. Read from the environment
 # like Gears 2 (not written to the cache), so a build without it set is the default.
 set(GN_PGO "" CACHE STRING "Profile-guided optimisation: empty/auto, off, gen, use, irgen or iruse")
 set(GN_PGO_PROFILE "" CACHE FILEPATH "Merged .profdata for GN_PGO=use / iruse")
@@ -268,15 +268,39 @@ endif()
 if(DEFINED ENV{GN_PGO_PROFILE})
     set(GN_PGO_PROFILE "$ENV{GN_PGO_PROFILE}")
 endif()
-if(NOT DEFINED ENV{GN_PGO} AND (GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto"))
+# 0.6.4 (Shagg 16 Nov: "We can just do PGO off" - the stored profiles are from 25 Oct, before AVX2 and patch 110, and job
+# 1936's PGO-off Gears 3 ran faster than job 1925's with the profile): no GN_PGO given = a normal build. The next profiles
+# are to be trained after the move to the latest rexglue. GN_PGO=use with no GN_PGO_PROFILE takes the stored one (new in 0.6.4).
+if(GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto")
+    set(GN_PGO "off")
+    message(STATUS "Gears3-Native: PGO off (the default; GN_PGO=use for a profile-guided build)")
+endif()
+if((GN_PGO STREQUAL "use" OR GN_PGO STREQUAL "iruse") AND GN_PGO_PROFILE STREQUAL "")
     set(gn_pgo_stored "${CMAKE_SOURCE_DIR}/out/pgo/gow3-${GN_GAME_VERSION}.profdata")
     if(EXISTS "${gn_pgo_stored}")
-        set(GN_PGO "use")
         set(GN_PGO_PROFILE "${gn_pgo_stored}")
-    else()
-        message(STATUS "Gears3-Native: no stored profile ${gn_pgo_stored} - normal build (no PGO)")
     endif()
 endif()
+# 0.6.4 (Shagg: "I want to move to the AVX2 only"): the CPU level, the same as Gears 2's GN_CPU_ARCH block.
+# x86-64-v3 (AVX2 / FMA / BMI2) is the default; empty means the default; x86-64 = the old baseline build. Multiply-adds
+# are never fused (-ffp-contract=off), as the PowerPC code keeps them separate. cpu_check.cpp (patch 0134, from the
+# shared layer 0) is built for the plain baseline so it can show its message on an older CPU, and is told the level;
+# the launcher reads the same 'gn_cpu_level=' text from the exe.
+set(GN_CPU_ARCH "x86-64-v3" CACHE STRING "CPU level for our code and the recompiled code: x86-64-v3 (default, AVX2) or x86-64 (baseline)")
+if(DEFINED ENV{GN_CPU_ARCH})  # a queue job's choice
+    set(GN_CPU_ARCH "$ENV{GN_CPU_ARCH}")
+endif()
+if(GN_CPU_ARCH STREQUAL "")
+    set(GN_CPU_ARCH "x86-64-v3")
+endif()
+message(STATUS "Gears3-Native: CPU level '${GN_CPU_ARCH}'")
+foreach(gn_t gow3_recomp gow3 gn_layer0_xenos gn_layer2_ue3)
+    if(TARGET ${gn_t})
+        target_compile_options(${gn_t} PRIVATE -march=${GN_CPU_ARCH} -ffp-contract=off)
+    endif()
+endforeach()
+set_source_files_properties(${GN_LAYER0_DIR}/cpu_check.cpp PROPERTIES
+    COMPILE_OPTIONS "-march=x86-64" COMPILE_DEFINITIONS "GN_CPU_LEVEL=\"${GN_CPU_ARCH}\"")
 set(gn_pgo_targets gow3_recomp gow3 gn_layer0_xenos gn_layer2_ue3)
 set(gn_pgo_gen_flag -fprofile-instr-generate)
 set(gn_pgo_use_flag -fprofile-instr-use)
@@ -297,7 +321,7 @@ if(GN_PGO STREQUAL "gen" OR GN_PGO STREQUAL "irgen")
     message(STATUS "Gears3-Native: PGO training build (execution counters, ${gn_pgo_gen_flag})")
 elseif(GN_PGO STREQUAL "use" OR GN_PGO STREQUAL "iruse")
     if(NOT EXISTS "${GN_PGO_PROFILE}")
-        message(FATAL_ERROR "GN_PGO=${GN_PGO}: profile '${GN_PGO_PROFILE}' not found")
+        message(FATAL_ERROR "GN_PGO=${GN_PGO}: profile '${GN_PGO_PROFILE}' not found (with no GN_PGO_PROFILE, the stored out/pgo profile is used when it exists)")
     endif()
     # The profile's hash on the command line, so sccache never reuses an object built with an older profile.
     file(MD5 "${GN_PGO_PROFILE}" gn_pgo_md5)

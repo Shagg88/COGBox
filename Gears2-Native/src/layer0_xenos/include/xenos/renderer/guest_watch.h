@@ -16,7 +16,6 @@
 #include <cstdint>
 #include <memory>
 #include <utility>
-#include <vector>
 
 namespace rex::memory { class Memory; }
 
@@ -84,11 +83,6 @@ class GuestWatch {
   // memory, which also carries CPU writes the watch could not see (UnwatchablePages). Returns false if nothing changed.
   bool SettleGpuPage(uint32_t page, uint32_t version);
   void SetNarrowWidening(bool on) { narrow_ = on; }
-  // Job 151 diagnostic: log every memory-system write callback that overlaps one of these physical ranges (start,
-  // length): its exact range or page, the swap count and the guest thread (first 120). Set before the game runs.
-  // Also loads the symbols the report's call stacks use, here and not inside a callback (which runs under the memory
-  // system's global lock, where a first PDB load would stall the game for seconds and shift the very timing we watch).
-  void SetReportRanges(std::vector<std::pair<uint32_t, uint32_t>> ranges);
   // Number of Bump calls so far (callbacks and resolves): while it is unchanged, no Version can have changed.
   uint64_t Epoch() const { return epoch_.load(std::memory_order_acquire); }
   // One 4 KB page's version (page = physical address >> kPageShift).
@@ -121,8 +115,6 @@ class GuestWatch {
   std::atomic<uint64_t> gpu_lost_{0};  // patch 0008
   std::atomic<uint64_t> gpu_exact_{0};  // green-vine review: GPU-current pages bumped by exact-range callbacks
   bool narrow_ = false;                // patch 0008 (set before the game runs)
-  std::vector<std::pair<uint32_t, uint32_t>> report_;
-  std::atomic<uint32_t> report_lines_{0};
 };
 
 }  // namespace xenos::renderer

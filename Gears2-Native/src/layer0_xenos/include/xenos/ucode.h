@@ -268,7 +268,4 @@ const char* IssueKindName(Issue::Kind kind);
 // D3D-style disassembly, byte-identical to the SDK's Shader::ucode_disassembly().
 std::string Disassemble(const Program& program);
 
-const char* VectorOpcodeName(AluVectorOpcode op);
-const char* ScalarOpcodeName(AluScalarOpcode op);
-
 }  // namespace xenos::ucode

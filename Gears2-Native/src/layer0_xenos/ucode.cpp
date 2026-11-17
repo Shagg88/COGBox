@@ -610,9 +610,6 @@ const char* IssueKindName(Issue::Kind kind) {
   return "?";
 }
 
-const char* VectorOpcodeName(AluVectorOpcode op) { return kVectorInfos[uint32_t(op) & 31].name; }
-const char* ScalarOpcodeName(AluScalarOpcode op) { return kScalarInfos[uint32_t(op) & 63].name; }
-
 bool Alu::IsVectorOpDefaultNop() const {
   // "max r0._, r0, r0" is what the assembler emits for an empty vector slot.
   auto plain_r0 = [](const Operand& o) {

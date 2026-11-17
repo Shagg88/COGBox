@@ -126,14 +126,6 @@ REXCVAR_DEFINE_INT32(gow2_renderer_texture_verify_frames, 0, "Gears2",
                      "guest bytes when it is used at least N frames after its last check, and reload it if they changed "
                      "unseen. 0 = off (default). Costs CPU time; try 30");
 
-// GitHub #131 diagnostic (Judgment corruption on Vulkan / Proton, AMD): each distinct binding - guest base, guest
-// format, dimension, size, tiling, fetch swizzle and signs, and the host format, view components, signed view, load
-// path and host bytes it was given - logged once, up to N lines, so the same asset can be compared between D3D12 on
-// Windows and Vulkan under Proton. 0 = off (the default); capped at 4000 lines. Logging only: nothing is changed.
-REXCVAR_DEFINE_INT32(gow2_renderer_texture_view_log, 0, "Gears2",
-                     "Diagnostic (GitHub #131): log each distinct texture binding once (guest base / format / size / "
-                     "swizzle -> host format / view components / load path), up to N lines (max 4000). 0 = off");
-
 // Job 620 (GitHub #41 - keyboard button prompts): replace a guest texture by the XXH3 of its base-level guest bytes.
 REXCVAR_DEFINE_STRING(gow2_texture_replace_dir, "", "Gears2",
                       "Folder of replacement textures (job 620): <hash16>_<level>.bin = that level's host-format data "
@@ -657,7 +649,24 @@ void ClearDynamicOverlays() {
   g_overlay_gen.fetch_add(1, std::memory_order_acq_rel);
 }
 
-uint64_t BumpOverlayGeneration() { return g_overlay_gen.fetch_add(1, std::memory_order_acq_rel) + 1; }
+void SetTexturePacksForTests(const std::string& pack_dirs, const std::string& pack_dump_dir) {
+  g_swap.Init();
+  std::lock_guard<std::mutex> lock(g_swap.mutex);
+  g_swap.packs = texpack::PackIndex{};
+  g_swap.packs.Build(pack_dirs);
+  g_swap.pack_dump_dir = pack_dump_dir;
+  g_swap.pack_dump_path = texpack::PathFromUtf8(pack_dump_dir);
+  std::error_code ec;
+  if (!pack_dump_dir.empty()) std::filesystem::create_directories(g_swap.pack_dump_path, ec);
+  g_swap.pack_dumped.clear();
+  g_swap.pack_refused.clear();
+  g_swap.pack_bad.clear();
+  g_swap.pack_dump_count = 0;
+  g_swap.pack_loaded = 0;
+  g_swap.static_on.store(!g_swap.replace.empty() || !g_swap.overlay.empty() || !g_swap.dump_sizes.empty() || g_swap.dump_all ||
+                             !g_swap.packs.empty() || !g_swap.pack_dump_dir.empty(),
+                         std::memory_order_release);
+}
 
 uint64_t OverlayGeneration() { return g_overlay_gen.load(std::memory_order_acquire); }
 
@@ -877,28 +886,6 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
       for (uint32_t i = 0; i < 4; ++i) v.components[i] = comp[i];
       v.signed_view = any_signed;
       ++stats_.bound;
-      if (const int32_t view_log = REXCVAR_GET(gow2_renderer_texture_view_log); view_log > 0) {  // GitHub #131
-        static std::mutex m;
-        static std::unordered_set<uint64_t> seen;
-        static uint32_t lines = 0;
-        const uint32_t cap = uint32_t(std::min(view_log, 4000));
-        const uint64_t sig = (uint64_t(tf[1] & 0xFFFFF03Fu) << 32) ^ (uint64_t(tf[2]) << 7) ^ (uint64_t(swz) << 1) ^
-                             (uint64_t(kind) << 60) ^ (uint64_t(Bits(tf[0], 2, 8)) << 50) ^ uint64_t(tf[0] >> 31);
-        std::lock_guard<std::mutex> lock(m);
-        if (lines < cap && seen.insert(sig).second) {
-          ++lines;
-          const uint32_t w = Bits(tf[2], 0, 13) + 1, h = Bits(tf[2], 13, 13) + 1;
-          REXLOG_INFO("gow2_texture_view: frame {} kind {} base {:08X} (+{:X}) mips {:08X} | guest fmt {} endian {} {}x{} "
-                      "dim {} tiled {} swizzle {:03X} signs {:02X} | host fmt {} view {}{}{}{}{} | {} {} bytes, "
-                      "loaded frame {}{}",
-                      frame, kind, e.base_start, e.base_length, e.mip_start, Bits(tf[1], 0, 6), Bits(tf[1], 6, 2), w, h,
-                      Bits(tf[5], 9, 2), Bits(tf[0], 31, 1), swz, Bits(tf[0], 2, 8),
-                      uint32_t(e.format), uint32_t(comp[0]), uint32_t(comp[1]), uint32_t(comp[2]), uint32_t(comp[3]),
-                      any_signed ? " signed" : "", e.gpu_storage ? "GPU untile" : "CPU", e.host_bytes,
-                      e.loaded_frame == ~0ull ? -1ll : (long long)e.loaded_frame,
-                      lines == cap ? " (gow2_renderer_texture_view_log: limit reached)" : "");
-        }
-      }
     }
     // Remember the result; a re-upload inside Lookup bumps nothing in the watch, so the epoch read before is valid.
     sc.valid = true;
@@ -930,6 +917,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   // longer overlaps dword 5 bit 9 (the dimension).
   const uint64_t b = (uint64_t(tf[2]) << 32) | (tf[5] & 0xFFFFFE00u) | ((tf[4] & 0x3C0u) >> 4) | host_kind;
   const Key key{a, b};
+  frame_now_ = frame;  // 0.6.4 (#341): ReleasePack's LRU stamp
   // Job 284 diagnostic: hash a probed texture's bytes at every load (any frame), log lookups inside the frame window.
   const bool probe_base = !probe_bases_.empty() && Probed(tf, ~0ull);
   const bool probe = probe_base && Probed(tf, frame);
@@ -958,7 +946,6 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
     e->loaded_frame = frame;
     e->freed_at_load = freed_total_;  // patch 0149
     if (probe_base) e->probe_load_hash = GuestHash(*e);
-    if (load_log_frame_ && frame == load_log_frame_) LogLoad(*e, tf, frame, "new");
     if (e->texture) {
       ++stats_.textures;
       stats_.host_bytes += e->host_bytes;
@@ -1007,7 +994,6 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
       e.checked_frame = frame;
       e.callbacks_at_check = epoch_before;
       if (probe_base) e.probe_load_hash = GuestHash(e);
-      if (load_log_frame_ && frame == load_log_frame_) LogLoad(e, tf, frame, "reload: overlay generation changed");
       return done(e, "reload: overlay generation changed");
     }
     e.overlay_gen = ov_gen;
@@ -1070,7 +1056,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   watch_.Watch(e.base_start, e.base_length);
   if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
   const uint64_t gpu_pages0 = stats_.gpu_pages_changed, volatile0 = stats_.volatile_reloads;
-  if (!always_reload_ && !PagesChanged(e)) {
+  if (!PagesChanged(e)) {
     e.version = rearmed;
     ++stats_.content_unchanged;
     return done(e, "hit: pages written, bytes hashed unchanged");
@@ -1102,7 +1088,6 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   else if (stats_.volatile_reloads != volatile0) ++stats_.reload_volatile;
   else ++stats_.reload_cpu;
   stats_.reload_bytes += uint64_t(e.base_length) + e.mip_length;
-  if (load_log_frame_ && frame == load_log_frame_) LogLoad(e, tf, frame, why);
   return done(e, why);
 }
 
@@ -1138,14 +1123,6 @@ void TextureCache::Probe(const Entry& e, const uint32_t* tf, uint64_t frame, con
   }
 }
 
-void TextureCache::LogLoad(const Entry& e, const uint32_t* tf, uint64_t frame, const char* reason) {
-  const uint32_t w = (tf[2] & 0x1FFFu) + 1, h = ((tf[2] >> 13) & 0x1FFFu) + 1;
-  REXLOG_INFO("gow2_renderer: texture load frame {}: {} | base {:08X} (+{:X}) mips {:08X} (+{:X}) format {} {}x{} dim {} "
-              "tiled {} | host {} bytes{}",
-              frame, reason, e.base_start, e.base_length, e.mip_start, e.mip_length, tf[1] & 0x3Fu, w, h,
-              (tf[5] >> 9) & 3u, tf[0] >> 31, e.host_bytes, e.gpu_storage ? " | GPU untile" : " | CPU");
-}
-
 TextureCache::Entry* TextureCache::LookupScaled(const uint32_t* tf) {
   const uint32_t format = Bits(tf[1], 0, 6), endian = Bits(tf[1], 6, 2);
   const uint32_t dim = Bits(tf[5], 9, 2);
@@ -1153,48 +1130,23 @@ TextureCache::Entry* TextureCache::LookupScaled(const uint32_t* tf) {
   const uint32_t base = Bits(tf[1], 12, 20) << 12, mip_base = Bits(tf[5], 12, 20) << 12;
   const uint32_t w = Bits(tf[2], 0, 13) + 1, h = Bits(tf[2], 13, 13) + 1;
   const uint32_t pitch_div_32 = Bits(tf[0], 22, 9);
-  // Job 189 diagnostic: why a texture our resolves wrote (any page GPU-current) is not taken at the scale.
-  auto miss = [&](const char* why) -> Entry* {
-    if (!scaled_miss_log_ || !base) return nullptr;  // job 227: the page walk below is the cost; off by default
-    const uint32_t len = std::max<uint32_t>(pitch_div_32 * 32u, w) * h * 4u;
-    bool ours = false;
-    for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + std::max(len, 1u) - 1) >> GuestWatch::kPageShift && !ours; ++p)
-      ours = watch_.GpuCurrent(p);
-    if (ours) {
-      char b[300];
-      std::snprintf(b, sizeof(b), "%s: base %08X fmt %u %ux%u pitch %u dim %u tiled %u mips %u", why, base, format, w, h,
-                    pitch_div_32 * 32u, dim, tiled ? 1u : 0u, mip_base ? Bits(tf[4], 6, 4) : 0u);
-      ++stats_.scaled_misses[b];
-    }
-    return nullptr;
-  };
-  if (dim != 1 || stacked || !base) return miss("not a single 2D");
-  if (mip_base && Bits(tf[4], 6, 4) != 0) return miss("mip chain");  // not a single resolved level
+  if (dim != 1 || stacked || !base) return nullptr;  // not a single 2D
+  if (mip_base && Bits(tf[4], 6, 4) != 0) return nullptr;  // a mip chain, not a single resolved level
   const HostFormat hf = Host(format);
   const bool depth_convert = hf.convert == Convert::kDepthUnorm || hf.convert == Convert::kDepthFloat;
-  if (!(hf.convert == Convert::kCopy || depth_convert) || hf.block_compressed) return miss("format conversion");
+  if (!(hf.convert == Convert::kCopy || depth_convert) || hf.block_compressed) return nullptr;  // format conversion
   const uint32_t code = hf.convert == Convert::kDepthUnorm ? 14u : hf.convert == Convert::kDepthFloat ? 15u
                                                                                                      : UntileCode(hf.format);
-  if (!code || code == 12u) return miss("no GPU load code");
+  if (!code || code == 12u) return nullptr;  // no GPU load code
   const tx::FormatBlock& fb = tx::GetFormatBlock(format);
   const uint32_t bpb = fb.bytes_per_block();
-  if ((bpb != 4 && bpb != 8) || fb.block_width != 1 || fb.block_height != 1) return miss("not 32/64 bpp");
+  if ((bpb != 4 && bpb != 8) || fb.block_width != 1 || fb.block_height != 1) return nullptr;  // not 32/64 bpp
   const tx::GuestLayout layout =
       tx::GetGuestLayout(tx::Dimension::k2DOrStacked, pitch_div_32, w, h, 1, tiled, format, packed, true, 0);
   const uint32_t bpb_log2 = tx::Log2Floor(bpb);
   const uint32_t pitch = layout.base.row_pitch_bytes / bpb;
   ScaledSource src;
-  if (!scaled_lookup_(base, std::max(layout.base.level_data_extent_bytes, 1u), src) || !src.words) {
-    static const char* kWhy[] = {"no scaled source", "no scaled-memory window holds the extent", "?", "?",
-                                 "pages not scaled-current"};
-    if (src.reason == 4) {
-      char why[128];
-      std::snprintf(why, sizeof(why), "pages not scaled-current (scaled %u, unscaled GPU %u, other %u, first at +%X)",
-                    src.pages_scaled, src.pages_gpu, src.pages_other, src.first_bad);
-      return miss(why);
-    }
-    return miss(kWhy[src.reason < 5 ? src.reason : 0]);
-  }
+  if (!scaled_lookup_(base, std::max(layout.base.level_data_extent_bytes, 1u), src) || !src.words) return nullptr;
   const Key key{(uint64_t(tf[0] & 0xFFC00000u) << 32) | (tf[1] & 0xFFFFF4FFu),
                 (uint64_t(tf[2]) << 32) | (tf[5] & 0xFFFFFE00u) | 8u};
   auto it = scaled_entries_.find(key);
@@ -1432,17 +1384,43 @@ void TextureCache::EndFrame(uint64_t frame) {
       scaled_evicted_total_ += dropped;
     }
   }
-  if (!cap_bytes_ || stats_.host_bytes <= cap_bytes_) return;
+  // 0.6.4 (#341): texture pack counters, when they move (at most every 30 s)
+  if ((frame % 1800u) == 0 && (pack_reads_ != pack_logged_reads_ || pack_reuses_ != pack_logged_reuses_) &&
+      (pack_reads_ || pack_reuses_)) {
+    pack_logged_reads_ = pack_reads_;
+    pack_logged_reuses_ = pack_reuses_;
+    uint64_t kept = 0, kept_bytes = 0;
+    for (const auto& [_, sh] : pack_shared_) if (!sh.refs) { ++kept; kept_bytes += sh.bytes; }
+    REXLOG_INFO("gow2_texture_pack: frame {}: {} file(s) read, {} reuse(s) without a read, {} shared texture(s) ({} "
+                "unused, {} MB), {} freed | cache {} of {} MB",
+                frame, pack_reads_, pack_reuses_, pack_shared_.size(), kept, kept_bytes >> 20, pack_freed_,
+                stats_.host_bytes >> 20, cap_bytes_ >> 20);
+  }
+  if (!cap_bytes_) {  // review r1938: no cap - pack textures nothing shows are freed at once (as before sharing)
+    FreeUnusedPacks(0);
+    return;
+  }
+  if (stats_.host_bytes <= cap_bytes_) return;
+  const uint64_t target = cap_bytes_ / 10 * 9;
+  FreeUnusedPacks(target);  // 0.6.4 (#341): pack textures nothing shows go first
+  if (stats_.host_bytes <= target) return;
   std::vector<std::pair<uint64_t, const Key*>> old;
   for (const auto& [key, e] : entries_)
     if (e->texture && e->last_used + 1 < frame) old.push_back({e->last_used, &key});
   std::sort(old.begin(), old.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
-  const uint64_t target = cap_bytes_ / 10 * 9;
   std::vector<Key> evict;
   uint64_t bytes = stats_.host_bytes;
+  std::unordered_map<uint64_t, uint32_t> refs_left;  // a shared pack texture is freed with its last entry
   for (const auto& [used, key] : old) {
     if (bytes <= target) break;
-    bytes -= entries_.at(*key)->TotalHostBytes();
+    const Entry& oe = *entries_.at(*key);
+    if (oe.pack_shared) {
+      auto sh = pack_shared_.find(oe.pack_hash);
+      auto r = refs_left.try_emplace(oe.pack_hash, sh != pack_shared_.end() ? sh->second.refs : 0u).first;
+      if (r->second && --r->second == 0 && sh != pack_shared_.end()) bytes -= std::min(bytes, sh->second.bytes);
+    } else {
+      bytes -= std::min(bytes, oe.TotalHostBytes());
+    }
     evict.push_back(*key);
   }
   if (evict.empty()) return;
@@ -1459,7 +1437,11 @@ void TextureCache::EndFrame(uint64_t frame) {
         ++freed_total_;
       }
       e.overlay_variants.clear();
+      if (e.pack_shared) ReleasePack(e);  // review r1938 (cannot happen now: LoadFromPack clears variants) - kept safe
       e.texture = 0;
+    } else if (e.pack_shared) {  // 0.6.4 (#341): its shared pack texture is freed below once no entry uses it
+      ReleasePack(e);
+      if (stats_.textures) --stats_.textures;
     } else {
       backend_.DestroyTexture(e.texture);  // deferred by the backend until our GPU is past it
       stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
@@ -1478,7 +1460,38 @@ void TextureCache::EndFrame(uint64_t frame) {
     }
     entries_.erase(it);
   }
+  FreeUnusedPacks(target);  // 0.6.4 (#341): the shared pack textures those entries were the last users of
   for (SlotCache& sc : slot_cache_) sc.valid = false;  // they may point at evicted entries
+}
+
+void TextureCache::ReleasePack(Entry& e) {
+  auto sh = pack_shared_.find(e.pack_hash);
+  if (sh != pack_shared_.end() && sh->second.texture == e.texture) {
+    if (sh->second.refs) --sh->second.refs;
+    sh->second.last_used = frame_now_;
+  } else if (e.texture) {
+    backend_.DestroyTexture(e.texture);  // (not the shared one: cannot happen - kept safe)
+  }
+  e.texture = 0;
+  e.pack_shared = false;
+  e.pack_complete = false;
+}
+
+void TextureCache::FreeUnusedPacks(uint64_t target) {
+  std::vector<std::pair<uint64_t, uint64_t>> unused;  // (last used, hash)
+  for (const auto& [hash, sh] : pack_shared_) if (!sh.refs) unused.push_back({sh.last_used, hash});
+  if (unused.empty()) return;
+  std::sort(unused.begin(), unused.end());
+  for (const auto& [used, hash] : unused) {
+    if (target && stats_.host_bytes <= target) break;
+    auto sh = pack_shared_.find(hash);
+    backend_.DestroyTexture(sh->second.texture);  // deferred by the backend until our GPU is past it
+    stats_.host_bytes -= std::min(stats_.host_bytes, sh->second.bytes);
+    stats_.evicted_bytes += sh->second.bytes;
+    ++freed_total_;  // patch 0149
+    ++pack_freed_;
+    pack_shared_.erase(sh);
+  }
 }
 
 // 0.6.2 (GitHub #311): a load that did not complete - the backend dropped a dispatch, copy or upload (D3D12: no command
@@ -2241,7 +2254,8 @@ void TextureCache::DestroyHost(Entry& e) {
   for (auto v = e.overlay_variants.begin(); v != e.overlay_variants.end();) {  // PR117 fix: no double destroy
     if (v->second.texture == e.texture) v = e.overlay_variants.erase(v); else ++v;
   }
-  backend_.DestroyTexture(e.texture);
+  if (e.pack_shared) ReleasePack(e);  // 0.6.4 (#341): the shared pack texture stays for other entries / a later return
+  else backend_.DestroyTexture(e.texture);
   e.texture = 0;
   stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
   e.host_bytes = 0;
@@ -2298,11 +2312,46 @@ bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesys
     return true;
   }
   if (g_swap.pack_bad.count(hash)) return false;  // r95 M1: refused before, for good
+  // Review r1938: prompt-style variants left from earlier content here (Load returns before its own variant clean-up when
+  // a pack file is used) go now, as they would for any other content change - a pack entry never has variants.
+  if (!e.overlay_variants.empty()) {
+    for (const auto& [_, var] : e.overlay_variants) {
+      if (var.texture && var.texture != e.texture) {
+        backend_.DestroyTexture(var.texture);
+        stats_.host_bytes -= std::min(stats_.host_bytes, var.host_bytes);
+        if (stats_.textures) --stats_.textures;
+        ++freed_total_;
+      }
+    }
+    e.overlay_variants.clear();
+    for (SlotCache& sc : slot_cache_) sc.valid = false;
+  }
+  // 0.6.4 (#341): another entry (another guest address) already holds this file's texture, complete - share it: no file
+  // read, no upload. Signed fetches were refused above; the shared texture's shape is the file's, as a fresh load's.
+  if (auto sh = pack_shared_.find(hash); sh != pack_shared_.end()) {
+    const bool had_texture = e.texture != 0;
+    if (had_texture) DestroyHost(e);  // (takes it off the counts; a shared one is released, not destroyed)
+    e.texture = sh->second.texture;
+    ++sh->second.refs;
+    sh->second.last_used = frame_now_;
+    e.pack_shared = true;
+    e.format = sh->second.format;
+    e.gpu_storage = false;
+    e.ov_scale = 1;
+    e.host_bytes = 0;  // counted once, with the shared texture
+    if (had_texture) ++stats_.textures;  // (a new entry is counted by Lookup)
+    e.pack_hash = hash;
+    e.pack_complete = true;
+    arm();
+    ++pack_reuses_;
+    return true;
+  }
   texpack::DdsImage img;
   std::string why;
   if (!texpack::ReadDds(file, img, why) || !texpack::FitsGuest(w, h, mips, img, why) || !texpack::FitsUpload(img, why))
     return refuse(why, true);  // r95 M3: FitsUpload - a level the upload ring refuses would fail and retry 16 times
   bool created = false;
+  bool counted = true;  // 0.6.4 (#341): e.host_bytes is in stats_ already (false: a new entry, which Lookup counts after Load)
   if (!e.texture || e.pack_hash != hash) {
     // r95 L4: the new texture is made before the old one goes, so a failed creation changes nothing (stats included)
     gpu::TextureDesc td;
@@ -2327,6 +2376,7 @@ bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesys
       ++stats_.textures;
       stats_.host_bytes += e.host_bytes;
     }
+    counted = replacing_existing;
   }
   e.pack_hash = hash;
   e.pack_complete = false;
@@ -2340,8 +2390,24 @@ bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesys
   if (++g_swap.pack_loaded <= 20)
     REXLOG_INFO("gow2_texture_pack: {:016X} ({}x{}) replaced: {}x{}, {} level(s), format {}", hash, w, h, img.width,
                 img.height, img.mips, uint32_t(img.format));
-  if (backend_.TextureLoadDrops() != drops_at_start) FailLoad(e, e.texture, created, "backend dropped part of it");
-  else e.pack_complete = true;
+  ++pack_reads_;
+  if (backend_.TextureLoadDrops() != drops_at_start) {
+    FailLoad(e, e.texture, created, "backend dropped part of it");
+    return true;
+  }
+  e.pack_complete = true;
+  // 0.6.4 (#341): complete - from now on the texture belongs to pack_shared_ (this entry its first user). Its bytes move
+  // from the entry to the shared texture: already in the counts unless this is a new entry, which Lookup counts after
+  // Load (with host_bytes, now 0) - those are added here.
+  PackShared& sh = pack_shared_[hash];
+  sh.texture = e.texture;
+  sh.format = e.format;
+  sh.bytes = e.host_bytes;
+  sh.refs = 1;
+  sh.last_used = frame_now_;
+  if (!counted) stats_.host_bytes += e.host_bytes;
+  e.host_bytes = 0;
+  e.pack_shared = true;
   return true;
 }
 

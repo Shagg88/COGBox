@@ -196,6 +196,12 @@ TEST_CASE("texture_pack: non-ASCII folder and file names", "[texture_pack]") {
   touch(pack_path / PathFromUtf8("00000000000000FF_\xE6\xB5\x8B\xE8\xAF\x95.dds"));  // "_测试"
   touch(pack_path / PathFromUtf8("\xE8\xAF\xB4\xE6\x98\x8E.txt"));       // a readme with a CJK name: skipped
   touch(pack_path / PathFromUtf8("000000000000\xC3\xA9\xC3\xA9.dds"));  // non-hex characters in the hash: skipped
+  // (the names below are made with PathFromUtf8: a narrow string appended to a path is read in the ANSI code page on Windows,
+  // which made "_\xE6..." a garbled name - the test failed on Windows from r95 on, job 1937c)
+  touch(pack_path / PathFromUtf8("\xD0\xA2\xD0\xB5\xD0\xBA\xD1\x81\xD1\x82\xD1\x83\xD1\x80\xD1\x8B") / "00000000000000EE.dds");  // "Текстуры"
+  touch(pack_path / PathFromUtf8("00000000000000FF_\xE6\xB5\x8B\xE8\xAF\x95.dds"));  // "_测试"
+  touch(pack_path / PathFromUtf8("\xE8\xAF\xB4\xE6\x98\x8E.txt"));                    // a readme with a CJK name: skipped
+  touch(pack_path / PathFromUtf8("000000000000\xC3\xA9\xC3\xA9.dds"));               // non-hex characters in the hash: skipped
   PackIndex index;
   REQUIRE_NOTHROW(index.Build(pack + ";" + PathToUtf8(root) + "/\xE6\x97\xA0"));  // and a missing non-ASCII folder
   REQUIRE(index.errors().empty());

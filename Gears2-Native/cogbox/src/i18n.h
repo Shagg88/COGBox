@@ -17,3 +17,6 @@ std::string i18n_auto_code();                  // what "auto" picks on this PC
 // The text in the current language. A label like "Play##x" keeps its "##x" (Dear ImGui's hidden id) untouched.
 const char *tr(const char *english);
 std::string tr(const std::string &english);
+// 0.6.4 (the Mods tab's built lines): tr() of a text with numbered gaps "{1}" .. "{9}", then the gaps filled with `args`
+// (as they are - names, numbers). The translation may put the gaps in any order.
+std::string trf(const std::string &english, const std::vector<std::string> &args);

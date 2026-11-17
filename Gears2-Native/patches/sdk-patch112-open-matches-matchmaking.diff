@@ -1,0 +1,454 @@
+diff --git a/include/rex/kernel/xam/net/invites.h b/include/rex/kernel/xam/net/invites.h
+index 4ab4751..dbddcf7 100644
+--- a/include/rex/kernel/xam/net/invites.h
++++ b/include/rex/kernel/xam/net/invites.h
+@@ -72,6 +72,12 @@ struct JoinEvent {
+   bool from_game_invite = false;
+ };
+ std::optional<JoinEvent> ParseJoinEvent(const std::string& json);
++// COGBox SDK patch 112: a server message telling this game that its matchmaking should find one Open matches lobby
++// (Gears 3): {type:'prefer', room_code}. See OnlineSessions::Prefer.
++struct PreferEvent {
++  std::string room_code;
++};
++std::optional<PreferEvent> ParsePreferEvent(const std::string& json);
+ 
+ // What accepting needs from the running game (online start-up sets the real ones; tests their own).
+ struct InviteHooks {
+diff --git a/include/rex/kernel/xam/net/online_sessions.h b/include/rex/kernel/xam/net/online_sessions.h
+index 75242b3..1c3cf6b 100644
+--- a/include/rex/kernel/xam/net/online_sessions.h
++++ b/include/rex/kernel/xam/net/online_sessions.h
+@@ -35,6 +35,8 @@ class SessionBackend {
+   virtual bool SetLobbyPlayers(const std::string& lobby_id, uint32_t players) { return true; }
+   // COGBox SDK patch 84 (open matches): the hosted match has started (XSessionStart) or ended (XSessionEnd).
+   virtual bool SetLobbyInProgress(const std::string& lobby_id, bool in_progress) { return true; }
++  // COGBox SDK patch 112: the lobby with this room code, as the server has it now (nullopt: gone, or not answered).
++  virtual std::optional<LobbyInfo> LookupLobby(const std::string& room_code) { return std::nullopt; }
+ };
+ 
+ // XamSessionRefObjByHandle's made-up session objects: 0xDEADF00D, or one per session. Never memory: the kernel must
+@@ -99,6 +101,17 @@ class OnlineSessions {
+   // COGBox SDK patch 92: playlist = the search's own playlist property (kPlaylistProperty); lobbies of another
+   // playlist are left out, as Xbox Live's matchmaking did (the game joins whatever a search returns).
+   std::vector<LobbyInfo> Search(uint32_t title_id, uint64_t own_xuid, std::optional<int64_t> playlist = std::nullopt);
++  // COGBox SDK patch 112 (Open matches through matchmaking, Gears 3): until `until`, a search of this title finds only
++  // the lobby with this room code (looked up fresh each search, so another region's match is found too), as long as its
++  // playlist is the search's. The game's own matchmaking then asks the host's join beacon for a place, as strangers did
++  // on Xbox Live, and the host's game picks the team. A newer call replaces it. A lobby that is gone, or a search of
++  // another playlist, gets the normal results. from_first_search: the time left shrinks to that once a search first
++  // finds the match (a game just started has intros and menus to get through first). Joining the match (its host's join
++  // beacon, OnBeaconConnect) ends it, so a later search is a normal one.
++  static constexpr auto kPreferLifetime = std::chrono::minutes(3);
++  static constexpr auto kPreferStartupLifetime = std::chrono::minutes(15);   // --net_prefer_lobby: the game starts first
++  void Prefer(const std::string& room_code, std::chrono::steady_clock::time_point until,
++              std::optional<std::chrono::steady_clock::duration> from_first_search = std::nullopt);
+   // A lobby the game found another way (XSessionSearchByID for an accepted invite): its QoS block is answered too.
+   void AddFound(const LobbyInfo& lobby);
+   std::string RoomCode() const;  // of the newest registered lobby, empty when none
+@@ -138,6 +151,12 @@ class OnlineSessions {
+   std::optional<uint64_t> target_host_;                 // patch 93: the host of the lobby the game last looked up to join
+   std::chrono::steady_clock::time_point target_since_{};   // when it was looked up
+   std::mutex send_mutex_;   // patch 84: one in-progress PATCH at a time
++  std::optional<std::string> prefer_code_;                   // patch 112: the Open matches lobby searches find
++  std::chrono::steady_clock::time_point prefer_until_{};
++  std::optional<std::chrono::steady_clock::duration> prefer_first_;   // patch 112: shortened at the first search
++  uint64_t prefer_host_ = 0;                                          // patch 112: the found match's host
++  // Patch 112: the lobby goes into the results (QoS block, host remembered for signaling).
++  void TakeFound(LobbyInfo l, std::vector<LobbyInfo>* out, std::map<std::array<uint8_t, 8>, std::vector<uint8_t>>* qos);
+   std::chrono::milliseconds retry_delay_{2000};
+   std::map<uint32_t, uint32_t> contexts_;
+   std::map<uint32_t, int64_t> properties_;
+diff --git a/src/kernel/xam/net/invites.cpp b/src/kernel/xam/net/invites.cpp
+index 2a152d2..636e112 100644
+--- a/src/kernel/xam/net/invites.cpp
++++ b/src/kernel/xam/net/invites.cpp
+@@ -124,6 +124,15 @@ std::optional<JoinEvent> ParseJoinEvent(const std::string& json) {
+   return e;
+ }
+ 
++std::optional<PreferEvent> ParsePreferEvent(const std::string& json) {   // patch 112
++  const auto j = nlohmann::json::parse(json, nullptr, false);
++  if (!j.is_object() || j.value("type", "") != "prefer" || !j.contains("room_code") || !j["room_code"].is_string() ||
++      j["room_code"].get<std::string>().empty()) {
++    return std::nullopt;
++  }
++  return PreferEvent{j["room_code"].get<std::string>()};
++}
++
+ void SetInviteHooks(InviteHooks hooks) {
+   std::lock_guard<std::mutex> lock(g_hooks_mutex);
+   g_hooks = std::move(hooks);
+diff --git a/src/kernel/xam/net/online_sessions.cpp b/src/kernel/xam/net/online_sessions.cpp
+index 2cdaf4b..d0c9920 100644
+--- a/src/kernel/xam/net/online_sessions.cpp
++++ b/src/kernel/xam/net/online_sessions.cpp
+@@ -354,23 +354,80 @@ void OnlineSessions::SendInProgress(uint64_t nonce) {
+ void OnlineSessions::OnMembersJoined(uint32_t handle, const std::vector<uint64_t>& xuids) { MembersChanged(handle, xuids, true); }
+ void OnlineSessions::OnMembersLeft(uint32_t handle, const std::vector<uint64_t>& xuids) { MembersChanged(handle, xuids, false); }
+ 
++namespace {
++std::optional<int64_t> PlaylistOf(const LobbyInfo& l) {   // patch 92: nullopt when the lobby names none
++  auto p = std::find_if(l.properties.begin(), l.properties.end(),
++                        [](const IdValue& v) { return v.id == kPlaylistProperty; });
++  if (p == l.properties.end()) return std::nullopt;
++  return p->value;
++}
++}  // namespace
++
++void OnlineSessions::Prefer(const std::string& room_code, std::chrono::steady_clock::time_point until,
++                            std::optional<std::chrono::steady_clock::duration> from_first_search) {   // patch 112
++  std::lock_guard<std::mutex> lock(mutex_);
++  prefer_code_ = room_code;
++  prefer_until_ = until;
++  prefer_first_ = from_first_search;
++  prefer_host_ = 0;
++}
++
++void OnlineSessions::TakeFound(LobbyInfo l, std::vector<LobbyInfo>* out,
++                               std::map<std::array<uint8_t, 8>, std::vector<uint8_t>>* qos) {
++  remember_(l.host_xuid, l.host_uuid);
++  std::array<uint8_t, 8> kid;
++  std::copy_n(l.session_info.begin(), 8, kid.begin());
++  (*qos)[kid] = l.qos_data;
++  out->push_back(std::move(l));
++}
++
+ std::vector<LobbyInfo> OnlineSessions::Search(uint32_t title_id, uint64_t own_xuid, std::optional<int64_t> playlist) {
+   std::vector<LobbyInfo> out;
+   std::map<std::array<uint8_t, 8>, std::vector<uint8_t>> qos;
++  std::optional<std::string> pin;   // patch 112: the Open matches lobby to find, while it is current
++  {
++    std::lock_guard<std::mutex> lock(mutex_);
++    const auto now = std::chrono::steady_clock::now();
++    if (prefer_code_ && now < prefer_until_) {
++      pin = prefer_code_;
++    } else {
++      prefer_code_.reset();
++    }
++  }
++  if (pin) {
++    std::optional<LobbyInfo> l = backend_.LookupLobby(*pin);
++    const std::optional<int64_t> lp = l ? PlaylistOf(*l) : std::nullopt;
++    if (!l || !l->is_public || l->title_id != title_id || l->host_xuid == own_xuid) {
++      REXKRNL_WARN("cogbox_online: the Open matches match {} was not found (closed?): a normal search", *pin);
++    } else if (playlist && lp && *lp != *playlist) {
++      REXKRNL_WARN("cogbox_online: the Open matches match {} is playlist {}, this search is playlist {}: a normal "
++                   "search (choose the match's playlist to join it)", *pin, *lp, *playlist);
++    } else {
++      REXKRNL_INFO("cogbox_online: this search finds only the Open matches match {} (playlist {})", *pin,
++                   lp ? *lp : -1);
++      const uint64_t host = l->host_xuid;
++      TakeFound(std::move(*l), &out, &qos);
++      std::lock_guard<std::mutex> lock(mutex_);
++      searched_qos_ = std::move(qos);
++      if (prefer_code_ == pin) {
++        prefer_host_ = host;
++        if (prefer_first_) {   // the first search that finds it: from now on the shorter time (other searches don't count)
++          prefer_until_ = std::min(prefer_until_, std::chrono::steady_clock::now() + *prefer_first_);
++          prefer_first_.reset();
++        }
++      }
++      return out;
++    }
++  }
+   for (auto& l : backend_.SearchLobbies(title_id)) {
+     if (l.host_xuid == own_xuid) {
+       continue;
+     }
+     if (playlist) {   // patch 92: another playlist's lobby (a lobby that names none is kept)
+-      auto p = std::find_if(l.properties.begin(), l.properties.end(),
+-                            [](const IdValue& v) { return v.id == kPlaylistProperty; });
+-      if (p != l.properties.end() && p->value != *playlist) continue;
++      const std::optional<int64_t> lp = PlaylistOf(l);
++      if (lp && *lp != *playlist) continue;
+     }
+-    remember_(l.host_xuid, l.host_uuid);
+-    std::array<uint8_t, 8> kid;
+-    std::copy_n(l.session_info.begin(), 8, kid.begin());
+-    qos[kid] = l.qos_data;
+-    out.push_back(std::move(l));
++    TakeFound(std::move(l), &out, &qos);
+   }
+   {
+     std::lock_guard<std::mutex> lock(mutex_);
+@@ -394,6 +451,10 @@ void OnlineSessions::AddFound(const LobbyInfo& lobby) {
+ void OnlineSessions::OnBeaconConnect(uint64_t host_xuid) {   // patch 107
+   if (!host_xuid) return;
+   std::lock_guard<std::mutex> lock(mutex_);
++  if (prefer_code_ && prefer_host_ == host_xuid) {   // patch 112: the game is joining the Open matches match
++    prefer_code_.reset();
++    prefer_host_ = 0;
++  }
+   target_host_ = host_xuid;
+   target_since_ = std::chrono::steady_clock::now();
+ }
+diff --git a/src/kernel/xam/net/online_startup.cpp b/src/kernel/xam/net/online_startup.cpp
+index c9faeb7..f0bd853 100644
+--- a/src/kernel/xam/net/online_startup.cpp
++++ b/src/kernel/xam/net/online_startup.cpp
+@@ -42,6 +42,10 @@ REXCVAR_DEFINE_STRING(cogbox_save_adopt_key, "", "Filesystem",
+ REXCVAR_DEFINE_STRING(net_join_lobby, "", "Network",
+                       "COGBox online play: join this lobby (room code COG-XXXX) once the game is at its menus - "
+                       "the game is told it accepted an invite to it.");
++// COGBox SDK patch 112: the launcher's Open matches Join for Gears 3 when the game was not running yet.
++REXCVAR_DEFINE_STRING(net_prefer_lobby, "", "Network",
++                      "COGBox online play, Gears 3 Open matches: for a few minutes once the game is at its menus, its own "
++                      "Social matchmaking finds only this match (room code COG-XXXX), so the host's game picks the team.");
+ REXCVAR_DEFINE_STRING(net_region, "", "Network",
+                       "COGBox online play: matchmaking region (oceania, us, europe). Empty = Any region.");
+ REXCVAR_DEFINE_STRING(net_identity_dir, "", "Network",
+@@ -82,6 +86,25 @@ void JoinByRoomCode(const std::string& room_code, bool from_game_invite) {
+   }).detach();
+ }
+ 
++// Patch 112: the game's matchmaking finds only this Open matches lobby for the next few minutes. at_start: the game
++// was started for it (--net_prefer_lobby) and has its intros and menus first - up to 15 minutes, 3 once it searches.
++void PreferLobby(const std::string& room_code, bool at_start) {
++  OnlineSessions* s = ActiveOnlineSessions();
++  if (!s) {
++    REXKRNL_WARN("cogbox_online: Open matches: online play is not running, so {} can't be found by matchmaking",
++                 room_code);
++    return;
++  }
++  const auto now = std::chrono::steady_clock::now();
++  if (at_start) {
++    s->Prefer(room_code, now + OnlineSessions::kPreferStartupLifetime, OnlineSessions::kPreferLifetime);
++  } else {
++    s->Prefer(room_code, now + OnlineSessions::kPreferLifetime);
++  }
++  REXKRNL_INFO("cogbox_online: Open matches: Versus > Social matchmaking finds only {} (choose its playlist) for the "
++               "next {} minutes", room_code, at_start ? 15 : 3);
++}
++
+ // Set when the process exits: the background threads (invite re-announcing, Join, --net_join_lobby) stop touching
+ // the kernel, which may already be gone.
+ std::atomic<bool> g_exiting{false};
+@@ -120,6 +143,8 @@ void StartOnlineServices(const std::filesystem::path& dir) {
+       Signaling().OnCandidates(*m, VirtualPeerManager::Clock::now());
+     } else if (auto j = ParseJoinEvent(text)) {
+       JoinByRoomCode(j->room_code, j->from_game_invite);
++    } else if (auto p = ParsePreferEvent(text)) {
++      PreferLobby(p->room_code, false);
+     }
+   });
+   // --net_join_lobby: once the game runs and the signaling is up, plus 5 s for its menus to settle.
+@@ -135,6 +160,18 @@ void StartOnlineServices(const std::filesystem::path& dir) {
+       JoinByRoomCode(join, false);
+     }).detach();
+   }
++  // --net_prefer_lobby (patch 112): the same wait, then the lifetime starts.
++  const std::string prefer = REXCVAR_GET(net_prefer_lobby);
++  if (!prefer.empty()) {
++    std::thread([prefer] {
++      for (int i = 0; i < 120 && !(RunningTitle() && MasterClient::Get().SignalingConnected()); ++i) {
++        std::this_thread::sleep_for(std::chrono::seconds(1));
++      }
++      std::this_thread::sleep_for(std::chrono::seconds(5));
++      if (g_exiting) return;
++      PreferLobby(prefer, true);
++    }).detach();
++  }
+ }
+ 
+ }  // namespace
+@@ -157,6 +194,9 @@ class MasterBackend : public SessionBackend {
+                            const std::vector<IdValue>& ctxs) override {
+     return MasterClient::Get().UpdateLobbySettings(id, props, ctxs);
+   }
++  std::optional<LobbyInfo> LookupLobby(const std::string& code) override {   // patch 112
++    return MasterClient::Get().LookupRoomCode(code);
++  }
+ };
+ }  // namespace
+ 
+diff --git a/tests/unit/net/invites_test.cpp b/tests/unit/net/invites_test.cpp
+index 3673237..f625476 100644
+--- a/tests/unit/net/invites_test.cpp
++++ b/tests/unit/net/invites_test.cpp
+@@ -59,6 +59,17 @@ TEST_CASE("Invites: a join event from the server", "[net][invites]") {
+   CHECK_FALSE(ParseJoinEvent("not json").has_value());
+ }
+ 
++TEST_CASE("Invites: an Open matches preference from the server (patch 112)", "[net][invites]") {
++  auto e = ParsePreferEvent(R"({"type":"prefer","room_code":"COG-6GPY","playlist":15})");
++  REQUIRE(e.has_value());
++  CHECK(e->room_code == "COG-6GPY");
++  CHECK_FALSE(ParsePreferEvent(R"({"type":"prefer"})").has_value());
++  CHECK_FALSE(ParsePreferEvent(R"({"type":"prefer","room_code":""})").has_value());
++  CHECK_FALSE(ParsePreferEvent(R"({"type":"join","room_code":"COG-6GPY"})").has_value());
++  CHECK_FALSE(ParseJoinEvent(R"({"type":"prefer","room_code":"COG-6GPY"})").has_value());   // never an invite
++  CHECK_FALSE(ParsePreferEvent("not json").has_value());
++}
++
+ TEST_CASE("Invites: accepting checks the game and announces it", "[net][invites]") {
+   LobbyInfo lobby;
+   lobby.title_id = 0x4D5308AB;
+diff --git a/tests/unit/net/online_sessions_test.cpp b/tests/unit/net/online_sessions_test.cpp
+index 7a794fb..bbb6452 100644
+--- a/tests/unit/net/online_sessions_test.cpp
++++ b/tests/unit/net/online_sessions_test.cpp
+@@ -57,6 +57,14 @@ struct FakeBackend : SessionBackend {
+     invite_only.emplace_back(id, on);
+     return true;
+   }
++  std::map<std::string, LobbyInfo> by_code;   // patch 112
++  std::vector<std::string> looked_up;
++  std::optional<LobbyInfo> LookupLobby(const std::string& code) override {
++    looked_up.push_back(code);
++    auto it = by_code.find(code);
++    if (it == by_code.end()) return std::nullopt;
++    return it->second;
++  }
+ };
+ 
+ std::array<uint8_t, 60> Info(uint8_t seed) {
+@@ -482,3 +490,148 @@ TEST_CASE("Sessions: open matches - start and end sent from queued jobs in any o
+   REQUIRE(backend.in_progress.size() == 2);
+   CHECK(backend.in_progress.back().second == false);
+ }
++
++// COGBox SDK patch 112: Open matches through matchmaking (Gears 3).
++namespace {
++constexpr uint32_t kGears3 = 0x4D5308AB;
++constexpr uint64_t kMe = 0x0009000000000001ull;
++LobbyInfo OpenMatch(const std::string& code, int64_t playlist) {
++  LobbyInfo l;
++  l.lobby_id = "open";
++  l.room_code = code;
++  l.title_id = kGears3;
++  l.host_uuid = "host";
++  l.host_xuid = 0x0009000000000042ull;
++  l.region = "europe";   // not the searcher's region: the normal search would not list it
++  l.session_info = Info(0x42);
++  l.qos_data = {7, 8};
++  l.properties = {{kPlaylistProperty, playlist}};
++  return l;
++}
++LobbyInfo Other(const std::string& id, int64_t playlist) {
++  LobbyInfo l;
++  l.lobby_id = id;
++  l.title_id = kGears3;
++  l.host_uuid = "other-" + id;
++  l.host_xuid = 0x0009000000000050ull;
++  l.properties = {{kPlaylistProperty, playlist}};
++  return l;
++}
++}  // namespace
++
++TEST_CASE("Sessions: Open matches - a search of the match's playlist finds only that match, from any region",
++          "[net][sessions]") {
++  Fixture f;
++  f.backend.by_code["COG-AB12"] = OpenMatch("COG-AB12", 15);
++  f.backend.listed = {Other("x", 15)};
++  f.sessions.Prefer("COG-AB12", std::chrono::steady_clock::now() + std::chrono::minutes(3));
++  auto found = f.sessions.Search(kGears3, kMe, 15);
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "open");
++  CHECK(f.remembered[0x0009000000000042ull] == "host");   // the signaling can reach its host
++  std::array<uint8_t, 8> kid;
++  kid.fill(0x42);
++  REQUIRE(f.sessions.QosFor(kid).has_value());
++  CHECK(*f.sessions.QosFor(kid) == std::vector<uint8_t>{7, 8});
++  // a search that names no playlist finds it too, and it is looked up again each time (fresh QoS, still open)
++  CHECK(f.sessions.Search(kGears3, kMe).size() == 1);
++  CHECK(f.backend.looked_up.size() == 2);
++}
++
++TEST_CASE("Sessions: Open matches - a search of another playlist gets the normal results", "[net][sessions]") {
++  Fixture f;
++  f.backend.by_code["COG-AB12"] = OpenMatch("COG-AB12", 15);
++  f.backend.listed = {Other("x", 20), Other("y", 15)};
++  f.sessions.Prefer("COG-AB12", std::chrono::steady_clock::now() + std::chrono::minutes(3));
++  auto found = f.sessions.Search(kGears3, kMe, 20);
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "x");
++  // still preferred: the match's own playlist finds it
++  found = f.sessions.Search(kGears3, kMe, 15);
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "open");
++}
++
++TEST_CASE("Sessions: Open matches - the preference ends after its time, and a newer one replaces it",
++          "[net][sessions]") {
++  Fixture f;
++  f.backend.by_code["COG-AB12"] = OpenMatch("COG-AB12", 15);
++  f.backend.by_code["COG-CD34"] = OpenMatch("COG-CD34", 15);
++  f.backend.by_code["COG-CD34"].lobby_id = "newer";
++  f.backend.listed = {Other("x", 15)};
++  f.sessions.Prefer("COG-AB12", std::chrono::steady_clock::now() - std::chrono::seconds(1));
++  auto found = f.sessions.Search(kGears3, kMe, 15);
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "x");
++  CHECK(f.backend.looked_up.empty());   // an old preference is not even looked up
++  f.sessions.Prefer("COG-AB12", std::chrono::steady_clock::now() + std::chrono::minutes(3));
++  f.sessions.Prefer("COG-CD34", std::chrono::steady_clock::now() + std::chrono::minutes(3));
++  found = f.sessions.Search(kGears3, kMe, 15);
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "newer");
++}
++
++TEST_CASE("Sessions: Open matches - a match that closed, is private, is another game's or our own is not offered",
++          "[net][sessions]") {
++  Fixture f;
++  f.backend.listed = {Other("x", 15)};
++  const auto later = std::chrono::steady_clock::now() + std::chrono::minutes(3);
++  f.sessions.Prefer("COG-GONE", later);   // no such lobby any more
++  auto found = f.sessions.Search(kGears3, kMe, 15);
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "x");
++  LobbyInfo priv = OpenMatch("COG-PRIV", 15);
++  priv.is_public = false;
++  f.backend.by_code["COG-PRIV"] = priv;
++  f.sessions.Prefer("COG-PRIV", later);
++  found = f.sessions.Search(kGears3, kMe, 15);
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "x");
++  f.backend.by_code["COG-G2"] = OpenMatch("COG-G2", 15);
++  f.sessions.Prefer("COG-G2", later);
++  found = f.sessions.Search(0x4D53082D, kMe, 15);   // a Gears 2 search: never Gears 3's lobby, the normal results
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "x");
++  LobbyInfo own = OpenMatch("COG-MINE", 15);
++  own.host_xuid = kMe;
++  f.backend.by_code["COG-MINE"] = own;
++  f.sessions.Prefer("COG-MINE", later);
++  found = f.sessions.Search(kGears3, kMe, 15);
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "x");
++}
++
++TEST_CASE("Sessions: Open matches - a game started for the match gets its time from the first search that finds it",
++          "[net][sessions]") {
++  Fixture f;
++  f.backend.by_code["COG-AB12"] = OpenMatch("COG-AB12", 15);
++  f.backend.listed = {Other("x", 15)};
++  // 15 minutes to get to the menus, then a search: still found, now for the shorter time (here none at all)
++  f.sessions.Prefer("COG-AB12", std::chrono::steady_clock::now() + std::chrono::minutes(15), std::chrono::seconds(0));
++  // a search of another playlist (or any search that does not find it) leaves the 15 minutes alone
++  auto found = f.sessions.Search(kGears3, kMe, 20);
++  CHECK(found.empty());
++  found = f.sessions.Search(kGears3, kMe, 15);
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "open");
++  found = f.sessions.Search(kGears3, kMe, 15);   // the shortened time is over
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "x");
++}
++
++TEST_CASE("Sessions: Open matches - joining the match ends the preference; another host's beacon does not",
++          "[net][sessions]") {
++  Fixture f;
++  f.backend.by_code["COG-AB12"] = OpenMatch("COG-AB12", 15);
++  f.backend.listed = {Other("x", 15)};
++  f.sessions.Prefer("COG-AB12", std::chrono::steady_clock::now() + std::chrono::minutes(3));
++  f.sessions.OnBeaconConnect(0x0009000000000042ull);   // before the search found it: not that join yet
++  REQUIRE(f.sessions.Search(kGears3, kMe, 15).size() == 1);
++  CHECK(f.sessions.Search(kGears3, kMe, 15)[0].lobby_id == "open");
++  f.sessions.OnBeaconConnect(0x0009000000000050ull);   // some other host
++  CHECK(f.sessions.Search(kGears3, kMe, 15)[0].lobby_id == "open");
++  f.sessions.OnBeaconConnect(0x0009000000000042ull);   // the match's host: joined
++  auto found = f.sessions.Search(kGears3, kMe, 15);
++  REQUIRE(found.size() == 1);
++  CHECK(found[0].lobby_id == "x");
++}

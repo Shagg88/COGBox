@@ -6,7 +6,7 @@
 //     game = gears3                      the game it is made for (gears3 if not given); a mod for another game is left out
 //     enabled = false                    off without removing it from the list
 //     content = MPCH_COGMarcusG2MP_SF    the game's own content packages its levels need (ModContentPackages)
-//     side = everyone | host | client    who needs it in co-op / System Link (ModFingerprint compares "everyone" mods)
+//     side = everyone | host | client    who needs it in co-op / System Link (the logged fingerprint: "everyone" mods)
 // - bare files: mods made for the Xbox 360 are often shared as the bare files; a package (.xxx/.upk), texture cache
 //   (.tfc) or Coalesced_*.bin at a mod's top goes to the bundle folder (GearGame\CookedXbox360), a movie (.bik) to
 //   GearGame\Movies.
@@ -54,9 +54,5 @@ std::vector<ClassDefaultEdit> ModClassDefaultsForMap(const std::string& map);
 
 // The game's own content packages the active mods name (mod.ini content = ...), in load order, without repeats.
 const std::vector<std::string>& ModContentPackages();
-
-// FNV-1a over the active "everyone" mods (name, version, files and sizes): two players with the same mods have the same
-// value whatever their folders are called; 0 with none. For co-op / System Link, to refuse a player whose mods differ.
-uint64_t ModFingerprint();
 
 }  // namespace ue3

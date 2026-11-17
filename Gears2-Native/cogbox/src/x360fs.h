@@ -117,6 +117,10 @@ bool read_package_info(const fs::path &file, PackageInfo &info, std::string &err
 struct XexInfo {
     uint32_t title_id = 0, media_id = 0, version = 0, base_version = 0;
     uint8_t disc_number = 0, disc_count = 0;
+    // GitHub #346: a default.xex's signature (SHA-1 of its RSA signature, as the runtime and the console compare it), and
+    // a title update's default.xexp: the signature of the one default.xex it was made for (delta patch descriptor)
+    bool has_signature = false, has_patch_source = false;
+    uint8_t signature_sha1[20] = {}, patch_source_sha1[20] = {};
 };
 bool read_xex_info(const fs::path &xex, XexInfo &info);                       // a default.xex on disk
 bool parse_xex_info(const uint8_t *data, size_t size, XexInfo &info);         // the first bytes of one

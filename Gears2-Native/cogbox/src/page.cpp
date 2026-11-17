@@ -187,6 +187,8 @@ static std::string key_get(App &a, int g, const char *cvar)
 static bool lang_on_copy(const std::string &root, int g, int idx);
 static bool voice_on_copy(const std::string &root, int g, int idx);
 
+static void main_gpu_memory(std::string &name, unsigned &mb);   // (below, with auto_plan)
+
 void env_refresh(App &a, int g)
 {
     GameState &st = a.st[g];
@@ -202,9 +204,14 @@ void env_refresh(App &a, int g)
     e.online_stun = stun_address(e.online_server);
     e.online_region = e.online_server.empty() ? std::string() : region_or_default(a.ini.get("Online", "Region"), local_utc_minutes());
     e.shader_cache_dir = game_shader_dir(g);
+    {   // 0.6.4 (GitHub #341): the texture cache's Auto size depends on the card's video memory (read once)
+        static unsigned s_vram = ~0u;
+        if (s_vram == ~0u) { std::string n; main_gpu_memory(n, s_vram); }
+        e.vram_mb = s_vram;
+    }
     e.mods.clear();                              // (env_refresh runs again on the same Environment)
     e.texture_pack_mods.clear();
-    for (const ModItem &m : mods_list(a, g)) {   // 0.2.0 (mods_enabled_paths, plus the texture packs among them)
+    for (const ModItem &m : mods_list(a, g)) {   // 0.2.0 (the enabled mods, plus the texture packs among them)
         if (!m.enabled) continue;
         e.mods.push_back(m.path);
         if (m.textures) e.texture_pack_mods.push_back(m.path);   // r95 L1: only mods with pack textures
@@ -248,6 +255,46 @@ void env_refresh(App &a, int g)
     e.steam_deck = a.proton.steamDeck;   // proton049
     e.low_port_start = a.proton.lowPortStart;   // 0.6.2 R4
     e.deck_lcd = a.proton.deckLcd;
+    // GitHub #350: Judgment's keys saved before 0.6.4 hold the old layout (Y = Q, D-pad up = 3), which now meets the new
+    // defaults (D-pad up = Q, Y = 3) - Q or 3 would press two buttons. Once: a Y / D-pad up pair that is the old layout
+    // (each either saved as it was or not saved) is moved to the new one; anything the player chose is left alone.
+    if (g == G_JUDGMENT && a.ini.get("Notices", "JudgmentKeys064") != "1") {
+        const std::string y = key_get(a, g, "keybind_y"), up = key_get(a, g, "keybind_dpad_up");
+        if ((y == "Q" || y.empty()) && (up == "3" || up.empty()) && !(y.empty() && up.empty())) {
+            a.ini.set(keys_section_name(g), "keybind_y", "3");
+            a.ini.set(keys_section_name(g), "keybind_dpad_up", "Q");
+        }
+        a.ini.set("Notices", "JudgmentKeys064", "1");
+        a.ini.save();
+    }
+    // Review r1952: 0.6.4's new defaults (Gears 1-3: 4 = grenade, 3 = pistol; Judgment: Y = 3, D-pad up = Q) must never land
+    // on a key the player already gave another action (a row the key was taken from is saved as "None"). Once per game: a
+    // row with no saved key whose default key is one of the player's saved keys gets "None" saved (as the Controls page
+    // does when a key moves).
+    {
+        const std::string flag = std::string("KeyDefaults064_") + game_def(g).key;
+        if (a.ini.get("Notices", flag) != "1") {
+            const auto &acts = gs::key_actions((gs::Game)g);
+            auto split = [](const std::string &v) { std::vector<std::string> out; size_t at = 0;
+                while (at <= v.size()) { size_t c = v.find(',', at); std::string k = v.substr(at, c == std::string::npos ? std::string::npos : c - at);
+                    while (!k.empty() && k.front() == ' ') k.erase(0, 1); while (!k.empty() && k.back() == ' ') k.pop_back();
+                    if (!k.empty()) out.push_back(k); if (c == std::string::npos) break; at = c + 1; } return out; };
+            std::vector<std::string> used;   // keys the player saved, any row
+            for (const gs::KeyAction &k : acts) { const std::string v = key_get(a, g, k.cvar); if (!v.empty()) for (const std::string &x : split(v)) used.push_back(x); }
+            for (const gs::KeyAction &k : acts) {
+                if (!key_get(a, g, k.cvar).empty()) continue;
+                std::string keep; bool dropped = false;   // (a two-key default keeps the key that is still free)
+                for (const std::string &x : split(k.def)) {
+                    bool clash = false;
+                    for (const std::string &u : used) if (x != "None" && SDL_strcasecmp(u.c_str(), x.c_str()) == 0) clash = true;
+                    if (clash) dropped = true; else keep += (keep.empty() ? "" : ",") + x;
+                }
+                if (dropped) a.ini.set(keys_section_name(g), k.cvar, keep.empty() ? std::string("None") : keep);
+            }
+            a.ini.set("Notices", flag, "1");
+            a.ini.save();
+        }
+    }
     e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab); GitHub #154: this game's own
     for (const gs::KeyAction &k : gs::key_actions((gs::Game)g)) {
         std::string v = key_get(a, g, k.cvar);
@@ -969,9 +1016,16 @@ static void option_row(App &a, int g, const gs::Option &o)
         for (std::string &it : items) it = tr(it);   // 0.2.0
         // notes/83: AMD FSR frame generation runs on Vulkan too, experimental there
         if (o.id == "FrameGen" && items.size() > 1 && gs::runs_vulkan(a.cur[g], a.env[g])) items[1] += std::string(" ") + tr("(experimental on Vulkan)");
+        // #345 / GitHub #98: a Scene resolution with no whole-number scene size at the render resolution (Match my monitor
+        // included: 4K picks 3x) only anti-aliases - said in the list and the closed box
+        if (o.id == "SceneMode" && items.size() == 4) {
+            const int out = gs::expected_render_scale((gs::Game)g, a.cur[g], a.env[g]);
+            for (int i = 1; i < 4; ++i)
+                if (!gs::scene_mode_fits(i, out)) items[i] += std::string(" - ") + tr("anti-aliasing only at this render resolution");
+        }
         // 0.6.2 Proton review (R11): settings from Windows say DirectX 12, but "Graphics API on Proton / Wine" = Automatic
         // runs Vulkan - the closed box says what the game will actually run
-        std::string preview = items.empty() ? std::string() : items[idx];   // (the closed box; the list keeps the plain names)
+        std::string preview = items.empty() ? std::string() : items[idx];   // (the closed box; Scene resolution's note shows in both)
         if (o.id == "Api" && a.env[g].wine && a.proton.proton && !a.env[g].mac && idx == 0 && gs::runs_vulkan(a.cur[g], a.env[g]))
             preview += std::string(" ") + tr("(Proton runs Vulkan)");
         if (ImGui::BeginCombo("##v", preview.c_str())) {
@@ -1202,17 +1256,6 @@ static bool any_files(const std::string &dir)
 // Shagg 29 Oct: "This version works" - the player says an untested game version or title update runs fine. Remembered
 // by its fingerprint (no more warning for that exact file), and a pre-filled GitHub issue opens in the browser so the
 // player can tell the developer by submitting it. Nothing is sent by COGBox itself.
-[[maybe_unused]] static std::string url_encode(const std::string &s)   // (unused since legal2-050: tickets take no pre-filled link)
-{
-    static const char *hex = "0123456789ABCDEF";
-    std::string o;
-    for (unsigned char c : s) {
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += char(c);
-        else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
-    }
-    return o;
-}
-
 static void confirm_works(App &a, int g, bool update)
 {
     const GameDef &d = game_def(g);
@@ -1353,10 +1396,11 @@ static void mods_tab(App &a, int g)
             }
             if (running) ImGui::EndDisabled();
             // Gears 3: what the game will make of it (mods.cpp apply_mod_rules)
-            if (m.enabled && !m.problem.empty()) lamp_line(3, "Left out by the game: " + m.problem);
+            // 0.6.4: built from translated texts with gaps (trf); lamp_line's own tr() then finds no key and leaves them
+            if (m.enabled && !m.problem.empty()) lamp_line(3, trf("Left out by the game: {1}", { m.problem }));
             else if (m.enabled && !m.campaign.empty()) lamp_line(1, m.campaign);
-            if (m.textures) lamp_line(m.enabled ? 1 : 0, "Texture pack: " + std::to_string(m.textures) + " texture" +
-                                                             (m.textures == 1 ? "" : "s"));
+            if (m.textures) lamp_line(m.enabled ? 1 : 0, m.textures == 1 ? tr(std::string("Texture pack: 1 texture"))
+                                                                         : trf("Texture pack: {1} textures", { std::to_string(m.textures) }));
             for (const std::string &n : m.notes) ui_note("mod.ini: " + n, col::amber);
             ImGui::PopID();
         }
@@ -1377,6 +1421,43 @@ static void mods_tab(App &a, int g)
         if (small_button("Mods folder")) { make_dirs(mods_dir(g)); open_folder(a, mods_dir(g)); }
         ui_tip(k_noModsTip);
         if (changed) { mlAt[g] = 0; env_refresh(a, g); }
+    }
+}
+
+// 0.6.4 (Shagg 16 Nov: "the saves button should be under the gameplay tab"): import, back up and open the saves, and a
+// line when saves copied in by hand are waiting (save_import::find_misplaced) with a button that brings them in.
+static void saves_section(App &a, int g)
+{
+    const GameDef &d = game_def(g);
+    const bool busy = a.job.state.load() == 1, running = a.run.proc != nullptr;
+    ui_section("SAVES");
+    // 0.6.1 (Shagg 13 Nov): the player's own saves from Xenia or an Xbox 360 (save_import.cpp)
+    if (small_button("Import saves...")) {
+        if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
+        else {
+            const std::string from = pick_folder(L"Choose your Xenia content folder, or the Content folder copied from your Xbox 360 (not a whole drive)");
+            if (!from.empty()) import_saves_from(a, g, from);
+        }
+    }
+    ui_tip("Brings your own saves of this game in from Xenia (its content folder) or from an Xbox 360 (the Content folder "
+           "copied from the console's USB stick or hard disk). Saves it replaces are kept in a folder beside them.");
+    ImGui::SameLine();
+    if (small_button("Back up saves")) {
+        if (running) set_message(a, std::string(d.name) + " is running - close it first, so the save is complete.", true);
+        else if (!any_files(game_user_dir(g))) set_message(a, std::string(d.name) + " has no saves here yet.", false);
+        else ask(a, "backup", g, "Back up saves", std::string("Put a copy of ") + d.name + (a.wine ? "'s saves in a zip in COGBox's backups folder?" : "'s saves in a zip on your desktop?"), { "Back up", "Cancel" });
+    }
+    ImGui::SameLine();
+    if (small_button("Open saves folder")) { make_dirs(game_user_dir(g)); open_folder(a, game_user_dir(g)); }
+    const std::vector<std::filesystem::path> found = misplaced_saves(a, g);
+    if (!found.empty()) {
+        lamp_line(2, trf("Saves copied into the saves folder by hand that the game can't use as they are: {1}.", { std::to_string(found.size()) }));
+        if (small_button("Bring them in")) {
+            if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
+            else import_misplaced_saves(a, g);
+        }
+        ui_tip("Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken "
+               "from a profile). What you copied is kept as it was, in a folder beside the saves folder.");
     }
 }
 
@@ -1501,23 +1582,7 @@ static void about_tab(App &a, int g)
     if (small_button("Saves")) { make_dirs(game_user_dir(g)); open_folder(a, game_user_dir(g)); }
     ImGui::SameLine();
     if (small_button("Logs")) { make_dirs(game_logs_dir(g)); open_folder(a, game_logs_dir(g)); }
-    ImGui::SameLine();
-    if (small_button("Back up saves")) {
-        if (running) set_message(a, std::string(d.name) + " is running - close it first, so the save is complete.", true);
-        else if (!any_files(game_user_dir(g))) set_message(a, std::string(d.name) + " has no saves here yet.", false);
-        else ask(a, "backup", g, "Back up saves", std::string("Put a copy of ") + d.name + (a.wine ? "'s saves in a zip in COGBox's backups folder?" : "'s saves in a zip on your desktop?"), { "Back up", "Cancel" });
-    }
-    ImGui::SameLine();
-    // 0.6.1 (Shagg 13 Nov): the player's own saves from Xenia or an Xbox 360 (save_import.cpp).
-    if (small_button("Import saves...")) {
-        if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
-        else {
-            const std::string from = pick_folder(L"Choose your Xenia content folder, or the Content folder copied from your Xbox 360 (not a whole drive)");
-            if (!from.empty()) import_saves_from(a, g, from);
-        }
-    }
-    ui_tip("Brings your own saves of this game in from Xenia (its content folder) or from an Xbox 360 (the Content folder "
-           "copied from the console's USB stick or hard disk). Saves it replaces are kept in a folder beside them.");
+    // (0.6.4, Shagg 16 Nov: Back up saves and Import saves are on the Gameplay tab now - saves_section)
     ImGui::SameLine();
     if (small_button("Clear shaders...")) {
         if (!dir_exists(game_shader_dir(g))) set_message(a, std::string(d.name) + " has no saved shaders to clear.", false);
@@ -1641,7 +1706,7 @@ static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
 static const char *const k_dispPicture[] = { "HDR", "PaperWhite", "Peak", nullptr };
 static const char *const k_gfxQuality[] = { "GraphicsCard", "Api", "WineApi", "Preset", "Resolution", "AAMode", "DlssModel", "Sharpen", "SceneMode", "FrameGen", nullptr };
-static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Pool", "DrawDist", "AO", nullptr };
+static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Pool", "TexCache", "DrawDist", "ShadowDetail", "AO", nullptr };
 static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
 static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "AdaptiveTriggers", "TriggerRumble", "PadPrompts", "PromptStyle", "DeadZone", "RadialDZ", "LowLag", nullptr };
 static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
@@ -1805,6 +1870,7 @@ void page_draw(App &a, ImVec2 size)
                 if (o->id == "PadLayout") pad_layout_section(a, g);   // 0.6.3: the Custom layout's buttons
             }
         }
+        if (want == gs::Tab::Gameplay) saves_section(a, g);   // 0.6.4 (Shagg 16 Nov): saves on the Gameplay tab
         if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
         if (want == gs::Tab::Controls) window_key_section(a, g);   // 0.6.3, GitHub #316
         if (want == gs::Tab::Graphics) dlss_file_section(a, g);   // 0.4.9
@@ -1857,30 +1923,80 @@ void page_draw(App &a, ImVec2 size)
 
 // 0.6.1: the Import saves button, and a save package dropped onto COGBox (a player drags an Xbox 360 or Xenia save onto
 // the window instead of using the button - save_import takes one save package file as well as a folder).
-void import_saves_from(App &a, int g, const std::string &from)
+// 0.6.4: what find_misplaced finds in the current saves folder, looked at again at most every 3 s (the Gameplay tab draws
+// every frame) and whenever the folder changes game or launcher profile.
+static std::string s_misDir;
+static double s_misAt = -100.0;
+static std::vector<std::filesystem::path> s_misFound;
+static void misplaced_forget() { s_misDir.clear(); }   // after an import: look again at once
+
+std::vector<std::filesystem::path> misplaced_saves(App &a, int g)
+{
+    (void)a;
+    std::string &s_dir = s_misDir;
+    double &s_at = s_misAt;
+    std::vector<std::filesystem::path> &s_found = s_misFound;
+    const std::string dir = game_user_dir(g);
+    const double now = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0;
+    if (dir != s_dir || now - s_at > 3.0 || now < s_at) {
+        std::vector<uint32_t> ids{ game_def(g).titleId };
+        for (uint32_t t : region_title_ids(g)) ids.push_back(t);
+        s_found = save_import::find_misplaced(std::filesystem::u8path(dir), ids);
+        s_dir = dir;
+        s_at = now;
+    }
+    return s_found;
+}
+
+static std::vector<std::filesystem::path> own_user_dirs(int g)   // every launcher profile's saves folder of this game
+{
+    std::vector<std::filesystem::path> own;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+        if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
+    return own;
+}
+
+static void import_message(App &a, int g, bool ok, const save_import::Result &r)
 {
     const GameDef &d = game_def(g);
-    save_import::Result r;
-    make_dirs(game_user_dir(g));
-    std::vector<std::filesystem::path> own;   // every launcher profile's saves folder of this game (user, user-pN)
-    {
-        std::error_code ec;
-        for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
-            if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
-    }
-    if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r, own,
-                            region_title_ids(g))) {
-        std::string m = std::string(d.name) + ": imported ";
+    std::string m;
+    if (ok) {
+        m = std::string(d.name) + ": imported ";
         if (r.saves) m += std::to_string(r.saves) + (r.saves == 1 ? " save" : " saves");
         if (r.saves && r.settings) m += " and ";
         if (r.settings) m += "the profile's game progress";
         m += ".";
         if (!r.backup_dir.empty()) m += " What they replaced is kept in the saves folder, in " + r.backup_dir.filename().string() + ".";
-        for (const std::string &n : r.notes) m += " " + n;
-        set_message(a, m, false);
     } else {
-        std::string m = r.error;
-        for (const std::string &n : r.notes) m += " " + n;
-        set_message(a, m, true);
+        m = r.error;
     }
+    for (const std::string &n : r.notes) m += " " + n;
+    set_message(a, m, !ok);
+}
+
+std::string found_not_now_key(int g) { return std::string("FoundNotNow-") + game_def(g).dir + (current_profile() <= 1 ? "" : "-p" + std::to_string(current_profile())); }
+
+bool import_misplaced_saves(App &a, int g)
+{
+    const GameDef &d = game_def(g);
+    if (backup_running()) { set_message(a, "A backup of the saves is still being made - try again when it's done.", true); return false; }
+    save_import::Result r;
+    const bool ok = save_import::import_misplaced(std::filesystem::u8path(game_user_dir(g)), d.titleId, now_stamp(), r,
+                                                  own_user_dirs(g), region_title_ids(g));
+    import_message(a, g, ok, r);
+    misplaced_forget();
+    return ok;
+}
+
+void import_saves_from(App &a, int g, const std::string &from)
+{
+    const GameDef &d = game_def(g);
+    if (backup_running()) { set_message(a, "A backup of the saves is still being made - try again when it's done.", true); return; }
+    save_import::Result r;
+    make_dirs(game_user_dir(g));
+    const bool ok = save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r,
+                                        own_user_dirs(g), region_title_ids(g));
+    import_message(a, g, ok, r);
+    misplaced_forget();
 }

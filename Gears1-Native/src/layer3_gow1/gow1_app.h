@@ -89,15 +89,12 @@ class Gow1App : public rex::ReXApp {
     Gow1InstallBootLockWait(runtime());     // 0.5.0: job 1507 boot crash
     Gow1ApplyUltrawideIfRequested(runtime());     // --gow1_ultrawide: the two aspect floats, the present shape
     XenosInstallDrawStatsIfRequested();
-    XenosInstallPrimDetailIfRequested();
     XenosInstallFrameCaptureIfRequested();
     XenosInstallFrameTimesIfRequested();
     XenosInstallProfilerIfRequested();
     XenosInstallDrawLogIfRequested();
     XenosInstallResolveLogIfRequested();
-    XenosInstallBufferDumpIfRequested(runtime());
     XenosInstallShaderDumpIfRequested();
-    XenosInstallShaderWatchIfRequested();
     // D3D built-in shaders (fast-clear pair, no-op single-point VS): the same microcode hashes as Gears 2's XDK 7645 -
     // all three appear in Gears 3's shader cache after job 014 run B (vs-1E6883FCCDE1F688, ps-A4A965C189287B99,
     // vs-B6C9863F710683EC), so XDK 20500's D3D kept them byte-identical. Without them, clears weren't recognised
@@ -140,8 +137,6 @@ class Gow1App : public rex::ReXApp {
     XenosInstallRendererIfRequested(runtime(), {0x0A6D1DD7767FDF27ull, 0x2E372EA28CC404B7ull, 0xB6C9863F710683ECull,
                     REXCVAR_GET(gow1_hdr_native), false, false, REXCVAR_GET(gow1_hdr_native)});
     Ue3InstallShaderPrebuildIfRequested();  // notes/78: after the renderer (it asks whether the renderer wants them)
-    XenosInstallQueryLogIfRequested(runtime(), {});
-    XenosInstallStateCoverageIfRequested();
     XenosInstallPm4ShadowIfRequested(runtime());
   }
   void OnPostLoadXexImage() override {

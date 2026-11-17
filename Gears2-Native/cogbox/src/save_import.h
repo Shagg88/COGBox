@@ -41,6 +41,19 @@ bool import(const std::filesystem::path &source, uint32_t title_id, const std::f
             const std::string &stamp, Result &r, const std::vector<std::filesystem::path> &own_dirs = {},
             const std::vector<uint32_t> &region_titles = {});
 
+// 0.6.4 (Shagg 16 Nov: players copy their saves into COGBox's saves folder by hand, as they would for Xenia, and the
+// game never sees them): what in a game's COGBox user folder the game cannot use as it is -
+//   another profile's saves: <XUID>\<TITLE>\00000001 (XUID not COGBox's B13EBABEBABEBABE, not DLC's 0000000000000000),
+//   older Xenia's layout: <TITLE>\00000001,  another user's game progress: <TITLE>\profile\<name other than User>,
+//   Xbox 360 save / profile packages (files, not unpacked) at the folder's top or in COGBox's own 00000001 folder,
+//   <TITLE>.gpd files (a Xenia Canary / console profile's game data) at the top or one folder down.
+// (title_ids: the game's and its regional copies'.) Nothing is read beyond file names and the first 4 bytes.
+std::vector<std::filesystem::path> find_misplaced(const std::filesystem::path &user_dir, const std::vector<uint32_t> &title_ids);
+// Imports what find_misplaced finds: it is moved (same relative paths) into <user dir's parent>\_saves-found-<user dir
+// name>-<stamp>, then imported from there as import() does; that folder stays, holding the originals. If the import
+// fails, everything is moved back. False + r.error when nothing was found or the import failed.
+bool import_misplaced(const std::filesystem::path &user_dir, uint32_t title_id, const std::string &stamp, Result &r,
+                      const std::vector<std::filesystem::path> &own_dirs = {}, const std::vector<uint32_t> &region_titles = {});
 // The title-specific settings (id, bytes) of a GPD file's bytes. False if it is not an XDBF file.
 bool gpd_title_settings(const uint8_t *d, size_t n, std::vector<std::pair<uint32_t, std::string>> &out);
 

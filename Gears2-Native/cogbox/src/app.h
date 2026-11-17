@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 #include <windows.h>
 #include <atomic>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -18,7 +19,7 @@
 #include "util.h"
 #include "proton.h"   // proton049
 
-#define COGBOX_VERSION "0.6.3"
+#define COGBOX_VERSION "0.6.4"
 #define COGBOX_NAME "COGBox"
 
 namespace gs = cogbox::gears;
@@ -105,6 +106,7 @@ struct App {
     bool padConnected = false;
     bool lastPad = true;              // 0.2.0: the last input came from a controller (hints follow it), else keyboard / mouse
     std::string joinLobby[G_COUNT];   // social step 3: the next start of this game joins that room code (Join friend)
+    bool misplacedAsked[G_COUNT] = {};  // 0.6.4: the hand-copied saves question was asked for this Play (play.cpp)
     bool tuMismatchOk[G_COUNT] = {};  // TU preflight: "Play anyway" chosen for this game (until the launcher closes)
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
     // 0.6.3: the Custom controller layout's "press a button" (page.cpp pad_layout_section). padPress = the last controller
@@ -185,6 +187,14 @@ std::vector<std::string> monitor_choices();   // page.cpp: "Default (main screen
 // install.cpp
 void install_start(App &a, const std::string &path, int forGame);
 void import_saves_from(App &a, int game, const std::string &from);   // 0.6.1: page.cpp (Import saves, or a dropped save package)
+// 0.6.4 (Shagg 16 Nov): saves copied into the game's saves folder by hand that the game can't use as they are
+// (save_import::find_misplaced). misplaced_saves: what is there now (cached a few seconds); import_misplaced_saves: brings
+// them in (a message says how it went).
+std::vector<std::filesystem::path> misplaced_saves(App &a, int game);
+bool import_misplaced_saves(App &a, int game);   // false: not done (a message says why)
+// the CogBox.ini [Saves] key that remembers "Not now" for this game and launcher profile
+std::string found_not_now_key(int game);
+bool backup_running();   // main.cpp: "Back up saves" is zipping
 void install_confirmed(App &a);      // the "replace" question answered yes
 bool drop_is_game_or_update(const std::string &folder);          // 0.2.0: a dropped folder COGBox adds as a copy / update
 std::vector<std::string> dlc_packages_in(const std::string &folder);   // 0.2.0: DLC packages in a dropped folder (3 levels)
@@ -214,7 +224,6 @@ std::string mods_dir(int game);
 std::vector<ModItem> mods_list(App &a, int game);         // in load order
 void mods_set_enabled(App &a, int game, const std::string &folder, bool on);
 void mods_move(App &a, int game, const std::string &folder, int dir);   // -1 up (earlier), +1 down (later, wins)
-std::vector<std::string> mods_enabled_paths(App &a, int game);
 bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err);
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);

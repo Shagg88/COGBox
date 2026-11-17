@@ -88,11 +88,6 @@ std::vector<std::string> start_names(Game g) {
     }
     return v;
 }
-// PS1 135-137
-const char* const k_mapsGJ[18] = { "SP_00_Museum_P", "SP_01_University_P", "SP_02_Mansion_P", "SP_02_Mansion_3_P", "SP_03_Island_P",
-    "SP_03_to_04_P", "SP_04_Rooftops_P", "SP_04_Rooftops2_P", "SP_05_Courthouse_P", "SP_05_CourthouseTrans_P",
-    "SP_05_CourthouseBoss_P", "SPE_E1_P", "SPE_E2_P", "SPE_E2oilrig_P", "SPE_E3_P", "SPE_E3_Outro_P", "SPE_E4_P", "SPE_E5_P" };
-
 const char* const k_aaNames[6] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS", "SMAA T2x" };   // PS1 150; 5: notes/80 s.7
 // Job 638: saved as "FrameCap", in order; the old "Fps" (30 / 60 / 120 / Unlimited) is read once and moved over
 // (Store::load_ini). Shagg: 30, 40, 45, 60, 90, 120, 144, 165, 180, Unlimited (list 2; 40 / 45 for the Steam Deck; list 1 had no 40 / 180 -
@@ -305,7 +300,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
-    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (FSR 4 on RX 6000 or newer, FSR 3.1 otherwise)", "DLSS (NVIDIA RTX)", "XeSS (highly experimental)",   /* fsr049 */   /* 0.4.7: DLSS tested clean in G2/G3/GJ */
+    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (FSR 4 on RX 6000 or newer, FSR 3.1 otherwise)", "DLSS (NVIDIA RTX, experimental)", "XeSS (highly experimental)",   /* fsr049 */   /* 0.4.7: DLSS tested clean in G2/G3/GJ; 0.6.4 (Shagg 16 Nov, GitHub #345): experimental again - scene scaling in Gears 3 / Judgment */
                  "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: AMD's temporal anti-aliasing / upscaler for the 3D scene - FSR 4 on RX 6000 or "
                "newer, FSR 3.1 otherwise (any graphics card), DirectX 12 or Vulkan. DLSS: the same on "
@@ -368,8 +363,27 @@ std::vector<Option> make_options(Game g) {
                { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)", "Larger (320 MB, not long-tested)" }, 1,
                "The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory "
                "for the rest of the game.", 360), "pool", "", true);
+    // 0.6.4 (GitHub #341): the renderer's host texture cache (--gow2_renderer_texture_cache_mb, 512 MB by default) - the
+    // video memory the PC keeps textures in, not the game's own pool. A 4x texture pack fills 512 MB quickly; evicted pack
+    // textures are read from disk again when the game draws them, which stutters.
+    add(choice("TexCache", "Texture cache (video memory)", Tab::Graphics, PG,
+               { "Auto", "512 MB", "1 GB", "2 GB", "4 GB" }, 0,
+               "How much video memory the PC side keeps the game's textures in before the least recently used ones are "
+               "freed. Texture packs need more: a freed pack texture is read from disk again when it is next drawn, which "
+               "stutters. Auto: 512 MB; with a texture pack on, 2 GB (1 GB on cards with less than 6 GB). Keep it well "
+               "under your graphics card's memory.",
+               0), "texcache");
     add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
                "How far away detail and objects are still drawn.", 361), "drawdist", "", true);
+    // 0.6.4 (Shagg 16 Nov: boma's "Smart Shadow Cuts" done our own way): the engine's own shadow-size limits
+    // ([SystemSettings] MinShadowResolution / ShadowFadeResolution and the pre-shadow pair). A shadow's size comes from how
+    // big its caster is on screen; below the minimum it isn't drawn and up to the fade size it fades in. Raising both
+    // drops small and far shadows first, with the game's own fade - large and close ones (characters, cutscenes) stay.
+    add(choice("ShadowDetail", "Shadow detail", Tab::Graphics, PG, { "Full (original)", "Balanced", "Performance" }, 0,
+               "Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). "
+               "Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. "
+               "Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows.", 362),
+        "shadowdetail");
     // GitHub #113's "Character detail (LOD)" (SkeletalMeshLODBias) was removed in 0.6.0 (Shagg): Highest halved Gears 3's
     // frame rate (the game thread skins every character at full detail) for detail only seen far away. The game's own
     // LOD is always used; a saved MeshLod value is ignored.
@@ -616,6 +630,9 @@ bool cap_exe(const Environment& e, const std::string& n) {
     // 0.3.0 (job 733): --gow2_aspect / --gowj_aspect are short enough to be split the same way (job 730's gow2.exe: no
     // "gow2_aspect" text) - their description, a long literal, is searched instead
     if ((n == "gow2_aspect" || n == "gowj_aspect") && e.cap.exe_has && e.cap.exe_has("the shape. Empty = 21:9")) return true;
+    // Discord 16 Nov (Horde bots greyed in Gears 2 on 0.6.3): 0.6.3's gow2.exe has no "gow2_horde_bots" text either - the
+    // start of its description is searched (the 0.6.3 exe has it)
+    if (n == "gow2_horde_bots" && e.cap.exe_has && e.cap.exe_has("GitHub #237 (francoissubke-blip's tip")) return true;
     return e.cap.exe_has && e.cap.exe_has(n);
 }
 bool cap_rt(const Environment& e, const std::string& n) { return e.cap.runtime_has && e.cap.runtime_has(n); }
@@ -629,6 +646,18 @@ bool fsr_vulkan(const Environment& e) {
 }
 // Review: and the player turned "FSR on Vulkan (experimental)" on (--gow2_fsr_vulkan defaults to false)
 bool fsr_vulkan_on(const Settings& s, const Environment& e) { return s.b("FsrVulkan") && fsr_vulkan(e); }
+int expected_render_scale(Game g, const Settings& s, const Environment& e) {
+    const int r = s.i("Resolution") + 1;   // 1-4 = 1x-4x, 5 = Match my monitor, 6 = 1080p (drawn at 1x)
+    if (r >= 1 && r <= 4) return r;
+    if (r != 5) return 1;
+    if (e.monitor_w <= 0 || e.monitor_h <= 0) return 2;   // as the game does without a monitor size
+    // as shadow_renderer.cpp's "Match my monitor": by width for a wider game image, else the 16:9 shape
+    // review r1953: Ultrawide counts only when it is really sent (an available option, as build_args' on())
+    const Option* uw = find_option(g, "Ultrawide");
+    const bool wide = uw && s.b("Ultrawide") && available(*uw, g, effective_version(g, s, e), s, e).ok;
+    const double need = wide ? e.monitor_w / 1280.0 : std::min(e.monitor_w / 1280.0, e.monitor_h / 720.0);
+    return std::clamp(static_cast<int>(std::ceil(need - 1e-9)), 1, 4);
+}
 namespace {
 
 std::vector<std::string> gpu_list(const Environment& env) {
@@ -815,6 +844,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
             return no(not_yet(gi, "needs its next build"));
     } else if (f == "inifx") {   // motion blur, depth of field, lens flares: [SystemSettings] switches
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no setting for this.");
+    } else if (f == "shadowdetail") {   // 0.6.4: [SystemSettings] shadow sizes (Gears 1's 2006 engine has none there)
+        if (g == Game::Gears1) return no("Gears 1's engine (2006) has no shadow-size setting.");
     } else if (f == "drawdist") {
         if (g == Game::Gears2) return no(not_yet(0, "its config has no draw-distance setting"));
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no draw-distance setting.");
@@ -850,6 +881,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no mip-fade setting - its sharper textures already show at once.");
     } else if (f == "aniso") {
         if (g == Game::Gears1 && !cap_exe(env, "gow1_aniso16")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "texcache") {   // 0.6.4 (GitHub #341): layer 0's cvar, in every game's exe
+        if (!cap_exe(env, "gow2_renderer_texture_cache_mb")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "pool") {
         if (g == Game::Gears1 && !cap_exe(env, "gow1_texture_pool_mb")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "syslink") {   // 0.3.5: SDK patch 49b (the runtime's net_system_link); Gears 2 first
@@ -935,21 +968,28 @@ const std::vector<KeyAction> &key_actions(Game g)
         { "keybind_left_shoulder", "LB", "Tactical display", "Tab" },
         { "keybind_dpad_left", "D-pad left", "Weapon (left)", "1" },
         { "keybind_dpad_right", "D-pad right", "Weapon (right)", "2" },
-        { "keybind_dpad_up", "D-pad up", "Weapon (up)", "3" },
-        { "keybind_dpad_down", "D-pad down", "Grenades", "4" },
+        // GitHub #350 (the games' own bindings, Coalesced_INT.bin: Gears 2 / 3 DPad_Up = GBA_Grenades, DPad_Down =
+        // GBA_Pistols; Gears 1 the same per its manual): the rows said "Weapon (up)" on 3 and "Grenades" on 4, so 3 threw a
+        // grenade and 4 drew the pistol. Shagg 16 Nov: 4 = grenade, 3 = pistol (as the labels promised; Judgment's too).
+        { "keybind_dpad_up", "D-pad up", "Grenades", "4" },
+        { "keybind_dpad_down", "D-pad down", "Pistol", "3" },
         { "keybind_rstick_press", "Right stick click", "Zoom", "MMB,Z" },
         { "keybind_lstick_press", "Left stick click", "Left stick click", "C" },
         { "keybind_start", "Start", "Pause menu", "Escape,Return" },
         { "keybind_back", "Back", "Back / scores", "Backspace" },
         { "keybind_walk", "-", "Walk", "None" },   // SDK patch 60: no key until chosen
     };
-    // GitHub #208: Judgment's LB is the grenade and D-pad down the tactical display - the same keys (Tab, 4) keep
-    // their meaning, so the two rows swap names and default keys
+    // Judgment's own bindings (its Coalesced_INT.bin): LB = GBA_Grenades, Y = GBA_SwitchWeapon, D-pad up = GBA_POI, D-pad
+    // down = GBA_Taccom, D-pad left / right = GBA_Weap2 / GBA_Weap1 (as the other games). GitHub #208 / #350: each key
+    // keeps its meaning - 4 grenade, Q point of interest, Tab tactical display, 1 / 2 the weapons; Y (switch weapon) gets
+    // 3 (Shagg 16 Nov).
     static const std::vector<KeyAction> judgment = [] {
         std::vector<KeyAction> j = v;
         for (KeyAction &k : j) {
             if (!strcmp(k.cvar, "keybind_left_shoulder")) { k.what = "Grenades"; k.def = "4"; }
             else if (!strcmp(k.cvar, "keybind_dpad_down")) { k.what = "Tactical display"; k.def = "Tab"; }
+            else if (!strcmp(k.cvar, "keybind_y")) { k.what = "Switch weapon"; k.def = "3"; }
+            else if (!strcmp(k.cvar, "keybind_dpad_up")) { k.what = "Look at / point of interest"; k.def = "Q"; }
         }
         return j;
     }();
@@ -1376,15 +1416,6 @@ std::string main_gpu(const std::vector<std::string>& gpus) {     // PS1 152
     for (const std::string& n : gpus) if (!n.empty()) return n;
     return "";
 }
-std::string launch_url(Game g, int chapter) {                    // PS1 141-144
-    if (g == Game::Judgment) return std::string(k_mapsGJ[std::max(0, std::min(17, chapter))]) + " -nostartupmovies";
-    if (g == Game::Gears1) {   // the chapter's level file and its start point (the game's chapter select passes it the same way)
-        const int n = int(sizeof(k_gears1Chapters) / sizeof(k_gears1Chapters[0]));
-        const Gears1Chapter& c = k_gears1Chapters[std::max(0, std::min(n - 1, chapter))];
-        return std::string(c.map) + "?LoadChapter=" + std::to_string(c.point);
-    }
-    return "GearGame_P?loadcheckpoint=0?chapter=" + std::to_string(chapter) + " -nostartupmovies";
-}
 
 // ---- Store (PS1 103-123, 418-464, 759-774) --------------------------------------------------------------------------
 Store::Store() { reset(); }
@@ -1759,11 +1790,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
         // GitHub #98 (Gears 1 "DLSS" runs were DLAA): the scene scale is a whole number of times smaller than the render
         // resolution only for Performance at 2x / 4x and Quality / Ultra performance at 3x; any other pairing (and every
-        // 720p or "1080p" render resolution, both drawn at 1x) runs as native anti-aliasing. Say so before launch. Fixed
-        // scales only - "Match my monitor" picks its scale in the game (its log names the result).
-        if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4 && s.i("Resolution") + 1 != 5) {
-            const int out = scale;
-            const bool fits = (m == 2 && (out == 2 || out == 4)) || ((m == 1 || m == 3) && out == 3);
+        // 720p or "1080p" render resolution, both drawn at 1x) runs as native anti-aliasing. Say so before launch.
+        // #345: "Match my monitor" too, with the scale the game will pick (4K: 3x, so Performance there was DLAA unsaid).
+        if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4) {
+            const int out = expected_render_scale(g, s, env);
+            const bool fits = scene_mode_fits(m, out);
             if (!fits) {
                 static const char* const mname[4] = { "", "Quality", "Performance", "Ultra performance" };
                 notes.push_back(std::string("launcher: Scene resolution ") + mname[m] + " has no whole-number scene size at render "
@@ -1867,6 +1898,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back(sw[gi] + std::to_string(mb));
         }
     }
+    // 0.6.4 (GitHub #341): the host texture cache; Auto = the renderer's 512 MB, 2 GB with a texture pack on. Sent only
+    // when it is not 512 (the renderer's default)
+    if (avail("TexCache")) {
+        static const int k_cacheMb[5] = { 0, 512, 1024, 2048, 4096 };
+        int mb = k_cacheMb[std::max(0, std::min(4, s.i("TexCache")))];
+        // review r1937: 2 GB only on cards with 6 GB or more (or unknown size: 1 GB) - Vulkan stops on a failed texture
+        // allocation, D3D12 slows down
+        if (!mb) mb = !env.texture_pack_mods.empty() && cap_exe(env, "gow2_texture_pack_dirs") ? (env.vram_mb >= 5800 ? 2048 : 1024) : 512;
+        if (mb != 512) a.push_back("--gow2_renderer_texture_cache_mb=" + std::to_string(mb));
+    }
     // PS1 866-867: Gears 3 / Judgment trilinear and fast mip fade (on by default there, so always sent)
     if (isG3) { a.push_back("--gow3_trilinear=" + fmt_bool(s.b("Trilinear"))); a.push_back("--gow3_fast_mip_fade=" + fmt_bool(s.b("MipFade"))); }
     // 0.3.0 (GitHub #54, soldiermxdeath: Monroe Commons' loading screen ends at 30 fps, not at 60): loading screens at 30
@@ -1942,6 +1983,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             else if (isG3) ini.push_back(ei + "|FullScreenMovie|-StartupMovies=Open_Logos");
             else if (isG1) a.push_back("--gow1_skip_logos=true");
             else a.push_back("--gowj_skip_logos=true");
+        }
+        // 0.6.4 Shadow detail: the engine's own minimum and fade-in sizes for per-object shadows and pre-shadows, scaled
+        // (the games' values: Gears 2 64 / 128; Gears 3 and Judgment 64 / 128 and pre-shadows 8 / 16). Missing keys are
+        // left alone (a scale only changes a key the game has).
+        const int sd = std::max(0, std::min(2, s.i("ShadowDetail")));
+        if (avail("ShadowDetail") && sd > 0) {
+            const char* f = sd == 1 ? "2" : "3";
+            for (const char* k : { "MinShadowResolution", "ShadowFadeResolution", "MinPreShadowResolution", "PreShadowFadeResolution" })
+                ini.push_back(ei + "|SystemSettings|" + k + "*=" + f);
+            if (sd == 2) ini.push_back(ei + "|SystemSettings|ShadowTexelsPerPixel*=0.75");
         }
         int dd = std::max(0, std::min(2, s.i("DrawDist")));
         if (avail("DrawDist") && dd > 0) ini.push_back(ei + "|SystemSettings|MaxDrawDistanceScale=" + k_drawScale[dd]);

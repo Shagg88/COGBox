@@ -163,6 +163,21 @@ std::string tr(const std::string &english)
     return done;
 }
 
+std::string trf(const std::string &english, const std::vector<std::string> &args)
+{
+    std::string t = tr(english);
+    // one pass, so a filled-in name that itself holds "{2}" is never replaced again
+    std::string out;
+    for (size_t i = 0; i < t.size(); i++) {
+        if (t[i] == '{' && i + 2 < t.size() && t[i + 1] >= '1' && t[i + 1] <= '9' && t[i + 2] == '}') {
+            const size_t n = size_t(t[i + 1] - '1');
+            if (n < args.size()) { out += args[n]; i += 2; continue; }
+        }
+        out += t[i];
+    }
+    return out;
+}
+
 const char *tr(const char *english)
 {
     if (g_map.empty() || !english) return english;

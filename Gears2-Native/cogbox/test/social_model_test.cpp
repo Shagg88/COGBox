@@ -79,6 +79,22 @@ int main() {
     CHECK(game_for_title("4D530A26") == 2);   // G_JUDGMENT
     CHECK(game_for_title("4D5307D5") == 3);   // G_GEARS1
     CHECK(join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-AB12"})")->game == 1);   // Gears 3
+    // 0.6.4 (SDK patch 112): Gears 3's Join through matchmaking
+    CHECK(same(call_for(SocialAction::JoinMatchSearch, "0b6f2c1e-1111-4222-8333-944455556666"), "POST",
+               "/api/v1/matches/0b6f2c1e-1111-4222-8333-944455556666/join?via=matchmaking", ""));
+    {
+        auto st = join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-AB12","via":"matchmaking","playlist":20})");
+        CHECK(st && st->game == 1 && st->search && st->playlist == 20 && !st->told);
+        auto told = join_from_answer(200, R"({"status":"search","title_id":"4D5308AB","room_code":"COG-AB12","via":"matchmaking","playlist":20})");
+        CHECK(told && told->told && told->search && told->playlist == 20);
+        // an older server answers a matchmaking Join like any Join: 200 = the game was told to join, nothing for us
+        CHECK(!join_from_answer(200, R"({"status":"joining","title_id":"4D5308AB","room_code":"COG-AB12"})").has_value());
+        auto old = join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-AB12"})");
+        CHECK(old && !old->search && old->playlist == -1 && !old->told);
+        CHECK(!join_from_answer(200, R"({"status":"search","title_id":"4D5308AB","room_code":"COG-AB12 x","via":"matchmaking"})").has_value());
+        CHECK(!join_from_answer(403, R"({"error":"that match is full"})").has_value());
+        CHECK(std::string(kPreferLobbyPrefix) == "prefer:");
+    }
     CHECK(game_for_title("FFFFFFFF") == -1);
     // tags
     CHECK(valid_tag("Flapper#4293"));

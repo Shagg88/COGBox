@@ -45,7 +45,6 @@ for f in third_party/lzma/*.c; do
 done
 for f in src/*.cpp ../src/layer2_ue3/prebuild_lzx.cpp ../src/layer0_xenos/achievements_data.cpp ../../Gears3-Native/src/layer2_ue3/modcore/modcore.cpp \
          ../src/layer0_xenos/achievements_browser_model.cpp ../src/layer0_xenos/achievements_popup_logic.cpp; do   # (the LZX decoder: Gears2-Native's own, MIT)
-  case $f in src/hello.cpp) continue;; esac
   o=$OUT/obj/$(basename $f .cpp).o; objs="$objs $o"
   $CXX $FLAGS -c $f -o $o
 done

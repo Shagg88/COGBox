@@ -131,6 +131,43 @@ TEST_CASE("render_target_cache: a scale change frees the old scale's targets", "
   CHECK(backend.destroyed.size() == 6);
 }
 
+TEST_CASE("render_target_cache: a resolve-only view follows the phase scale (#345)", "[renderer_core][rt_cache]") {
+  RtMockBackend backend;
+  RenderTargetCache rts(backend, false, 3, 0);
+  const RenderTargetKey view{720, uint32_t(edram::ColorFormat::k_2_10_10_10), 1280, 0};
+  const RenderTargetKey drawn{0, uint32_t(edram::ColorFormat::k_8_8_8_8), 1280, 0};
+  rts.SetPhaseScale(3);  // the first frames run at the output scale
+  RenderTarget* v3 = rts.Get(view);
+  RenderTarget* d3 = rts.Get(drawn);
+  REQUIRE(v3);
+  REQUIRE(d3);
+  d3->draws = 1;
+  rts.SetPhaseScale(2);  // then the scene scale
+  RenderTarget* v2 = rts.FindForResolve(view);
+  REQUIRE(v2);
+  CHECK(v2 != v3);
+  CHECK(v2->scale == 2);
+  CHECK(rts.FindForResolve(view) == v2);  // made once
+  CHECK(rts.FindForResolve(drawn) == d3);  // a key the other phase drew: that twin, as FindAny
+  rts.SetPhaseScale(3);
+  CHECK(rts.FindForResolve(view) == v3);
+  CHECK(rts.FindAny(drawn) == d3);
+  // a key whose found twin has no draws but whose other twin was drawn: that answer is kept (no third twin made)
+  const RenderTargetKey mixed{2000, uint32_t(edram::ColorFormat::k_8_8_8_8), 1280, 0};
+  RenderTarget* m3 = rts.Get(mixed);
+  rts.SetPhaseScale(2);
+  RenderTarget* m2 = rts.Get(mixed);
+  REQUIRE(m3);
+  REQUIRE(m2);
+  m3->draws = 1;
+  m2->write_gen = 5;  // FindAny's answer at a phase with no twin: the undrawn 2x one, written last
+  rts.SetPhaseScale(1);
+  const size_t before = rts.size();
+  CHECK(rts.FindAny(mixed) == m2);
+  CHECK(rts.FindForResolve(mixed) == m2);
+  CHECK(rts.size() == before);
+}
+
 TEST_CASE("render_target_cache: twins of both phases in use are kept", "[renderer_core][rt_cache]") {
   RtMockBackend backend;
   RenderTargetCache rts(backend, false, 2, 640);  // pitch 640 and below stays at 1x

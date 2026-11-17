@@ -91,6 +91,7 @@ struct Environment {
     // texture packs (KiltedKernel; r95 L1): those of `mods` that hold texture-pack files, in load order
     // (--gow2_texture_pack_dirs - only these, so the command line stays short and the renderer walks no other mod)
     std::vector<std::string> texture_pack_mods;
+    unsigned vram_mb = 0;                      // 0.6.4 (GitHub #341): the main graphics card's video memory, 0 = unknown
     std::map<std::string, std::string> keys;   // 0.2.0: the player's own keyboard keys, cvar -> key (CogBox.ini [Keys])
     std::string recipe_pack;                   // job 630: <COGBox>\recipes\recipes-<exe>.rcp, "" = none
     std::string prompt_dir;                    // job 629: <COGBox>\prompts\keyboard (key-cap overlays), "" = none
@@ -174,6 +175,12 @@ extern const char* const k_fgVkNvidiaWarning;
 bool fg_vk_nvidia_warning(const Settings& s, const Environment& env);
 bool fsr_vulkan(const Environment& env);   // fsr049: FSR upscaling available on Vulkan
 bool fsr_vulkan_on(const Settings& s, const Environment& env);   // ...and "FSR on Vulkan (experimental)" is on
+// #345: the render scale the game will use (1-4): the chosen one, 1 for 720p / 1080p, and for "Match my monitor" what the
+// game picks - the smallest scale covering the monitor (by width with Ultrawide on); 2 when the monitor size is unknown
+int expected_render_scale(Game g, const Settings& s, const Environment& env);
+// #345 / GitHub #98: Scene resolution mode m (1 Quality, 2 Performance, 3 Ultra performance) has a whole-number scene size
+// at render scale `out` - otherwise the upscaler only anti-aliases (DLAA / native AA)
+inline bool scene_mode_fits(int m, int out) { return (m == 2 && (out == 2 || out == 4)) || ((m == 1 || m == 3) && out == 3); }
 // proton049: under Proton / Wine, a single choice that can't work there, with its one-line reason (always ok on
 // Windows): exclusive fullscreen, NVIDIA DLSS without an NVIDIA RTX card, DLSS / XeSS frame generation.
 Availability wine_choice_available(const Option& o, int index, const Environment& env);
@@ -211,8 +218,6 @@ std::string monitor_label(int index1, int width, int height, bool primary);
 bool graphics_card_present(const Environment& env, const std::string& name);
 // PS1 152: the main graphics card of a list.
 std::string main_gpu(const std::vector<std::string>& gpus);
-// PS1 141: the start URL for a chapter (0-based).
-std::string launch_url(Game g, int chapter);
 
 // The remembered settings of all the games (PS1 $s + PerGame).
 class Store {

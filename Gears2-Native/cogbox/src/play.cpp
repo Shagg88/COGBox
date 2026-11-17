@@ -7,9 +7,11 @@
 #include "i18n.h"
 #include "x360fs.h"
 #include "crash_dump.h"
+#include "social_model.h"   // kPreferLobbyPrefix (0.6.4)
 
 #include <windows.h>
 #include <cstdio>
+#include <cstring>
 #include <algorithm>
 
 static std::string hex32(DWORD c) { char b[16]; snprintf(b, sizeof b, "0x%08lX", (unsigned long)c); return b; }
@@ -278,9 +280,23 @@ void play_start(App &a, int g, bool prepare)
     // the game stop itself at start. Asked before the launch instead of letting it crash.
     if (gs::exe_for_update(G, ver, a.env[g]) && !st.updateDir.empty() && !a.tuMismatchOk[g]) {
         x360fs::XexInfo xi, pi;
-        if (x360fs::read_xex_info(widen(join(st.dataDir, "default.xex")), xi) &&
-            x360fs::read_xex_info(widen(join(st.updateDir, "default.xexp")), pi) && pi.base_version &&
-            (pi.title_id != xi.title_id || pi.base_version != xi.version)) {
+        // (the runtime takes a default.xexp next to default.xex first, then the update folder's - review r1949)
+        const std::string besideXexp = join(st.dataDir, "default.xexp");
+        const bool both = x360fs::read_xex_info(widen(join(st.dataDir, "default.xex")), xi) &&
+                          x360fs::read_xex_info(widen(file_exists(besideXexp) ? besideXexp : join(st.updateDir, "default.xexp")), pi);
+        // GitHub #346: same version, but the title update was made for another default.xex (another print of the disc,
+        // or a default.xex a tool changed) - the runtime only warns and the game crashes while patching
+        if (both && pi.title_id == xi.title_id && pi.base_version == xi.version && pi.has_patch_source && xi.has_signature &&
+            std::memcmp(pi.patch_source_sha1, xi.signature_sha1, 20) != 0) {
+            ask(a, "tumismatch", g, tr("The title update doesn't match your game files"),
+                std::string(tr("This title update was made for another copy of the game's default.xex (another print or "
+                               "release of the game), and the game would most likely crash at start.")) +
+                    " " + tr("Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them."),
+                { tr("Play anyway"), tr("Cancel") });
+            a.joinLobby[g] = joinCode;
+            return;
+        }
+        if (both && pi.base_version && (pi.title_id != xi.title_id || pi.base_version != xi.version)) {
             ask(a, "tumismatch", g, tr("The title update doesn't match your game files"),
                 std::string(tr("This title update is for another release of the game, and the game would most likely stop at start.")) +
                     " " + tr("Add the title update that matches your copy.") +
@@ -289,6 +305,28 @@ void play_start(App &a, int g, bool prepare)
                 { tr("Play anyway"), tr("Cancel") });   // Shagg: no disc-version button
             a.joinLobby[g] = joinCode;   // "Play anyway" starts again and still joins; main.cpp clears it on Cancel
             return;
+        }
+    }
+    // 0.6.4 (Shagg 16 Nov): saves the player copied into the saves folder by hand, which the game would not see - asked
+    // once per set of them (a "Not now" is kept in CogBox.ini until what is there changes)
+    if (!prepare) {   // review r1945: never before a "Prepare all shaders" run (an answer would start the real game)
+        const std::vector<std::filesystem::path> found = misplaced_saves(a, g);
+        if (!found.empty()) {
+            std::string sig;
+            const std::filesystem::path ud = std::filesystem::u8path(game_user_dir(g));
+            for (const auto &f : found) sig += f.lexically_relative(ud).generic_u8string() + "|";   // (review r1946: no throw on odd names)
+            sig = std::to_string(found.size()) + ":" + std::to_string(std::hash<std::string>{}(sig));
+            if (a.ini.get("Saves", found_not_now_key(g)) != sig && !a.misplacedAsked[g]) {
+                a.misplacedAsked[g] = true;
+                ask(a, "foundsaves", g, tr("Saves COGBox can't use yet"),
+                    std::string(tr("Saves were copied into the saves folder by hand, and the game can't use them as they are "
+                                   "(another profile's folder, Xbox 360 packages that aren't unpacked, or another layout).")) +
+                        "\n\n" + tr("Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, "
+                                      "in a folder beside the saves folder."),
+                    { tr("Bring them in"), tr("Not now") }, sig);
+                a.joinLobby[g] = joinCode;   // the answer starts the game again (main.cpp)
+                return;
+            }
         }
     }
     // this play's own folder: the log, the arguments, any crash report
@@ -340,7 +378,12 @@ void play_start(App &a, int g, bool prepare)
     bool useShared = dir_exists(shared);
     if (useShared) args.push_back("--gow2_dxc_dir=\"" + shared + "\"");
     // social step 3: Join friend from the SOCIAL tab - the game joins that lobby once it is at its menus (SDK patch 79, --net_join_lobby)
-    if (!joinCode.empty() && !a.env[g].online_server.empty()) args.push_back("--net_join_lobby=" + joinCode);
+    if (!joinCode.empty() && !a.env[g].online_server.empty()) {
+        // 0.6.4 (Gears 3 Open matches, SDK patch 112): "prefer:<code>" = the game's own matchmaking finds that match
+        const std::string pre = kPreferLobbyPrefix;
+        if (joinCode.compare(0, pre.size(), pre) == 0) args.push_back("--net_prefer_lobby=" + joinCode.substr(pre.size()));
+        else args.push_back("--net_join_lobby=" + joinCode);
+    }
     if (prepare) {   // job 641: build every shipped recipe, then the game saves its pipeline library and exits
         args.push_back("--gow2_renderer_prepare_all=true");
         DeleteFileW(widen(join(game_shader_dir(g), "prepare-progress.txt")).c_str());

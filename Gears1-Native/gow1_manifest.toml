@@ -10,6 +10,8 @@ game_root = "game/tu5/patched"   # default.xex + default.xexp (the TU layout Gea
 [entrypoint]
 file_path = "game/tu5/patched/default.xex"
 out_directory_path = "generated/default"
+# SDK patch 110 (game side): the codegen templates in ../Gears2-Native/codegen-templates (see its README).
+template_dir = "../Gears2-Native/codegen-templates"
 includes = []
 # Gears 2's measured codegen option (its notes/60: cr_as_local -10% frame time); Judgment boots with it too.
 cr_as_local = true

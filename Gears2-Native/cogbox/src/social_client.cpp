@@ -75,7 +75,8 @@ void run(SocialBackend b, uint64_t gen) {
             if (action) {
                 const HttpResult r = b.call(call_for(action->first, action->second));
                 if (action->first == SocialAction::Join || action->first == SocialAction::InviteAccept ||
-                    action->first == SocialAction::JoinMatch) join = join_from_answer(r.status, r.body);
+                    action->first == SocialAction::JoinMatch || action->first == SocialAction::JoinMatchSearch)
+                    join = join_from_answer(r.status, r.body);
                 if (r.status == 0) error = "Can't reach the online server.";
                 else if (r.status >= 400 && !join) error = server_error(r.body);
                 if (action->first == SocialAction::Rename && r.status == 200) {
@@ -94,7 +95,8 @@ void run(SocialBackend b, uint64_t gen) {
                 if (p.status == 200) regions = parse_region_counts(p.body);
             }
             // open matches: every 10 s, and straight after a Join from the list (the list may have changed)
-            if (reachable && (tick % 2 == 0 || (action && action->first == SocialAction::JoinMatch))) {
+            if (reachable && (tick % 2 == 0 || (action && (action->first == SocialAction::JoinMatch ||
+                                                           action->first == SocialAction::JoinMatchSearch)))) {
                 const HttpResult m = b.call({ "GET", "/api/v1/matches", "" });
                 // any other answer (an older server without the list, an error) is "none", not "still looking"
                 if (m.status != 0) matches = m.status == 200 ? parse_matches(m.body) : std::vector<SocialMatch>{};

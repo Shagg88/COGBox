@@ -689,6 +689,8 @@ void ApplyStackGuarantee() {
   if (static_cast<const char*>(tib->StackBase) - static_cast<const char*>(mi.AllocationBase) < 512 * 1024) return;
   SetThreadStackGuarantee(&want);
 }
+// Runs at process attach, BEFORE cpu_check.cpp's AVX2 check (init_seg(compiler)), and this file is built for the game's CPU level
+// (x86-64-v3): keep the process-attach path to a plain compare - no work that the compiler could vectorise.
 void NTAPI CrashTlsCallback(PVOID, DWORD reason, PVOID) {
   if (reason == DLL_THREAD_ATTACH) ApplyStackGuarantee();
 }

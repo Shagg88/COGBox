@@ -841,51 +841,6 @@ static void ApplyMeta(GuestShader& s, const hlsl::Translation& tr) {
   s.float_constants_relative = tr.float_constants_relative;
   s.memexport_stream_constants = tr.memexport_stream_constants;
 }
-// Patch 0099 (Vulkan, measurement): our SPIR-V written to / replaced from files named by the hash of its words
-// (<hash>.spv dumped; <hash>.opt.spv read in its place), so an offline-optimised copy can be timed in game.
-static std::string g_spv_dump_dir, g_spv_override_dir;
-static std::atomic<uint64_t> g_spv_dumped{0}, g_spv_overridden{0}, g_spv_seen{0};
-void ShaderCache::SetSpirvFiles(const std::string& dump_dir, const std::string& override_dir) {
-  g_spv_dump_dir = dump_dir;
-  g_spv_override_dir = override_dir;
-  std::error_code ec;
-  if (!dump_dir.empty()) std::filesystem::create_directories(dump_dir, ec);
-  if (!dump_dir.empty() || !override_dir.empty())
-    REXLOG_INFO("gow2_renderer: SPIR-V files (patch 0099): dump to '{}', replace from '{}'", dump_dir, override_dir);
-}
-static void SpirvFiles(std::vector<uint32_t>& words) {
-  if (g_spv_dump_dir.empty() && g_spv_override_dir.empty()) return;
-  char name[24];
-  std::snprintf(name, sizeof(name), "%016llX", static_cast<unsigned long long>(Fnv1a64(words.data(), words.size() * 4,
-                                                                                       14695981039346656037ull)));
-  const uint64_t seen = ++g_spv_seen;
-  namespace fs = std::filesystem;
-  std::error_code ec;
-  if (!g_spv_dump_dir.empty()) {
-    const fs::path p = fs::path(g_spv_dump_dir) / (std::string(name) + ".spv");
-    if (!fs::exists(p, ec)) {
-      const fs::path tmp = fs::path(g_spv_dump_dir) / (std::string(name) + ".tmp");
-      { std::ofstream o(tmp, std::ios::binary); o.write(reinterpret_cast<const char*>(words.data()), std::streamsize(words.size() * 4)); }
-      fs::rename(tmp, p, ec);
-      ++g_spv_dumped;
-    }
-  }
-  if (!g_spv_override_dir.empty()) {
-    const fs::path p = fs::path(g_spv_override_dir) / (std::string(name) + ".opt.spv");
-    if (fs::exists(p, ec)) {
-      std::ifstream i(p, std::ios::binary);
-      std::vector<char> b((std::istreambuf_iterator<char>(i)), {});
-      if (b.size() >= 20 && b.size() % 4 == 0 && *reinterpret_cast<const uint32_t*>(b.data()) == 0x07230203u) {
-        words.resize(b.size() / 4);
-        std::memcpy(words.data(), b.data(), b.size());
-        ++g_spv_overridden;
-      }
-    }
-  }
-  if ((seen & (seen - 1)) == 0)
-    REXLOG_INFO("gow2_renderer: SPIR-V files (patch 0099): {} converted, {} dumped, {} replaced by an optimised copy",
-                seen, g_spv_dumped.load(), g_spv_overridden.load());
-}
 // Patch 0084: DXBC, and on Vulkan its SPIR-V (dxbc_spirv.cpp) in place of it - a pure function of the program and the
 // options, so the warm-up runs it on several threads.
 // 0.6.1 (Vulkan first-run cost; gn_pipebench jobs 1736 / 1737 on an RTX 3080 Ti): dxbc_spirv writes every register as
@@ -1064,7 +1019,7 @@ static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program,
   if (dt.ok && spirv) {
     const uint64_t store_key = SpvKey(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise, g_spv_store.switches);
     dxbc_spirv::SpirvResult sv;
-    if (spv_pending && g_spv_async.load() && g_spv_dump_dir.empty() && g_spv_override_dir.empty()) {
+    if (spv_pending && g_spv_async.load()) {
       if (SpvStoreGet(store_key, sv.words)) {
         dt.bytecode.resize(sv.words.size() * 4);
         std::memcpy(dt.bytecode.data(), sv.words.data(), dt.bytecode.size());
@@ -1073,18 +1028,14 @@ static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program,
       }
       return dt;
     }
-    // Review: with patch 0099's dump / replace folders set (a test tool) the store is left out, so those files see
-    // the words as converted - their names are hashes of them - exactly as in 0.6.0; the optimiser runs after them.
     // (A store hit skips the conversion, so patch 0102's discard counts only cover shaders converted in this run.)
-    const bool files_tool = !g_spv_dump_dir.empty() || !g_spv_override_dir.empty();
-    const bool stored = !files_tool && SpvStoreGet(store_key, sv.words);  // 0.6.1: converted in an earlier run
+    const bool stored = SpvStoreGet(store_key, sv.words);  // 0.6.1: converted in an earlier run
     if (stored) sv.ok = true;
     else sv = dxbc_spirv::ConvertDxbcToSpirv(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise);
     if (sv.ok) {
       if (!stored) {
-        SpirvFiles(sv.words);  // patch 0099
         OptimiseSpirv(sv.words);  // 0.6.1
-        if (!files_tool) SpvStorePut(store_key, sv.words);
+        SpvStorePut(store_key, sv.words);
       }
       dt.bytecode.resize(sv.words.size() * 4);
       std::memcpy(dt.bytecode.data(), sv.words.data(), dt.bytecode.size());
@@ -1220,10 +1171,6 @@ void ShaderCache::Promote(const GuestShader& s) {
       return;
     }
   }
-}
-size_t ShaderCache::SpirvJobsQueued() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return spv_queue_.size() + spv_warm_queue_.size();
 }
 
 const GuestShader& ShaderCache::AdoptDxbc(uint64_t key, std::unique_ptr<GuestShader> s,

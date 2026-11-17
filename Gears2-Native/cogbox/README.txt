@@ -2,7 +2,7 @@ COGBox - Gears of War native PC ports
 =====================================
 
 COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
-Judgment. This README is for COGBox 0.6.3.
+Judgment. This README is for COGBox 0.6.4.
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project. COGBox isn't affiliated with Microsoft, Epic Games or The
 Coalition.
@@ -34,7 +34,7 @@ What you need
 
 Getting started
 ---------------
-1. Right-click COGBox-0.6.3.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
+1. Right-click COGBox-0.6.4.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
    7-zip.org) to a folder of its own that you can write to, for example C:\Games\COGBox. Don't start
    COGBox from inside the archive, and don't use Program Files (Windows protects it) - COGBox tells
    you on start-up if it's in such a place.
@@ -65,6 +65,22 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 Alt+Enter in the game window switches between windowed and borderless full screen (all four games; another key:
 --bind_cogbox_fullscreen=<key> in extra-args.txt, None = off).
+
+
+New in 0.6.4
+------------
+- Built for AVX2 CPUs only (the README already listed one as needed): faster in every game - Gears 3 about
+  6% less frame time than 0.6.3, Judgment about 5%. On a CPU without AVX2, COGBox says so; 0.6.3 still works there.
+- Gears 3: DLSS really works now (#345). Sharper textures with DLSS and FSR in all four games.
+- Less stutter with texture packs (#341, new Texture cache setting) and in Judgment when moving between map areas
+  (Blood Drive; by Flippage).
+- Gears 3 Open matches: the host's game picks your team (needs the updated online server). To choose COG or Locust,
+  host Versus > Private and press Y in the lobby.
+- Saves section on the Gameplay tab finds and brings in saves copied by hand; default keys follow each game's own
+  controls (#350); Gears 1 checks its title update before starting (#346); Horde bots no longer greyed out in Gears 2.
+- Thanks to Flippage and IamBugReporter for their code and translation, and to everyone who reported issues on
+  GitHub and tested in the Discord.
+- Full list: CHANGES.md on GitHub (https://github.com/Shagg88/COGBox).
 
 
 New in 0.6.3

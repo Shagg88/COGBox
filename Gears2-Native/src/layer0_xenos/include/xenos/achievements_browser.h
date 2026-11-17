@@ -45,7 +45,6 @@ class AchievementsBrowser {
   void Next();      // RB
   void CycleSort();  // X
   void CycleShow();  // Y
-  bool RevealOpen() const { return reveal_open_; }  // the reveal question is showing (B means No there)
 
  private:
   // The menu is set up before the runtime exists (OnCreateDialogs comes before ConstructRuntime): the runtime is
@@ -80,7 +79,7 @@ class AchievementsBrowser {
   bool scroll_top_ = false;
 
   std::pair<uint32_t, uint32_t> reveal_{0, 0};
-  bool want_reveal_ = false, reveal_open_ = false, reveal_failed_ = false;
+  bool want_reveal_ = false, reveal_failed_ = false;
 };
 
 }  // namespace xenos

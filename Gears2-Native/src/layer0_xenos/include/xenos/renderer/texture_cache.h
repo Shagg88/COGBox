@@ -42,7 +42,9 @@ void SetDynamicOverlay(uint64_t hash, std::vector<uint8_t> overlay_data);
 void SetDynamicOverlayShared(uint64_t hash, std::shared_ptr<const std::vector<uint8_t>> overlay_data);
 void SetSuppressDiskOverlaysForPrompts(bool suppress);
 void ClearDynamicOverlays();
-uint64_t BumpOverlayGeneration();
+// Unit tests only (0.6.4, GitHub #341): the texture-pack folders and the pack dump folder, as --gow2_texture_pack_dirs /
+// --gow2_texture_pack_dump_dir would give them at start-up ("" = none); what was refused or dumped before is forgotten.
+void SetTexturePacksForTests(const std::string& pack_dirs, const std::string& pack_dump_dir);
 uint64_t OverlayGeneration();
 
 struct TextureCacheStats {
@@ -75,7 +77,6 @@ struct TextureCacheStats {
   uint64_t bc_guest_loads = 0, bc_guest_pages = 0, bc_guest_failed_loads = 0;
   // Stage 7: textures loaded at the resolution scale from our scaled resolves (live entries, loads, bound slots).
   uint64_t scaled_textures = 0, scaled_loads = 0, scaled_bound = 0, scaled_bytes = 0;
-  std::map<std::string, uint64_t> scaled_misses;  // job 189: resolve-written textures not taken at the scale, by reason
   std::map<std::string, uint64_t> stand_in_reasons;  // why a slot got the white stand-in
   // Job 047 resolve-through: resolves that wrote a cached texture directly (its reload skipped); resolves that matched
   // a texture whose content was already out of date (normal reload); writes whose version moved meanwhile.
@@ -134,8 +135,6 @@ class TextureCache {
   // Job 042 (Gears 3 ground flicker): called before a CPU-path load reads guest memory that our GPU wrote last (any
   // GPU-current page in [start, start + length)), so the owner can bring pending GPU results (memexport readbacks)
   // into guest memory first.
-  // Job 045 diagnostic: log every texture load (new or reloaded) during this frame (0 = off).
-  void SetLoadLogFrame(uint64_t frame) { load_log_frame_ = frame; }
   // Job 284 diagnostic (Gears 2 ch10 rainbow flash: a colour-grading volume texture): for textures whose guest base
   // is in `bases`, during frames [first, last], log every lookup once per frame and texture - what the cache did (hit
   // with no write since, checked unchanged, reloaded, new), the frame of its last load, and the XXH3 of its guest bytes
@@ -163,16 +162,12 @@ class TextureCache {
     stale_after_ = frames;
     on_stale_ = std::move(report);
   }
-  // Job 144 (slow-sharpening check): reload on every page-version change, skipping the unchanged-bytes shortcut.
-  void SetAlwaysReload(bool on) { always_reload_ = on; }
   // A fetch whose dimension doesn't match the texture (cube fetch of a 2D texture, or the reverse) reads zero, as
   // Canary's null view does (default), instead of the white stand-in.
   void SetMismatchZero(bool on) { mismatch_zero_ = on; }
   // Added to the LOD bias of textures with mips: an upscaler's scene is below the output, so the game's own mip choice
   // is too blurry for it (notes/82). Rendered targets have no mips and are left alone.
   void SetMipBias(float bias) { mip_bias_ = bias; }
-  // Job 189 diagnostic (scaled_misses); off by default since job 227 - it cost 45% of the renderer thread at 2x.
-  void SetScaledMissLog(bool on) { scaled_miss_log_ = on; }
   // Patch 0087 (Canary texture_util.cc, 344fca7): a texture whose level 0 is already the packed mip tail keeps its whole
   // tail at the base address - also when D3D left the mip address at 0 (then we used to load level 0 only).
   void SetPackedTailAtBase(bool on) { packed_tail_at_base_ = on; }
@@ -186,10 +181,8 @@ class TextureCache {
     gpu::TextureHandle words = 0;  // the R32_UINT chunk texture holding the scaled copy of [chunk_base, + chunk_bytes)
     uint32_t chunk_base = 0, chunk_width = 0, chunk_bytes = 0;
     uint64_t gen = 0;  // changes whenever the extent's memory is written
-    uint32_t reason = 0;  // on failure: 1 extent crosses a chunk / no chunk, 4 pages not scaled-current
-    // Job 192 diagnostic (reason 4): pages scaled-current / written last by an unscaled GPU resolve / otherwise
-    // (CPU or never), and the first page that is not scaled-current (offset from the base, bytes).
-    uint32_t pages_scaled = 0, pages_gpu = 0, pages_other = 0, first_bad = 0;
+    // Job 193: when the extent is not wholly scaled-current, its pages that are / are not.
+    uint32_t pages_scaled = 0, pages_other = 0;
   };
   using ScaledLookup = std::function<bool(uint32_t base, uint32_t extent_bytes, ScaledSource& out)>;
   void SetScaled(uint32_t scale, gpu::PipelineHandle load, ScaledLookup lookup) {
@@ -236,11 +229,7 @@ class TextureCache {
   static void SetSuppressDiskOverlaysForPrompts(bool suppress) {
     ::xenos::renderer::SetSuppressDiskOverlaysForPrompts(suppress);
   }
-  static void SetOverlayForTest(uint64_t hash, std::vector<uint8_t> overlay_data) {
-    ::xenos::renderer::SetDynamicOverlay(hash, std::move(overlay_data));
-  }
   static void ClearDynamicOverlays() { ::xenos::renderer::ClearDynamicOverlays(); }
-  static uint64_t BumpOverlayGeneration() { return ::xenos::renderer::BumpOverlayGeneration(); }
   static uint64_t OverlayGeneration() { return ::xenos::renderer::OverlayGeneration(); }
 
  private:
@@ -308,6 +297,9 @@ class TextureCache {
     // (its size, format and mips are the file's), 0 = the guest texture's own
     uint64_t pack_hash = 0;
     bool pack_complete = false;  // r95 M1: that file is in it whole (uploaded with no drop) - a reload need not read it
+    // 0.6.4 (GitHub #341): `texture` is the shared host texture of pack_hash (pack_shared_), not this entry's own: never
+    // destroyed through this entry (ReleasePack); host_bytes is 0 (the shared texture's bytes are counted once).
+    bool pack_shared = false;
   };
   // Stage 7: the scaled entry for a 2D fetch constant if its texture is held by a current scaled resolve, else null.
   Entry* LookupScaled(const uint32_t* tf);
@@ -324,6 +316,25 @@ class TextureCache {
   bool LoadFromPack(Entry& e, const uint32_t* tf, const std::filesystem::path& file, uint64_t hash, uint32_t w, uint32_t h,
                     uint32_t mips, uint32_t base_start, uint32_t base_length, uint32_t mip_start, uint32_t mip_length);
   void StandIn(const std::string& why);
+  // 0.6.4 (GitHub #341): texture packs - one host texture per pack file content (pack hash), shared by every entry that
+  // shows it. Entries are keyed by guest address, and the game's streaming pool moves its textures around all the time:
+  // before, each new address read the (large) DDS file from disk again and uploaded it, on the render thread - a hitch
+  // each time with 4x packs. A shared texture no entry uses any more is kept (counted in HostBytes) until the cap needs
+  // the memory, so a texture the game streams back in shows at once.
+  struct PackShared {
+    gpu::TextureHandle texture = 0;
+    gpu::Format format = gpu::Format::kUnknown;
+    uint64_t bytes = 0;
+    uint32_t refs = 0;
+    uint64_t last_used = 0;  // frame it was last released (refs 0) or taken
+  };
+  std::unordered_map<uint64_t, PackShared> pack_shared_;
+  uint64_t frame_now_ = 0;  // Lookup's frame (ReleasePack stamps it)
+  uint64_t pack_reads_ = 0, pack_reuses_ = 0, pack_freed_ = 0, pack_logged_reads_ = ~0ull, pack_logged_reuses_ = ~0ull;
+  // Drops e's reference to its shared pack texture (the texture stays in pack_shared_); e.texture = 0.
+  void ReleasePack(Entry& e);
+  // Destroys shared pack textures no entry uses, least recently used first, until HostBytes <= target (0: all of them).
+  void FreeUnusedPacks(uint64_t target);
 
   gpu::Backend& backend_;
   const uint8_t* guest_;
@@ -380,10 +391,8 @@ class TextureCache {
   void RunGpuJobs();
   gpu::PipelineHandle untile_volume_ = 0;  // patch 0026
   uint64_t cap_bytes_ = 0;
-  bool always_reload_ = false;
   bool mismatch_zero_ = true;
   float mip_bias_ = 0.0f, last_bind_mip_bias_ = 0.0f;
-  bool scaled_miss_log_ = false;
   bool packed_tail_at_base_ = true;  // patch 0087
   uint32_t stale_after_ = 0;
   std::function<void(const StaleReload&)> on_stale_;
@@ -391,8 +400,6 @@ class TextureCache {
   std::function<uint8_t(uint32_t page)> gpu_page_origin_;  // SetGpuPageOrigin (#315 diagnostic)
   bool flush_ever_gpu_ = false;  // SetFlushEverGpuWritten (r26 R1)
   bool bc_guest_over_mirror_ = false;  // SetBcGuestOverMirror (#315)
-  uint64_t load_log_frame_ = 0;
-  void LogLoad(const Entry& e, const uint32_t* tf, uint64_t frame, const char* reason);
   std::vector<uint32_t> probe_bases_;
   uint64_t probe_first_ = 0, probe_last_ = 0;
   std::string probe_dir_;

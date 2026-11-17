@@ -164,7 +164,6 @@ class ShaderCache {
   // draws (job 1750b: at the lowest priority they still cost Judgment 24 ms a frame against 17), all of them on a
   // loading screen or in a hold. A job a draw waits for is never limited.
   void SetSpirvBacklogThreads(uint32_t n);
-  size_t SpirvJobsQueued();
   // Shader pop-in (see the header comment).
   void SetUcodeRecord(bool on) { record_ucode_ = on && dir_ok_; }
   // Patch 0015 (stutter): keep compiled shaders in one file, <dir>\shaders.pack, opened once and kept open. Each loose
@@ -214,7 +213,6 @@ class ShaderCache {
   void SetMemexportF16NanZero(bool on) { f16_nan_zero_ = on; }    // patch 0087
   void SetSpirvPrecise(bool on) { spirv_precise_ = on; }          // patch 0088 (measurement)
   void SetPsRefactoring(bool on) { ps_refactoring_ = on; }        // patch 0095
-  static void SetSpirvFiles(const std::string& dump_dir, const std::string& override_dir);  // patch 0099
   // 0.6.1 (Vulkan first-run cost): SPIRV-Tools' performance passes over each converted module before the driver
   // sees it. False when this build has no optimiser (GN_SPIRV_OPT not defined) - then nothing changes.
   static bool SetSpirvOptimise(bool on);

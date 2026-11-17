@@ -6,7 +6,7 @@
 // and the game opens those files seconds before the first draw. So when the game opens a package (SDK patch 32's
 // file-open observer), a background thread here reads the same file from disk, unpacks it and finds the shader
 // containers, and hands each pixel shader's microcode to the renderer, which translates it exactly as a draw would
-// and has the driver compile it in a warm-only pipeline (layer 0, xenos/dev_tools.h XenosPrebuildPixelShader). The
+// and has the driver compile it in a warm-only pipeline (layer 0, xenos/dev_tools.h XenosPrebuildPixelShaders). The
 // driver keeps each compiled stage (job 362c [V]), so the real pipelines later cost ~0.1 ms. Nothing is written to
 // disk and nothing ships: every player's own game files are the source.
 //
