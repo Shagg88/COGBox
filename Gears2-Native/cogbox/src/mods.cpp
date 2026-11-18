@@ -3,9 +3,11 @@
 //     [Mod]
 //     Name = ...      Version = ...      Author = ...      Description = ...
 // The enabled mods, in load order (a later one wins), go to the game as --ue3_mods; the game shows their files in
-// place of (or beside) its own, without changing its folder. Programs (.xex, .dll, .exe) are never used from a mod.
+// place of (or beside) its own, without changing its folder. Programs (mod_file_rules.h) are never used from a mod.
 // Order and on/off are in CogBox.ini [Mods] <game>Order / <game>Enabled ("name|name|...").
 #include "app.h"
+#include "fabricator_model.h"
+#include "mod_file_rules.h"
 #include "i18n.h"   // 0.6.4: the Mods tab lines built here (trf)
 #include "../third_party/miniz/miniz.h"
 #include "modcore/campaigns.h"
@@ -181,7 +183,10 @@ std::vector<ModItem> mods_list(App &a, int g)
             std::wstring n = fd.cFileName;
             if (n == L"." || n == L".." || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
             std::string s = narrow(n);
-            if (s.find('|') != std::string::npos || s.find(".partial") != std::string::npos) continue;
+            // hidden: the Fabricator's backups (.fabricator-backup) and unpackings not finished (*.partial); other
+            // '.'-named folders are listed as before
+            if (s.find('|') != std::string::npos || lower(s) == ".fabricator-backup" ||
+                (s.size() >= 8 && lower(s.substr(s.size() - 8)) == ".partial")) continue;
             found.push_back(s);
         } while (FindNextFileW(f, &fd));
         FindClose(f);
@@ -210,6 +215,7 @@ std::vector<ModItem> mods_list(App &a, int g)
             m.description = ini_value(ini, "Description");
         }
         if (m.name.empty()) m.name = x;
+        if (auto r = fab_read_record(m.path)) { m.fab = true; m.fab_source = r->source.kind; }   // "from the Fabricator"
         out.push_back(m);
     }
     apply_mod_rules(g, out);
@@ -217,7 +223,7 @@ std::vector<ModItem> mods_list(App &a, int g)
     return out;
 }
 
-static void store(App &a, int g, const std::vector<ModItem> &v)
+void mods_store(App &a, int g, const std::vector<ModItem> &v)
 {
     const GameDef &d = game_def(g);
     std::vector<std::string> order, en;
@@ -231,7 +237,7 @@ void mods_set_enabled(App &a, int g, const std::string &folder, bool on)
 {
     std::vector<ModItem> v = mods_list(a, g);
     for (ModItem &m : v) if (m.folder == folder) m.enabled = on;
-    store(a, g, v);
+    mods_store(a, g, v);
 }
 
 void mods_move(App &a, int g, const std::string &folder, int dir)
@@ -242,14 +248,16 @@ void mods_move(App &a, int g, const std::string &folder, int dir)
     int j = i + dir;
     if (i < 0 || j < 0 || i >= (int)v.size() || j >= (int)v.size()) return;
     std::swap(v[i], v[j]);
-    store(a, g, v);
+    mods_store(a, g, v);
 }
 
-// A mod in a .zip: unpacked into mods\<zip name>\ (a single top folder in the zip that isn't one of the game's own
-// folders is taken as the mod's folder). Only plain relative paths are accepted; programs are left out.
-// a folder COGBox made itself (the unpacking of a mod), removed with everything in it
-static void remove_dir_tree(const std::wstring &dir)
+// a folder COGBox made itself (the unpacking of a mod, a Fabricator backup), removed with everything in it; a link
+// (junction, symlink) inside it is removed, never followed
+void mods_remove_tree(const std::wstring &dir)
 {
+    const DWORD at = GetFileAttributesW(dir.c_str());
+    if (at == INVALID_FILE_ATTRIBUTES) return;
+    if (at & FILE_ATTRIBUTE_REPARSE_POINT) { RemoveDirectoryW(dir.c_str()); return; }   // a link itself: only the link goes
     WIN32_FIND_DATAW fd;
     HANDLE f = FindFirstFileW((dir + L"\\*").c_str(), &fd);
     if (f != INVALID_HANDLE_VALUE) {
@@ -257,7 +265,7 @@ static void remove_dir_tree(const std::wstring &dir)
             std::wstring n = fd.cFileName;
             if (n == L"." || n == L"..") continue;
             std::wstring p = dir + L"\\" + n;
-            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) remove_dir_tree(p);
+            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) mods_remove_tree(p);
             else if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) RemoveDirectoryW(p.c_str());
             else { SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL); DeleteFileW(p.c_str()); }
         } while (FindNextFileW(f, &fd));
@@ -266,96 +274,195 @@ static void remove_dir_tree(const std::wstring &dir)
     RemoveDirectoryW(dir.c_str());
 }
 
-bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
+void mods_turn_on_last(App &a, int g, const std::string &folder)
 {
+    std::vector<ModItem> v = mods_list(a, g);
+    for (size_t i = 0; i < v.size(); i++)
+        if (v[i].folder == folder) {
+            ModItem m = v[i];
+            m.enabled = true;
+            v.erase(v.begin() + (long)i);
+            v.push_back(m);
+            break;
+        }
+    mods_store(a, g, v);
+}
+
+// ---- unpacking a mod zip (the Mods tab's "add a zip" and the Fabricator) ----
+// The same path rules as the Fabricator's zip check (fab_check_zip): no absolute, drive-letter (C:...), stream (a:b),
+// UNC or rooted path and no ".." - also as Windows reads a component, dropping its trailing dots and spaces (".. " and
+// "..." are ".." / "" to it). The bytes really inflated are counted, not the sizes the zip declares, and the unpacking
+// stops at the limits. Program files (mod_file_rules.h) and any fabricator.json are left out.
+static const uint64_t kUnpackMaxBytes = 8ull << 30;   // 8 GiB unpacked
+static const mz_uint kUnpackMaxFiles = 50000;
+
+struct ZipReader {   // a wide path: folder and file names can be non-ASCII (miniz itself takes a narrow one)
+    FILE *f = nullptr;
     mz_zip_archive z;
-    memset(&z, 0, sizeof z);
-    std::wstring tempCopy;   // miniz takes a narrow path: a non-ASCII one is read from a copy in the COGBox folder
-    struct TempGone { std::wstring &p; ~TempGone() { if (!p.empty()) DeleteFileW(p.c_str()); } } tempGone{tempCopy};
-    if (!mz_zip_reader_init_file(&z, zipPath.c_str(), 0)) {
-        tempCopy = widen(join(exe_dir(), "mod-import.tmp"));   // the COGBox folder: ASCII-safe as far as COGBox runs at all
-        if (!CopyFileW(widen(zipPath).c_str(), tempCopy.c_str(), FALSE) || !mz_zip_reader_init_file(&z, narrow(tempCopy).c_str(), 0)) {
-            err = "This file isn't a zip COGBox can read.";
+    bool ok = false;
+    explicit ZipReader(const std::string &path)
+    {
+        memset(&z, 0, sizeof z);
+        f = _wfopen(widen(path).c_str(), L"rb");
+        ok = f && mz_zip_reader_init_cfile(&z, f, 0, 0);
+    }
+    ~ZipReader() { if (ok) mz_zip_reader_end(&z); if (f) fclose(f); }
+};
+
+// The components Windows will create for a zip entry (trailing dots / spaces dropped, "." and empty ones skipped);
+// false = an unsafe path.
+static bool entry_parts(const std::string &raw, std::vector<std::string> &parts)
+{
+    parts.clear();
+    if (raw.empty() || raw.find(':') != std::string::npos) return false;
+    std::string nm = raw;
+    for (char &c : nm) if (c == '\\') c = '/';
+    if (nm[0] == '/') return false;
+    for (size_t at = 0; at <= nm.size();) {
+        size_t end = nm.find('/', at);
+        if (end == std::string::npos) end = nm.size();
+        const std::string seg = nm.substr(at, end - at);
+        std::string t = seg;
+        while (!t.empty() && (t.back() == '.' || t.back() == ' ')) t.pop_back();
+        at = end + 1;
+        if (seg.empty() || seg == ".") continue;
+        if (t.empty()) return false;   // "..", "...", ".. "
+        parts.push_back(t);
+    }
+    return true;
+}
+
+struct ZipEntry { mz_uint index; std::string rel; };   // rel: under the mod's folder, '\' separated
+struct ZipPlan {
+    std::vector<ZipEntry> files;
+    std::string top;                     // the single top folder taken off ("" = none)
+    std::vector<std::string> left_out;   // the program files not unpacked (rel paths)
+};
+
+static bool zip_plan(const std::string &dataDir, ZipReader &zr, bool stripTop, ZipPlan &plan, std::string &err)
+{
+    const mz_uint n = mz_zip_reader_get_num_files(&zr.z);
+    if (n == 0 || n > kUnpackMaxFiles) { err = "The zip is empty or too large."; return false; }
+    std::vector<std::vector<std::string>> parts(n);
+    std::vector<bool> isDir(n);
+    std::string common;
+    bool oneTop = true;
+    uint64_t declared = 0;
+    for (mz_uint i = 0; i < n; i++) {
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&zr.z, i, &st)) { err = "The zip is damaged."; return false; }
+        const std::string nm = st.m_filename;
+        if (mz_zip_reader_get_filename(&zr.z, i, nullptr, 0) != nm.size() + 1 || !entry_parts(nm, parts[i])) {   // (+ an embedded NUL)
+            err = "The zip has a file with an unsafe path (" + nm + ") - not added.";
+            return false;
+        }
+        isDir[i] = st.m_is_directory || nm.back() == '/' || nm.back() == '\\';
+        declared += st.m_uncomp_size;
+        if (parts[i].empty()) continue;
+        if (!isDir[i] && parts[i].size() == 1) oneTop = false;
+        if (common.empty()) common = parts[i][0]; else if (lower(common) != lower(parts[i][0])) oneTop = false;
+    }
+    if (declared > kUnpackMaxBytes) { err = "The zip unpacks to more than 8 GB - not added."; return false; }
+    // is the single top folder the mod's own, or one of the game's (GearGame...)? The game's own: keep it.
+    if (common.empty() || (!dataDir.empty() && dir_exists(join(dataDir, common)))) oneTop = false;
+    plan.top = stripTop && oneTop ? common : "";
+    for (mz_uint i = 0; i < n; i++) {
+        if (isDir[i]) continue;
+        std::vector<std::string> p = parts[i];
+        if (!plan.top.empty()) p.erase(p.begin());
+        if (p.empty()) continue;
+        bool device = false, record = false;
+        for (const std::string &c : p) {
+            device = device || mod_file_is_device_name(c);   // CON, NUL, COM1 ...: a device to Windows, not a file
+            record = record || lower(c) == "fabricator.json";   // COGBox's install record (or a folder of that name)
+        }
+        if (device || record) continue;   // never from a zip: only COGBox writes a fabricator.json
+        std::string rel;
+        for (const std::string &c : p) rel += (rel.empty() ? "" : "\\") + c;
+        if (mod_file_is_program(p.back())) { plan.left_out.push_back(rel); continue; }   // left out, with a note
+        plan.files.push_back({i, rel});
+    }
+    return true;
+}
+
+struct UnpackSink { FILE *f; uint64_t *total; bool over = false, writeFailed = false; };
+static size_t unpack_cb(void *ud, mz_uint64, const void *buf, size_t len)
+{
+    UnpackSink *s = (UnpackSink *)ud;
+    *s->total += len;   // the bytes really inflated
+    if (*s->total > kUnpackMaxBytes) { s->over = true; return 0; }
+    if (fwrite(buf, 1, len, s->f) != len) { s->writeFailed = true; return 0; }
+    return len;
+}
+
+bool mods_unpack_zip(App &a, int g, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err,
+                     std::vector<std::string> *left_out)
+{
+    return mods_unpack_zip_in(a.st[g].dataDir, zipPath, folder, stripTop, err, left_out);
+}
+
+bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err,
+                        std::vector<std::string> *left_out)
+{
+    ZipReader zr(zipPath);
+    if (!zr.ok) { err = "This file isn't a zip COGBox can read."; return false; }
+    ZipPlan plan;
+    if (!zip_plan(dataDir, zr, stripTop, plan, err)) return false;
+    if (left_out) left_out->insert(left_out->end(), plan.left_out.begin(), plan.left_out.end());
+    if (!dir_exists(folder) && !make_dirs(folder)) { err = "Couldn't make the mod's folder (is the disk full?)."; return false; }
+    uint64_t total = 0;
+    for (const ZipEntry &e : plan.files) {
+        const std::string out = folder + "\\" + e.rel;
+        const size_t cut = out.find_last_of('\\');
+        if (cut > folder.size()) make_dirs(out.substr(0, cut));
+        FILE *f = _wfopen(widen(out).c_str(), L"wb");
+        if (!f) { err = "Couldn't write " + e.rel + " (is the disk full?)."; return false; }
+        UnpackSink s{f, &total};
+        bool ok = mz_zip_reader_extract_to_callback(&zr.z, e.index, unpack_cb, &s, 0) != 0;
+        ok = fclose(f) == 0 && ok;
+        if (!ok) {
+            DeleteFileW(widen(out).c_str());   // no half-written file left
+            err = s.over ? "The zip unpacks to more than 8 GB - not added."
+                : s.writeFailed ? "Couldn't write " + e.rel + " (is the disk full?)."
+                                : "Couldn't unpack " + e.rel + " (the zip is damaged).";
             return false;
         }
     }
-    const int n = (int)mz_zip_reader_get_num_files(&z);
-    if (n <= 0 || n > 50000) { mz_zip_reader_end(&z); err = "The zip is empty or too large."; return false; }
-    std::vector<std::string> names(n);
-    std::string common;
-    bool oneTop = true;
-    uint64_t total = 0;
-    for (int i = 0; i < n; i++) {
-        mz_zip_archive_file_stat st;
-        if (!mz_zip_reader_file_stat(&z, i, &st)) { mz_zip_reader_end(&z); err = "The zip is damaged."; return false; }
-        std::string nm = st.m_filename;
-        for (char &c : nm) if (c == '\\') c = '/';
-        // P0-6: no absolute, drive-letter (C:...), UNC (//server) or rooted path and no ".." anywhere - also as Windows
-        // reads a component: it drops trailing dots and spaces, so ".. " and "..." are ".." / "" to it
-        bool unsafe = nm.empty() || nm[0] == '/' || nm.find(':') != std::string::npos;
-        for (size_t at = 0; !unsafe && at < nm.size();) {
-            size_t end = nm.find('/', at);
-            if (end == std::string::npos) end = nm.size();
-            const std::string raw = nm.substr(at, end - at);
-            std::string part = raw;
-            while (!part.empty() && (part.back() == '.' || part.back() == ' ')) part.pop_back();
-            if (!raw.empty() && raw != "." && part.empty()) unsafe = true;   // "..", "...", ".. "
-            at = end + 1;
-        }
-        if (unsafe || ("/" + nm + "/").find("/../") != std::string::npos) {
-            mz_zip_reader_end(&z); err = "The zip has a file with an unsafe path (" + nm + ") - not added."; return false;
-        }
-        total += st.m_uncomp_size;
-        names[i] = nm;
-        std::string top = nm.substr(0, nm.find('/'));
-        if (nm.find('/') == std::string::npos && !st.m_is_directory) oneTop = false;
-        if (common.empty()) common = top; else if (lower(common) != lower(top)) oneTop = false;
+    return true;
+}
+
+// A mod in a .zip: unpacked into mods\<zip name>\ (a single top folder in the zip that isn't one of the game's own
+// folders is taken as the mod's folder), through <name>.partial so a failure leaves no half mod. The program files left
+// out go to left_out (may be null).
+bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err, std::vector<std::string> *left_out)
+{
+    if (a.run.proc) { err = "Close the game first."; return false; }   // the game reads the mods folder while it runs
+    std::string top;
+    {
+        ZipReader zr(zipPath);
+        if (!zr.ok) { err = "This file isn't a zip COGBox can read."; return false; }
+        ZipPlan plan;
+        if (!zip_plan(a.st[g].dataDir, zr, true, plan, err)) return false;
+        top = plan.top;
     }
-    if (total > (8ull << 30)) { mz_zip_reader_end(&z); err = "The zip unpacks to more than 8 GB - not added."; return false; }
-    // is the single top folder the mod's own, or one of the game's (GearGame...)? The game's own: keep it.
-    if (oneTop && !a.st[g].dataDir.empty() && dir_exists(join(a.st[g].dataDir, common))) oneTop = false;
-    std::string base = narrow(std::filesystem::path(widen(zipPath)).stem().wstring()), name;
-    if (oneTop) base = common;
-    for (char c : base) if (isalnum((unsigned char)c) || c == ' ' || c == '_' || c == '-' || c == '.' || c == '(' || c == ')') name += c;
-    while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();
+    std::string name = mod_folder_chars(top.empty() ? narrow(std::filesystem::path(widen(zipPath)).stem().wstring()) : top);   // the character rule, shared with the Fabricator's folder names
+    while (!name.empty() && (name[0] == '.' || name[0] == ' ')) name.erase(0, 1);   // a name starting with '.' is hidden from the list
+    if (name.size() >= 8 && lower(name.substr(name.size() - 8)) == ".partial") name += " mod";   // ... and so is "<name>.partial"
     if (name.empty()) name = "mod";
     std::string dest = join(mods_dir(g), name);
     // 0.6.1: 0.6.0 installed an EMPTY folder for a zip mod (review C1); RemoveDirectoryW only removes an empty one, so
     // that leftover no longer blocks adding the zip again and a real mod of the same name is still refused.
-    if (dir_exists(dest) && !RemoveDirectoryW(widen(dest).c_str())) { mz_zip_reader_end(&z); err = "A mod named \"" + name + "\" is already there - remove or rename it first."; return false; }
+    if (dir_exists(dest) && !RemoveDirectoryW(widen(dest).c_str())) { err = "A mod named \"" + name + "\" is already there - remove or rename it first."; return false; }
+    // a <name>.partial with COGBox's record is a Fabricator install unpacking now (or the next start's sweep's): never
+    // removed here - another unpacking name is used instead
     std::string part = dest + ".partial";
-    remove_dir_tree(widen(part));   // what an earlier, failed try left
-    make_dirs(part);
-    bool ok = true;
-    for (int i = 0; i < n && ok; i++) {
-        std::string nm = names[i];
-        if (oneTop) { size_t s = nm.find('/'); nm = s == std::string::npos ? "" : nm.substr(s + 1); }
-        if (nm.empty() || nm.back() == '/') continue;
-        // 0.6.1 (review C2): Windows drops trailing dots and spaces when it creates a file, so "x.dll." is x.dll
-        while (!nm.empty() && (nm.back() == '.' || nm.back() == ' ')) nm.pop_back();
-        if (nm.empty() || nm.back() == '/') continue;
-        std::string ext = lower(nm.substr(nm.find_last_of('.') == std::string::npos ? nm.size() : nm.find_last_of('.')));
-        if (ext == ".xex" || ext == ".xexp" || ext == ".dll" || ext == ".exe") continue;
-        // 0.6.1 (review C1): the separator was missing - files went to "<name>.partialGearGame\..." beside the mod's
-        // folder, and an empty folder was installed as the mod.
-        std::string out = part + "\\";
-        for (char c : nm) out += c == '/' ? '\\' : c;
-        make_dirs(out.substr(0, out.find_last_of('\\')));
-        size_t sz = 0;
-        void *p = mz_zip_reader_extract_to_heap(&z, i, &sz, 0);
-        if (!p) { ok = false; err = "Couldn't unpack " + nm + "."; break; }
-        FILE *f = _wfopen(widen(out).c_str(), L"wb");
-        ok = f && fwrite(p, 1, sz, f) == sz;
-        if (f) fclose(f);
-        mz_free(p);
-        if (!ok) err = "Couldn't write " + out + " (is the disk full?).";
-    }
-    mz_zip_reader_end(&z);
+    for (int i = 2; dir_exists(part) && fab_read_record(part); i++) part = dest + " " + std::to_string(i) + ".partial";
+    mods_remove_tree(widen(part));   // what an earlier, failed try left
+    std::vector<std::string> left;
+    bool ok = mods_unpack_zip(a, g, zipPath, part, true, err, &left);
     if (ok && !MoveFileExW(widen(part).c_str(), widen(dest).c_str(), 0)) { ok = false; err = "The unpacked mod couldn't be moved into place."; }
-    if (!ok) { remove_dir_tree(widen(part)); return false; }
-    // new mods start enabled, last in the order
-    std::vector<ModItem> v = mods_list(a, g);
-    for (ModItem &m : v) if (m.folder == name) m.enabled = true;
-    store(a, g, v);
+    if (!ok) { mods_remove_tree(widen(part)); return false; }
+    mods_turn_on_last(a, g, name);   // new mods start enabled, last in the order
+    if (left_out) left_out->insert(left_out->end(), left.begin(), left.end());   // only for a mod that was added
     return true;
 }
