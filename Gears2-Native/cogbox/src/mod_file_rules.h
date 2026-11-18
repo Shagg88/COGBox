@@ -13,3 +13,7 @@ const std::vector<std::string> &mod_file_program_exts();
 // name (a file name or a path, '/' or '\' separated): its last extension, lower-cased, is in the list. Trailing dots and
 // spaces are ignored first, as Windows drops them when it creates the file ("run.exe. " is run.exe).
 bool mod_file_is_program(const std::string &name);
+// component (one file or folder name, no separators) is a Windows device, not a file: its stem (trailing dots and
+// spaces off, the part before the first dot, trailing spaces off; any case) is CON, PRN, AUX, NUL, CONIN$, CONOUT$,
+// COM1-9 / LPT1-9 or COM / LPT with a superscript 1, 2 or 3. "con.txt" and "CON ." are devices; "console", "com10" not.
+bool mod_file_is_device_name(const std::string &component);

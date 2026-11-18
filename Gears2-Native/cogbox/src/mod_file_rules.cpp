@@ -25,3 +25,16 @@ bool mod_file_is_program(const std::string &name)
     const std::vector<std::string> &v = mod_file_program_exts();
     return std::find(v.begin(), v.end(), ext) != v.end();
 }
+
+bool mod_file_is_device_name(const std::string &component)
+{
+    std::string stem = component;
+    while (!stem.empty() && (stem.back() == '.' || stem.back() == ' ')) stem.pop_back();
+    stem = stem.substr(0, stem.find('.'));
+    while (!stem.empty() && stem.back() == ' ') stem.pop_back();
+    for (char &c : stem) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    if (stem == "con" || stem == "prn" || stem == "aux" || stem == "nul" || stem == "conin$" || stem == "conout$") return true;
+    if (stem.size() < 4 || (stem.compare(0, 3, "com") != 0 && stem.compare(0, 3, "lpt") != 0)) return false;
+    const std::string d = stem.substr(3);
+    return (d.size() == 1 && d[0] >= '1' && d[0] <= '9') || d == "\xC2\xB9" || d == "\xC2\xB2" || d == "\xC2\xB3";   // or superscript 1 2 3
+}

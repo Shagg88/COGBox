@@ -3,7 +3,7 @@
 //   gcc -w -c third_party/miniz/miniz.c -o miniz.o
 //   g++ -std=c++17 -Wall -Wextra -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX -Isrc -Ithird_party
 //       test/fabricator_model_test.cpp src/fabricator_model.cpp src/mod_file_rules.cpp src/util.cpp miniz.o
-//       -static-libgcc -static-libstdc++ -lwinhttp -lole32 -lshell32 -luuid -lbcrypt -ladvapi32 -o fabricator_model_test.exe
+//       -static-libgcc -static-libstdc++ -lole32 -lshell32 -luuid -lbcrypt -ladvapi32 -o fabricator_model_test.exe
 #include "../src/fabricator_model.h"
 #include "../src/mod_file_rules.h"
 #include "../src/util.h"
@@ -64,6 +64,16 @@ int main()
         CHECK(!mod_file_is_program("exe"));        // no extension
         CHECK(!mod_file_is_program("dll.dir/f.ini"));   // only the last component's extension
         CHECK(mod_file_program_exts().size() == 44);
+    }
+    // ---- device names (mod_file_rules), one component ----
+    {
+        for (const char *dev : {"CON", "con.txt", "CON .", "nul.tar.gz", "Aux", "PRN ", "CONIN$", "conout$.log", "COM1", "lpt9.x",
+                                "COM\xC2\xB9", "lpt\xC2\xB2.dat", "Com\xC2\xB3 . "}) {
+            if (!mod_file_is_device_name(dev)) printf("  not a device: %s\n", dev);
+            CHECK(mod_file_is_device_name(dev));
+        }
+        for (const char *ok : {"console", "com10", "com0", "lptx", "my.con", "nulls", "conin", "COM\xC2\xB4", "", "conin$x"})
+            CHECK(!mod_file_is_device_name(ok));
     }
 
     // ---- folder names ----
@@ -206,9 +216,9 @@ int main()
         CHECK(has(fab_check_zip(zp, "gears3"), "not a valid zip"));
         CHECK(has(fab_check_zip(join(tmp, "missing.zip"), "gears3"), "cannot be opened"));
 
-        // Windows device names, as checks.ts refuses them (any extension, trailing dots / spaces, superscript digits)
+        // Windows device names (mod_file_is_device_name: any extension, trailing dots / spaces, superscript digits)
         for (const char *bad : {"aux.txt", "GearGame/CON", "dir/com1.ini", "Lpt9", "nul.tar.gz", "COM\xC2\xB9.dat", "x/lpt\xC2\xB3",
-                                "prn .txt", "AUX/readme.txt", "con."}) {
+                                "prn .txt", "AUX/readme.txt", "con.", "CONIN$", "a/conout$.log", "lpt\xC2\xB2 .x"}) {
             make_zip(zp, {{"mod.ini", "[Mod]\nName=x\n"}, {bad, "z"}});
             const std::vector<std::string> p = fab_check_zip(zp, "gears3");
             if (!has(p, "Windows device name not allowed as a file or folder name (CON, PRN, AUX, NUL, COM1-9, LPT1-9): "))

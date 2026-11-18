@@ -226,7 +226,8 @@ std::string mods_dir(int game);
 std::vector<ModItem> mods_list(App &a, int game);         // in load order
 void mods_set_enabled(App &a, int game, const std::string &folder, bool on);
 void mods_move(App &a, int game, const std::string &folder, int dir);   // -1 up (earlier), +1 down (later, wins)
-bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err);   // "Close the game first." while it runs
+// "Close the game first." while it runs; left_out (may be null) gets the program files left out (mods_unpack_zip)
+bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err, std::vector<std::string> *left_out = nullptr);
 // Unpacks a mod zip into folder (made if missing): the zip's paths as Windows reads them, never outside folder, the
 // real inflated bytes counted against the limits (8 GiB, 50 000 files); stripTop takes off a single top folder that
 // isn't one of the game's own. Program files (mod_file_rules.h) are left out, their paths in folder added to left_out

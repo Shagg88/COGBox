@@ -331,14 +331,6 @@ static bool entry_parts(const std::string &raw, std::vector<std::string> &parts)
     return true;
 }
 
-static bool device_name(const std::string &comp)   // CON, NUL, COM1 ... (also "con.txt"): a device to Windows, not a file
-{
-    std::string stem = lower(comp.substr(0, comp.find('.')));
-    while (!stem.empty() && stem.back() == ' ') stem.pop_back();
-    if (stem == "con" || stem == "prn" || stem == "aux" || stem == "nul" || stem == "conin$" || stem == "conout$") return true;
-    return stem.size() == 4 && (stem.compare(0, 3, "com") == 0 || stem.compare(0, 3, "lpt") == 0) && stem[3] >= '1' && stem[3] <= '9';
-}
-
 struct ZipEntry { mz_uint index; std::string rel; };   // rel: under the mod's folder, '\' separated
 struct ZipPlan {
     std::vector<ZipEntry> files;
@@ -380,7 +372,7 @@ static bool zip_plan(const std::string &dataDir, ZipReader &zr, bool stripTop, Z
         if (p.empty()) continue;
         bool device = false, record = false;
         for (const std::string &c : p) {
-            device = device || device_name(c);
+            device = device || mod_file_is_device_name(c);   // CON, NUL, COM1 ...: a device to Windows, not a file
             record = record || lower(c) == "fabricator.json";   // COGBox's install record (or a folder of that name)
         }
         if (device || record) continue;   // never from a zip: only COGBox writes a fabricator.json
@@ -439,8 +431,9 @@ bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, 
 }
 
 // A mod in a .zip: unpacked into mods\<zip name>\ (a single top folder in the zip that isn't one of the game's own
-// folders is taken as the mod's folder), through <name>.partial so a failure leaves no half mod.
-bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
+// folders is taken as the mod's folder), through <name>.partial so a failure leaves no half mod. The program files left
+// out go to left_out (may be null).
+bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err, std::vector<std::string> *left_out)
 {
     if (a.run.proc) { err = "Close the game first."; return false; }   // the game reads the mods folder while it runs
     std::string top;
@@ -461,9 +454,11 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
     if (dir_exists(dest) && !RemoveDirectoryW(widen(dest).c_str())) { err = "A mod named \"" + name + "\" is already there - remove or rename it first."; return false; }
     std::string part = dest + ".partial";
     mods_remove_tree(widen(part));   // what an earlier, failed try left
-    bool ok = mods_unpack_zip(a, g, zipPath, part, true, err);
+    std::vector<std::string> left;
+    bool ok = mods_unpack_zip(a, g, zipPath, part, true, err, &left);
     if (ok && !MoveFileExW(widen(part).c_str(), widen(dest).c_str(), 0)) { ok = false; err = "The unpacked mod couldn't be moved into place."; }
     if (!ok) { mods_remove_tree(widen(part)); return false; }
     mods_turn_on_last(a, g, name);   // new mods start enabled, last in the order
+    if (left_out) left_out->insert(left_out->end(), left.begin(), left.end());   // only for a mod that was added
     return true;
 }

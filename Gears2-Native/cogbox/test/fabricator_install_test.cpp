@@ -9,7 +9,7 @@
 //       -Ithird_party -Isrc -I../src/layer2_ue3/include -I../src/layer0_xenos/include -I../../Gears3-Native/src/layer2_ue3
 //       test/fabricator_install_test.cpp src/fabricator_install.cpp src/mods.cpp src/fabricator_model.cpp src/mod_file_rules.cpp src/util.cpp
 //       src/gears_settings.cpp src/i18n.cpp ../../Gears3-Native/src/layer2_ue3/modcore/modcore.cpp miniz.o
-//       -static-libgcc -static-libstdc++ <SDL3 mingw>/x86_64-w64-mingw32/lib/libSDL3.dll.a -lshell32 -lole32 -luuid -lwinhttp
+//       -static-libgcc -static-libstdc++ <SDL3 mingw>/x86_64-w64-mingw32/lib/libSDL3.dll.a -lshell32 -lole32 -luuid
 //       -lbcrypt -ladvapi32 -o fabricator_install_test.exe   (SDL3.dll beside it: mods.cpp's texture-pack count uses SDL_GetTicks)
 #include "../src/app.h"
 #include "../src/fabricator_install.h"
@@ -446,7 +446,11 @@ int main()
     {
         std::string z = put_zip("pack.zip", {{"Pack/GearGame/x.xxx", "px"}, {"Pack/y.dll", "MZ"}, {"Pack/tools/run.asi", "MZ"}});
         std::string err;
-        CHECK(mods_add_zip(a, g, z, err));
+        std::vector<std::string> left;
+        CHECK(mods_add_zip(a, g, z, err, &left));
+        CHECK(left.size() == 2);   // the programs left out are reported
+        CHECK(std::find(left.begin(), left.end(), "tools\\run.asi") != left.end());
+        CHECK(std::find(left.begin(), left.end(), "y.dll") != left.end());
         CHECK(err == "");
         CHECK(text_of(join(mods, "Pack\\GearGame\\x.xxx")) == "px");
         CHECK(!exists(join(mods, "Pack\\y.dll")));   // programs are left out
@@ -470,6 +474,12 @@ int main()
         z = put_zip("fj.zip", {{"Top/fabricator.json/x.bin", "d"}, {"Top/a/b/Fabricator.Json", "f"}, {"Top/keep.txt", "k"}});
         CHECK(mods_unpack_zip_in("", z, dj, true, err, &left));
         CHECK(text_of(join(dj, "keep.txt")) == "k");
+        // Windows device names (the same rule as fab_check_zip) are never written
+        std::string dd = join(g_root, "unpack-dev");
+        z = put_zip("dev.zip", {{"Top/CONIN$.txt", "d"}, {"Top/sub/COM\xC2\xB9.dat", "d"}, {"Top/aux/x.bin", "d"}, {"Top/ok.txt", "k"}});
+        CHECK(mods_unpack_zip_in("", z, dd, true, err));
+        CHECK(text_of(join(dd, "ok.txt")) == "k");
+        CHECK(!exists(join(dd, "sub\\COM\xC2\xB9.dat")) && !exists(join(dd, "aux")));
         CHECK(!exists(join(dj, "fabricator.json")) && !exists(join(dj, "a\\b\\Fabricator.Json")));
         CHECK(left.empty());   // not a program: left out without a note
 

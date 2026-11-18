@@ -1,5 +1,6 @@
 // COGBox - the Fabricator model (see fabricator_model.h).
 #include "fabricator_model.h"
+#include "mod_file_rules.h"
 #include "util.h"
 #include "../third_party/miniz/miniz.h"
 #include "../third_party/nlohmann/json.hpp"
@@ -65,20 +66,12 @@ std::string mod_folder_chars(const std::string &base)
     return name;
 }
 
-static bool reserved_name(const std::string &n)
-{
-    std::string stem = lower_s(n.substr(0, n.find('.')));   // Windows: "CON.txt" is the device too
-    while (!stem.empty() && stem.back() == ' ') stem.pop_back();
-    if (stem == "con" || stem == "prn" || stem == "aux" || stem == "nul") return true;
-    return stem.size() == 4 && (stem.compare(0, 3, "com") == 0 || stem.compare(0, 3, "lpt") == 0) && stem[3] >= '1' && stem[3] <= '9';
-}
-
 std::string fab_folder_name(const std::string &name, const std::vector<std::string> &existing,
                             const std::function<bool(const std::string &folder)> &is_same_install)
 {
     std::string base = mod_folder_chars(name);
     if (base.empty()) base = "mod";
-    if (reserved_name(base)) {   // " mod" goes after the stem: "CON.txt" is still the device to Windows, "CON mod.txt" is not
+    if (mod_file_is_device_name(base)) {   // " mod" goes after the stem: "CON.txt" is still the device to Windows, "CON mod.txt" is not
         size_t dot = base.find('.');
         std::string stem = base.substr(0, dot), rest = dot == std::string::npos ? "" : base.substr(dot);
         while (!stem.empty() && stem.back() == ' ') stem.pop_back();
@@ -103,6 +96,8 @@ bool fab_same_install(const FabInstallRecord &r, const FabInstallItem &it)
 }
 
 // ---- install record ----
+// (A record from a COGBox before this one may have come in a hand-added zip: such zips were not stripped of
+// fabricator.json then.)
 std::optional<FabInstallRecord> fab_read_record(const std::string &folder)
 {
     std::string text;
@@ -168,22 +163,10 @@ static std::string trim_dots_spaces(std::string s)
     while (!s.empty() && (s.back() == '.' || s.back() == ' ')) s.pop_back();
     return s;
 }
-// The first segment whose stem (trailing dots and spaces off, the part before the first dot,
-// trailing spaces off) is CON, PRN, AUX, NUL, COM1-9 / LPT1-9 or COM / LPT with a superscript 1, 2 or 3 ("" none).
+// The first segment that is a Windows device name (mod_file_is_device_name), "" none.
 static std::string device_segment(const std::string &name)
 {
-    for (const std::string &seg : segments(name)) {
-        std::string stem = trim_dots_spaces(seg);
-        stem = stem.substr(0, stem.find('.'));
-        while (!stem.empty() && stem.back() == ' ') stem.pop_back();
-        std::string low = stem;
-        for (char &c : low) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-        if (low == "con" || low == "prn" || low == "aux" || low == "nul") return seg;
-        if (low.size() >= 4 && (low.compare(0, 3, "com") == 0 || low.compare(0, 3, "lpt") == 0)) {
-            const std::string d = low.substr(3);
-            if ((d.size() == 1 && d[0] >= '1' && d[0] <= '9') || d == "\xC2\xB9" || d == "\xC2\xB2" || d == "\xC2\xB3") return seg;
-        }
-    }
+    for (const std::string &seg : segments(name)) if (mod_file_is_device_name(seg)) return seg;
     return "";
 }
 // The name as Windows compares it: one separator, no empty or "." segments, trailing dots and spaces off, case folded

@@ -1440,8 +1440,20 @@ static void mods_tab(App &a, int g)
         if (small_button("Add a mod (.zip)...")) {
             std::string p = pick_file(L"Choose a mod's .zip", L"Zip files\0*.zip\0All files\0*.*\0");
             std::string err;
+            std::vector<std::string> left;
             if (!p.empty()) {
-                if (mods_add_zip(a, g, p, err)) set_message(a, "The mod is added and ticked.", false);
+                if (mods_add_zip(a, g, p, err, &left)) {
+                    std::string msg = "The mod is added and ticked.";
+                    if (!left.empty()) {   // the program files not unpacked: the first 5 names, then how many more
+                        msg += " Left out: ";
+                        for (size_t i = 0; i < left.size() && i < 5; i++) {
+                            const size_t cut = left[i].find_last_of('\\');
+                            msg += (i ? ", " : "") + (cut == std::string::npos ? left[i] : left[i].substr(cut + 1));
+                        }
+                        if (left.size() > 5) msg += " and " + std::to_string(left.size() - 5) + " more";
+                    }
+                    set_message(a, msg, false);
+                }
                 else set_message(a, err, true);
                 changed = true;
             }
