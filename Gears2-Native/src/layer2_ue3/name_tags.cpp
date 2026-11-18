@@ -6,6 +6,8 @@
 
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
+#include <rex/runtime.h>
+#include <rex/system/xmemory.h>
 
 #include <algorithm>
 #include <atomic>
@@ -22,6 +24,11 @@ REXCVAR_DEFINE_BOOL(cogbox_name_tags, true, "COGBox",
 REXCVAR_DEFINE_STRING(cogbox_name_tags_style, "", "COGBox",
                       "GitHub #353: markup around the tag as '<before>|<after>' in place of the game's own (empty: the "
                       "game's; testing which markup a game's text fields render)");
+
+namespace {
+void CheckTextHooks();
+void AllocScratch();
+}  // namespace
 
 namespace {
 namespace obj = ue3::obj;
@@ -114,9 +121,19 @@ namespace {
 std::atomic<uint32_t> g_cls{0};
 std::atomic<int> g_name_off{-1}, g_id_off{-1};
 std::atomic<bool> g_class_set_due{false};  // Gears 1 / 2: a name needs its tag (the game thread does the class-wide set)
-std::string g_before, g_after;
 std::atomic<int> g_backoff_s{1};  // Gears 1 / 2: seconds before the next class-wide attempt (review r366 (4))
 std::chrono::steady_clock::time_point g_next_try{};  // Gears 1 / 2: game thread only (the tick and the set's callback)
+// the style's markup around "#1234", set once (Ue3NameTagsTick) before anything reads it; published through an atomic
+// pointer for the worker and the text hooks
+struct Markup {
+  std::string before, after;
+};
+std::atomic<const Markup*> g_markup{nullptr};
+const Markup& Mk() {
+  static const Markup none;
+  const Markup* m = g_markup.load(std::memory_order_acquire);
+  return m ? *m : none;
+}
 
 std::string TaggedName(uint32_t pri, bool* plain, bool* changed) {
   *changed = false;
@@ -130,8 +147,42 @@ std::string TaggedName(uint32_t pri, bool* plain, bool* changed) {
   if (name.find(mark) != std::string::npos) return name;  // already tagged (by us, or the host's copy)
   *changed = true;
   // Names are at most 15 characters (the master server's rule): 15 capital Ws and the tag fit Gears 3's every screen.
-  return name + g_before + mark + g_after;
+  return name + Mk().before + mark + Mk().after;
 }
+
+namespace {
+// ---- the kill feed: reflection helpers for the start-up check of the text hooks (CheckTextHooks, below) ----------
+struct Walk {
+  uint32_t super, children, next, elem_size, prop_offset;
+};
+Walk WalkLayout() {
+#if defined(GN_UE3_OBJECTS_GOW3)  // Gears 3's ue3::obj has its offsets built in (objects.cpp FindProperty / PropertySize)
+  return {64, 68, 60, 68, 84};
+#else
+  const obj::Layout& l = obj::CurrentLayout();
+  return {l.super, l.children, l.next, l.elem_size, l.prop_offset};
+#endif
+}
+
+uint32_t ClassNamed(const char* name) {
+#if defined(GN_UE3_OBJECTS_NO_RANGE)
+  return obj::FindClass(name);
+#else
+  uint32_t total = 0, cls = 0;
+  for (uint32_t first = 0; !cls; first += 4096) {
+    cls = obj::FindClassRange(name, first, 4096, &total);
+    if (first + 4096 >= total) break;
+  }
+  return cls;
+#endif
+}
+
+std::string ClassName(uint32_t object) {
+  const uint32_t c = obj::ClassOf(object);
+  return c ? obj::ObjectName(c) : std::string();
+}
+
+}  // namespace
 
 // Once a second, off the game thread: a scan of the game's own objects (no network; the tags come from
 // xenos/player_tags.h's cache). Gears 3 / Judgment: one `set <PRI> PlayerName ...` per name that needs its tag.
@@ -150,6 +201,7 @@ void Worker(bool (*objects_ready)(), bool class_set, std::string style_font) {
       REXLOG_INFO("name tags: PlayerReplicationInfo.PlayerName +{}, .UniqueId +{}", g_name_off.load(), g_id_off.load());
     }
     if (g_name_off.load() < 0 || g_id_off.load() < 0) return;  // not this engine's layout: nothing to do, ever
+    CheckTextHooks();   // ... and as the HUD draws it, when this build has text hooks
     if (const size_t eq = style_font.find('='); eq != std::string::npos &&
         RestyleFont(style_font.substr(0, eq), style_font.substr(eq + 1)))
       style_font.clear();  // done (the styles stay loaded: they belong to the game's UI skin)
@@ -184,8 +236,10 @@ void Ue3NameTagsTick(bool (*objects_ready)(), const Ue3NameTagStyle& style) {
   std::call_once(started, [&] {
     const std::string style_text = REXCVAR_GET(cogbox_name_tags_style);
     const size_t bar = style_text.find('|');
-    g_before = bar == std::string::npos ? style.before : style_text.substr(0, bar);
-    g_after = bar == std::string::npos ? style.after : style_text.substr(bar + 1);
+    g_markup.store(new Markup{bar == std::string::npos ? std::string(style.before) : style_text.substr(0, bar),
+                              bar == std::string::npos ? std::string(style.after) : style_text.substr(bar + 1)},
+                   std::memory_order_release);   // (kept for the process's life)
+    AllocScratch();
     std::thread(Worker, objects_ready, style.class_set, std::string(style.style_font)).detach();
   });
   // Gears 1 / 2, on the game thread just before Ue3ConsoleRunQueued: every PlayerReplicationInfo, class defaults
@@ -229,4 +283,115 @@ void Ue3NameTagsTick(bool (*objects_ready)(), const Ue3NameTagStyle& style) {
     }
     REXLOG_DEBUG("name tags: {} of {} names written back", written, all.size());
   });
+}
+
+// ---- the kill feed's draw-time half: the text arguments of the engine's text routines (layer 3 hooks) -------------
+namespace {
+const Ue3TextHookCheck* g_checks = nullptr;   // the game's (constant-initialized: set by a static initializer)
+size_t g_check_count = 0;
+std::atomic<bool> g_text_ok{false};           // the checks passed: the hooks clean text
+
+// Scratch copies: a ring of guest-memory slots of our own (system heap), each a text of up to kMaxText characters and
+// an FString after it. A slot is needed only for the one call it is passed to: the hooked routines measure the text, or
+// draw it (turning it into glyph quads) before they return - they keep no pointer to it. At most a few slots per call
+// (only arguments holding the markup take one); the ring is far longer than any nesting of these calls.
+constexpr uint32_t kMaxText = 256, kSlots = 64, kSlotBytes = 0x220, kSlotFString = 0x210;
+std::atomic<uint32_t> g_scratch{0}, g_scratch_next{0};
+
+void AllocScratch() {
+  if (g_check_count == 0 || g_scratch.load()) return;   // no hooks in this game
+  rex::Runtime* rt = rex::Runtime::instance();
+  const uint32_t a = rt && rt->memory() ? rt->memory()->SystemHeapAlloc(kSlots * kSlotBytes) : 0;
+  g_scratch.store(a, std::memory_order_release);
+  if (!a) REXLOG_WARN("name tags: no memory for the kill feed's text copies - its names keep the markup");
+}
+
+uint16_t Read16(uint32_t a) {
+  const uint32_t w = obj::Read32(a & ~3u);
+  return uint16_t((a & 2) ? (w & 0xFFFF) : (w >> 16));
+}
+
+// The guest text at `text` (big-endian UTF-16) in `out` (kMaxText + 1 bytes), its length in `len`; false when it isn't
+// readable, isn't all printable ASCII, has no '#' (it can't hold a tag), or has no terminator within kMaxText characters
+// (then it is left alone, never cut short). Fast for what isn't text: the first character that isn't printable ASCII
+// ends the look (most argument registers hold no text at all).
+bool ReadText(uint32_t text, char* out, uint32_t* len) {
+  if (text < 0x40000000 || text >= 0x80000000 || (text & 1) || !obj::Readable(text, 2)) return false;
+  bool hash = false;
+  for (uint32_t i = 0; i <= kMaxText; ++i) {
+    const uint32_t a = text + 2 * i;
+    if (i && (a & 0xFFF) == 0 && !obj::Readable(a, 2)) return false;   // a new page
+    const uint16_t c = Read16(a);
+    if (!c) {
+      *len = i;
+      return hash;
+    }
+    if (c < 0x20 || c >= 0x7F || i == kMaxText) return false;
+    hash = hash || c == '#';
+    out[i] = char(c);
+  }
+  return false;
+}
+
+// A scratch copy of `text` without the tag's markup, or 0 when it holds none; `len` gets the original text's length.
+uint32_t CleanCopy(uint32_t text, uint32_t* count, uint32_t* len) {
+  const Markup& m = Mk();
+  char buf[kMaxText + 1];
+  if (!ReadText(text, buf, len)) return 0;
+  std::string s(buf, *len);
+  if (!xenos::tags::StripMarkup(&s, m.before, m.after)) return 0;
+  const uint32_t base = g_scratch.load(std::memory_order_acquire);
+  if (!base) return 0;
+  const uint32_t slot = base + (g_scratch_next.fetch_add(1, std::memory_order_relaxed) % kSlots) * kSlotBytes;
+  for (size_t i = 0; i <= s.size(); ++i) {
+    const uint8_t c = i < s.size() ? uint8_t(s[i]) : 0;
+    if (!obj::Write8(slot + uint32_t(2 * i), 0) || !obj::Write8(slot + uint32_t(2 * i + 1), c)) return 0;
+  }
+  *count = uint32_t(s.size() + 1);
+  return slot;
+}
+
+// Worker, once: are the game's Canvas natives the ones the hooks were written for (this build)? Each check names a
+// Canvas function and its native's code address, which the UFunction holds.
+void CheckTextHooks() {
+  static bool done = false;
+  if (done || g_check_count == 0) return;
+  done = true;
+  const Walk w = WalkLayout();
+  const uint32_t canvas = ClassNamed("Canvas");
+  size_t passed = 0;
+  for (size_t i = 0; i < g_check_count; ++i) {
+    bool ok = false;
+    for (uint32_t f = canvas ? obj::Read32(canvas + w.children) : 0, n = 0; f && n < 400 && !ok; f = obj::Read32(f + w.next), n++) {
+      if (obj::ObjectName(f) != g_checks[i].function) continue;
+      for (uint32_t k = 0x30; k < 0xC0 && !ok; k += 4) ok = obj::Read32(f + k) == g_checks[i].exec;
+    }
+    passed += ok ? 1 : 0;
+  }
+  g_text_ok.store(passed == g_check_count, std::memory_order_release);
+  if (passed == g_check_count) REXLOG_INFO("name tags: kill feed text hooks on ({} Canvas natives as expected)", passed);
+  else REXLOG_WARN("name tags: kill feed text hooks off - {} of {} Canvas natives are not this build's", g_check_count - passed, g_check_count);
+}
+}  // namespace
+
+void Ue3NameTagsTextHookChecks(const Ue3TextHookCheck* checks, size_t count) {
+  g_checks = checks;
+  g_check_count = count;
+}
+
+uint32_t Ue3NameTagsTextArg(uint32_t arg) {
+  if (!g_text_ok.load(std::memory_order_acquire)) return arg;
+  if (Mk().before.empty() && Mk().after.empty()) return arg;   // tags without markup: nothing to take out
+  uint32_t count = 0, len = 0;
+  if (const uint32_t c = CleanCopy(arg, &count, &len)) return c;   // the text itself
+  // an FString {data, count, max} - only when its count is its text's length + 1 and max at least that, so another
+  // struct whose first word points at a name is never taken for one: a scratch FString of the clean copy
+  if (arg < 0x40000000 || arg >= 0x80000000 || (arg & 3) || !obj::Readable(arg, 12)) return arg;
+  const uint32_t data = obj::Read32(arg), num = obj::Read32(arg + 4), max = obj::Read32(arg + 8);
+  if (!data || num < 2 || num > kMaxText + 1 || max < num) return arg;
+  const uint32_t c = CleanCopy(data, &count, &len);
+  if (!c || len + 1 != num) return arg;
+  const uint32_t f = c + kSlotFString;
+  if (!obj::Write32(f, c) || !obj::Write32(f + 4, count) || !obj::Write32(f + 8, count)) return arg;
+  return f;
 }

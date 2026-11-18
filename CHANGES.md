@@ -50,7 +50,8 @@
   scoreboard each player's name shows their COGBox tag after it in grey, for example Flapper#5531, so you can add
   someone you just played with as a friend by their tag. The game asks the COGBox server once for each new player (up to
   32 at a time) and keeps the answer; it never asks again for a player it already knows. Off with
-  --cogbox_name_tags=false.
+  --cogbox_name_tags=false. The kill feed shows the tag too, in the name's own colour (it draws plain text: COGBox takes
+  the colour markup out where the HUD draws or measures its text).
 - **HDR for Judgment and Gears 1** (PR #351 by legoliamneeson - thank you), more SDR-fallback fixes, and improved
   sampling of Gears 3's colour grading in HDR (Improved HDR LUT sampling, on by default; turn it off for the previous
   look).

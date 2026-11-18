@@ -10,6 +10,9 @@
 // Bots (XUID 0) and offline play are left alone. Our code (MIT).
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+
 struct Ue3NameTagStyle {
   const char* before = "";  // markup before "#1234", e.g. Gears 3's "<font color='#808080'>" (its Flash text fields)
   const char* after = "";   // ... and after it
@@ -26,3 +29,15 @@ struct Ue3NameTagStyle {
 // Once per engine tick (it paces itself); the game thread, before Ue3ConsoleRunQueued, when class_set. `objects_ready`: true once ue3::obj is open (the
 // game's layer 3 opens it). Off with --cogbox_name_tags=false.
 void Ue3NameTagsTick(bool (*objects_ready)(), const Ue3NameTagStyle& style);
+
+// The kill feed's draw-time half: a game's layer 3 hooks the engine's text routines (under Canvas.DrawText / TextSize /
+// StrLen) and passes each text argument through Ue3NameTagsTextArg - the argument itself, or (when it is text, or an
+// FString whose text holds the tag's markup) a scratch copy without the markup, in guest memory of our own. The caller's
+// text is never changed. Nothing happens until the worker has checked that the game's Canvas natives are the ones the
+// hooks were written for (Ue3NameTagsTextHookChecks, from a static initializer of the game file that has the hooks).
+struct Ue3TextHookCheck {
+  const char* function;   // a Canvas function, e.g. "DrawText"
+  uint32_t exec;          // its native's code address in this build
+};
+void Ue3NameTagsTextHookChecks(const Ue3TextHookCheck* checks, size_t count);
+uint32_t Ue3NameTagsTextArg(uint32_t arg);
