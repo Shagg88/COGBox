@@ -70,6 +70,7 @@ void run(SocialBackend b, uint64_t gen) {
         std::optional<SocialJoin> join;
         std::map<std::string, int> regions;
         std::optional<std::vector<SocialMatch>> matches;
+        std::optional<std::vector<SocialRecent>> recent;
         std::string tag = acc ? acc->tag() : std::string();
         if (acc) {
             if (action) {
@@ -101,6 +102,12 @@ void run(SocialBackend b, uint64_t gen) {
                 // any other answer (an older server without the list, an error) is "none", not "still looking"
                 if (m.status != 0) matches = m.status == 200 ? parse_matches(m.body) : std::vector<SocialMatch>{};
             }
+            // 0.6.5: recent players - every 30 s, and straight after a friend action (the row's button changes)
+            if (reachable && (tick % 6 == 1 || (action && action->first != SocialAction::JoinMatch &&
+                                                  action->first != SocialAction::JoinMatchSearch))) {
+                const HttpResult r = b.call({ "GET", "/api/v1/players/recent", "" });
+                if (r.status != 0) recent = r.status == 200 ? parse_recent(r.body) : std::vector<SocialRecent>{};
+            }
         }
         {
             std::unique_lock<std::mutex> lk(s.mu);
@@ -125,6 +132,10 @@ void run(SocialBackend b, uint64_t gen) {
             } else if (acc && !reachable) {
                 v.matches.clear();   // no stale rows with live Join buttons while the server can't be reached
                 v.matches_known = false;
+            }
+            if (recent) {
+                v.recent = std::move(*recent);
+                v.recent_known = true;
             }
             if (join) s.join = join;
             // wait 5 s, or less when an action is queued

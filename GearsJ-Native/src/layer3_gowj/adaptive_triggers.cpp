@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <mutex>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -355,6 +356,17 @@ void StartObjectsInit() {
     g_objects_warm.store(true, std::memory_order_release);
   }).detach();
 }
+}  // namespace
+
+// GitHub #353 (cheats.cpp's tick, for the name tags): the object tables open, opening them (once, off the game thread)
+// if the triggers have not.
+bool GowjObjectsReady() {
+  static std::once_flag started;
+  std::call_once(started, [] { if (!g_objects_warm.load(std::memory_order_acquire)) StartObjectsInit(); });
+  return obj::Ready() && g_objects_warm.load(std::memory_order_acquire);
+}
+
+namespace {
 
 // ---- 0.6.3 (GitHub #245): Xbox One / Series impulse triggers (--pad_trigger_rumble, SDK patch 104) ----------------
 // The same weapon and the same "playing" test as the DualSense feel above, read every engine tick. The events are the
@@ -442,7 +454,7 @@ void GowjAdaptiveTriggersTick() {
     if (impulse)
       REXLOG_INFO("impulse triggers: Judgment trigger pulses for Xbox pads on (GitHub #245), {}",
                   kVersion);
-    if (adaptive || impulse) StartObjectsInit();
+    if (adaptive || impulse) GowjObjectsReady();   // opens the tables once (shared with the name tags, GitHub #353)
   }
   if ((!adaptive && !impulse) || !obj::Ready() || !g_objects_warm.load(std::memory_order_acquire)) return;
   const Clock::time_point now = Clock::now();

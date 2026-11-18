@@ -797,11 +797,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     g_ui = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
     if (g_ui <= 0.0f) g_ui = 1.0f;
     g_ui *= 0.78f;   // Shagg 18:31: about 25% smaller than the first build
-    int ww = (int)(1280 * g_ui), wh = (int)(800 * g_ui);
+    // 0.6.5 (Shagg): a bigger window at the same text and button size - 1640 x 1025 UI units (1280 x 800 at 100% Windows
+    // scaling); it was 1280 x 800 units. A screen too small for it gets a smaller window first (down to the old size),
+    // and only below that smaller text.
+    int ww = (int)(1640 * g_ui), wh = (int)(1025 * g_ui);
     const SDL_DisplayMode *dm = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
     if (dm && (ww > dm->w * 0.92f || wh > dm->h * 0.88f)) {
-        float k = std::min(dm->w * 0.92f / ww, dm->h * 0.88f / wh);
-        g_ui *= k; ww = (int)(ww * k); wh = (int)(wh * k);
+        ww = std::min(ww, (int)(dm->w * 0.92f));
+        wh = std::min(wh, (int)(dm->h * 0.88f));
+        const int minW = (int)(1280 * g_ui), minH = (int)(800 * g_ui);
+        if (ww < minW || wh < minH) {
+            float k = std::min((float)ww / minW, (float)wh / minH);
+            g_ui *= k; ww = (int)(minW * k); wh = (int)(minH * k);
+        }
     }
     SDL_Window *win = SDL_CreateWindow(COGBOX_NAME, ww, wh, SDL_WINDOW_RESIZABLE);
     SDL_Renderer *ren = win ? SDL_CreateRenderer(win, nullptr) : nullptr;

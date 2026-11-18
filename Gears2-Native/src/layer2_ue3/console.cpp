@@ -59,10 +59,14 @@ REXCVAR_DEFINE_BOOL(ue3_cheat_hide_hud, false, GN_UE3_CONSOLE_GROUP,
 
 namespace {
 std::mutex g_mutex;
-// GitHub #359: `key` is the cheat key that queued the command (empty: --ue3_exec, scripted, the launcher) - only those get
-// the on-screen notice.
+// GitHub #359: `key` is the cheat key that queued the command (empty: --ue3_exec, scripted, the launcher, COGBox's own) -
+// only those get the on-screen notice.
+// GitHub #353: a COGBox command (Ue3ConsoleQueueTrusted): no gate, no EnableCheats / before_each, no notice, logged at
+// debug level; `after` runs on the game thread straight after it, in the same frame.
 struct Queued {
   std::string command, key;
+  bool trusted = false;
+  std::function<void()> after;
 };
 std::deque<Queued> g_queue;
 // GitHub #359 (tests): each cheat key's press, by key name, so --ue3_exec_at="30s:@F9" presses F9 as the player would.
@@ -182,8 +186,16 @@ void Ue3ConsoleSetTarget(const Ue3ConsoleTarget& target) {
 namespace {
 void QueueFrom(const std::string& command, const std::string& key) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  g_queue.push_back({command, key});
+  g_queue.push_back(Queued{command, key, false, {}});
 }
+}  // namespace
+
+void Ue3ConsoleQueueTrusted(const std::string& command, std::function<void()> after) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_queue.push_back(Queued{command, std::string(), true, std::move(after)});
+}
+
+namespace {
 
 // GitHub #359: the notice for a cheat key's command, from what the command did (outcome: 0 done, 1 not recognised, 2
 // refused) and the cheat's state read back now (ue3/auto_cheats.h DescribeKey). One log line per notice, also with the
@@ -261,11 +273,15 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
   }
   for (;;) {
     std::string command, key;
+    bool trusted = false;
+    std::function<void()> after;
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       if (g_queue.empty()) return;
       command = g_queue.front().command;
       key = g_queue.front().key;
+      trusted = g_queue.front().trusted;
+      after = g_queue.front().after;
     }
     if (command.size() > 1 && command[0] == '@') {   // GitHub #359 (tests): "@F9" = a press of the cheat key F9
       std::function<void()> press;
@@ -282,7 +298,7 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
     bool handled = false;
     // 0.6.3: cheats are refused in Versus matches (g_target.gate = ue3/match_guard.h, asked for every command at the moment
     // it would run, so a command held over a map change meets the new map's answer). The launcher's own settings are not cheats.
-    if (g_target.gate && !Ue3ConsoleIsDisplaySetting(command)) {
+    if (g_target.gate && !trusted && !Ue3ConsoleIsDisplaySetting(command)) {
       const int verdict = g_target.gate();
       if (verdict == 1) return;  // the game state is not readable yet: keep it queued
       if (verdict == 2) {
@@ -295,19 +311,25 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
         continue;
       }
     }
-    if (g_target.enable_cheats) {   // GitHub #342: Gears 2's EnableCheats (ue3/auto_cheats.h)
+    if (trusted) {
+      // GitHub #353: COGBox's own commands (name tags) are no cheats - no EnableCheats (it flips NetMode), no before_each
+    } else if (g_target.enable_cheats) {   // GitHub #342: Gears 2's EnableCheats (ue3/auto_cheats.h)
       if (!g_target.enable_cheats(ctx, base)) return;  // no player yet: keep it queued
     } else if (g_target.before_each && *g_target.before_each) {
       bool ignored = false;
       if (!ExecNow(ctx, base, g_target.before_each, &ignored)) return;  // no player yet: keep it queued
     }
     if (!ExecNow(ctx, base, command, &handled)) return;  // no player yet: keep it queued for a later tick
+    if (after) after();  // GitHub #353: same thread, same frame
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       g_queue.pop_front();
     }
-    REXLOG_INFO("ue3_console: tick {} ({:.1f} s): '{}' {}", g_ticks, secs, command,
-                handled ? "done" : "not recognised by the engine");
-    if (!key.empty()) NoteKey(key, command, handled ? 0 : 1);   // GitHub #359
+    if (trusted)
+      REXLOG_DEBUG("ue3_console: tick {}: COGBox '{}' {}", g_ticks, command, handled ? "done" : "not recognised");
+    else
+      REXLOG_INFO("ue3_console: tick {} ({:.1f} s): '{}' {}", g_ticks, secs, command,
+                  handled ? "done" : "not recognised by the engine");
+    if (!key.empty()) NoteKey(key, command, handled ? 0 : 1);   // GitHub #359 (a trusted command has no key)
   }
 }

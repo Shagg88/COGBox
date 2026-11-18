@@ -33,6 +33,7 @@
 
 #include <ue3/auto_cheats.h>
 #include <ue3/console.h>
+#include <ue3/name_tags.h>  // GitHub #353
 #include <ue3/match_guard.h>
 
 #include "gow2_addresses.h"
@@ -115,6 +116,9 @@ extern "C" void GOW2_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
   GOW2_JOIN(__imp__, GOW2_MAX_TICK_RATE)(ctx, base);
   Gow2NoteTickCall(caller);
   if (caller == gow2::addr::kServerTickClientsTickRateRet) return;
+  // GitHub #353: COGBox tags after the players' names. Gears 2's set takes a class only: the class-wide form, put right
+  // in the same frame (so before Ue3ConsoleRunQueued). Grey through its UI text markup.
+  Ue3NameTagsTick([] { return ue3::obj::Ready() || OpenObjects(); }, Ue3NameTagStyle{"<Color:R=0.5,G=0.5,B=0.5,A=1.0>", "<Color:/>", true});
   Ue3ConsoleRunQueued(ctx, base);
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   Gow2AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
