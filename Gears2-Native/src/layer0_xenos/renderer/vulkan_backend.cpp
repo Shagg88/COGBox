@@ -3010,7 +3010,7 @@ class VulkanBackend final : public Backend {
     // Patch 0104: the driver's per-pipeline statistics (a measurement, own device only).
     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pe{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
     const char* dev_exts[3] = {};
-    // 0.6.2: graphics pipeline libraries, where the device offers them (our own device; on the SDK's, its patch 91).
+    // 0.6.2: graphics pipeline libraries, where the device offers them (our own device; on the SDK's, SDK patch 116 / runtime 066).
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gl{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
     if (options_.vk_pipeline_libraries && options_.vk_pipeline_stats)
       REXLOG_WARN("gow2_renderer: Vulkan: pipeline libraries are off while pipeline statistics are captured");

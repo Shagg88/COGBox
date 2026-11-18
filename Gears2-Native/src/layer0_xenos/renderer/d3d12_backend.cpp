@@ -5040,8 +5040,9 @@ class D3D12Backend final : public Backend {
       // Only the snapshot is taken under the lock (workers store new pipelines meanwhile); the file is written after.
       std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
       if (on_recording_thread) pipeline_library_saved_at_ = std::chrono::steady_clock::now();
-      if (!pipeline_library_ || !pipeline_library_dirty_.exchange(false)) return false;
-      StorePendingLocked();  // pipelines that arrived during the last save
+      if (!pipeline_library_) return false;
+      StorePendingLocked();  // pipelines that arrived during the last save (before the flag is cleared: they are saved now)
+      if (!pipeline_library_dirty_.exchange(false)) return false;
       const auto t_ser = std::chrono::steady_clock::now();
       const SIZE_T size = pipeline_library_->GetSerializedSize();
       out.resize(size);

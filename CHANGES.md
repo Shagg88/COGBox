@@ -4,13 +4,13 @@
 
 - **Much faster start-up** - compared with 0.6.4's shader translator (Gears 3, RTX 3080 Ti PC, same shaders):
   - **DirectX 12 (the default), every start after the first: shader warm-up 97% less time** (8.5 s -> 0.2 s) and **98%
-    less CPU work** (85 s across its threads -> 1.4 s); from start to the 300th frame **66% sooner** (15.4 s -> 5.2 s),
+    less CPU work** (85 s of thread time -> 1.4 s); from start to the 300th frame **66% sooner** (15.4 s -> 5.2 s),
     and the worst frame times (p99) **23% lower** in the first minute. Converted shaders are now kept between starts
     (`dxbc-store.bin` in the shader cache; a new COGBox build starts it again), and the saved pipelines load in one read.
     The first start of a new build already warms up **85% faster** (8.5 s -> 1.3 s) while it fills that store.
-  - **Vulkan, every start after the first: shader warm-up 80% less time** (9.4 s -> 1.9 s): converted shaders are kept
-    between starts too.
-  - **The shader translator does about 88% less CPU work** at every start (DirectX 12: 118 s across its threads ->
+  - **Vulkan: converted shaders are kept between starts too** - shader warm-up 1.9 s on a later start, against 9.4 s for
+    0.6.4's translator (measured on a first start; 0.6.4 converted every shader again at every start).
+  - **The shader translator itself does about 88% less CPU work** when it runs (DirectX 12, a separate measurement: 118 s across its threads ->
     14 s), with **95% fewer** memory page faults and **98% less** time spent in Windows itself - and exactly the same
     shaders out (checked on all 9,296 Gears 3 shaders).
   - **A first-ever start** (empty shader cache, DirectX 12): shaders translated **56% faster** while you play
@@ -24,8 +24,8 @@
     the pipelines being built for about a third of a second (Gears 3's ~480 MB file); a pipeline built during a save
     is now stored right after it instead of waiting.
   - **"Prepare all shaders" runs offline** (#370 by Flippage): the run that prepares the shaders started like a normal
-    game and signed in to the COGBox server with your profile - a second copy of you online for minutes. It now starts
-    with online play off and no profile.
+    game and signed in to the COGBox server as you - a second copy of you online for minutes. It now starts with no
+    online server and without your online identity.
 - **Gears 1: 16:10** (Steam Deck, 16:10 laptops): the Aspect ratio setting now covers Gears 1, and the picture fills the
   screen in gameplay instead of keeping 16:9 bars. All four games: Aspect ratio 16:10, and Auto picks it on a 16:10 screen.
 - **Stick dead zones** (Controls tab): separate Left stick and Right stick dead zone sliders (0-50 %), as in popular
