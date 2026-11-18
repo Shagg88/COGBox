@@ -562,7 +562,7 @@ std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, s
         continue;
       }
       if (key.find('\\') == std::string::npos) continue;   // files at the mod's top (mod.ini, readme) are its own
-      const std::string ext = ModLower(it->path().extension().string());
+      const std::string ext = ModLower(rex::path_to_utf8(it->path().extension()));   // review r369 F5: string() throws on a name outside the code page
       if (ext == ".xex" || ext == ".xexp" || ext == ".dll" || ext == ".exe") {
         REXLOG_WARN("ue3_mods: {}: programs are not taken from mods - skipped", rex::path_to_utf8(it->path()));
         continue;

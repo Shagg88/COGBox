@@ -64,7 +64,9 @@ int main()
         CHECK(!mod_file_is_program("f.ini"));
         CHECK(!mod_file_is_program("exe"));        // no extension
         CHECK(!mod_file_is_program("dll.dir/f.ini"));   // only the last component's extension
-        CHECK(mod_file_program_exts().size() == 92);   // 44 + review r369's 48
+        CHECK(mod_file_program_exts().size() == 137);   // 44 + review r369: 48 + the security audit 45
+        CHECK(mod_file_is_program("Configure.XLSM"));
+        CHECK(mod_file_is_program("x/run.sh"));
         CHECK(mod_file_is_program("Textures/x.ISO"));
         CHECK(mod_file_is_program("a/b/plugin.ax"));
         CHECK(mod_file_is_program("pack.tar.gz"));

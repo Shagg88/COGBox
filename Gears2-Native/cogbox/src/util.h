@@ -42,6 +42,12 @@ struct Ini {
     void remove_section(const std::string &sec);   // 0.6.3: the [sec] line too, and everything under it
 };
 
+// Review r369 F1: a file's or folder's real path (links followed; "" if it can't be opened), and whether child_path is
+// really inside real_parent (its real path is real_parent\\name) rather than a link to somewhere else - also a Wine Unix
+// symlink, which has no reparse-point attribute.
+std::wstring real_path(const std::wstring &p);
+bool is_plain_child(const std::wstring &real_parent, const std::wstring &child_path, const std::wstring &name);
+
 // Review r369: a game program (gow1.exe, gow2.exe, gow3.exe, gowj.exe) is running, started by COGBox or not (Steam,
 // a shortcut, the exe itself) - what the mods folder's writers check besides the launcher's own a.run.proc. Looked up
 // at most once a second (the answer is kept); any thread.

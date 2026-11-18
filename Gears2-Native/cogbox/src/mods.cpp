@@ -185,7 +185,9 @@ std::vector<ModItem> mods_list(App &a, int g)
             std::string s = narrow(n);
             // hidden: the Fabricator's backups (.fabricator-backup) and unpackings not finished (*.partial); other
             // '.'-named folders are listed as before
-            if (s.find('|') != std::string::npos || lower(s) == ".fabricator-backup" ||
+            // review r369 F6: ';' would split the folder lists given to the game; control characters are no name
+            const bool odd = s.find(';') != std::string::npos || std::any_of(s.begin(), s.end(), [](char c) { return (unsigned char)c < 0x20; });
+            if (odd || s.find('|') != std::string::npos || lower(s) == ".fabricator-backup" ||
                 (s.size() >= 8 && lower(s.substr(s.size() - 8)) == ".partial")) continue;
             found.push_back(s);
         } while (FindNextFileW(f, &fd));
@@ -251,13 +253,13 @@ void mods_move(App &a, int g, const std::string &folder, int dir)
     mods_store(a, g, v);
 }
 
-// a folder COGBox made itself (the unpacking of a mod, a Fabricator backup), removed with everything in it; a link
-// (junction, symlink) inside it is removed, never followed
-void mods_remove_tree(const std::wstring &dir)
+static bool same_path(const std::wstring &a, const std::wstring &b)
 {
-    const DWORD at = GetFileAttributesW(dir.c_str());
-    if (at == INVALID_FILE_ATTRIBUTES) return;
-    if (at & FILE_ATTRIBUTE_REPARSE_POINT) { RemoveDirectoryW(dir.c_str()); return; }   // a link itself: only the link goes
+    return !a.empty() && CompareStringOrdinal(a.c_str(), (int)a.size(), b.c_str(), (int)b.size(), TRUE) == CSTR_EQUAL;
+}
+
+static void remove_tree_in(const std::wstring &dir, const std::wstring &real_dir)
+{
     WIN32_FIND_DATAW fd;
     HANDLE f = FindFirstFileW((dir + L"\\*").c_str(), &fd);
     if (f != INVALID_HANDLE_VALUE) {
@@ -265,12 +267,37 @@ void mods_remove_tree(const std::wstring &dir)
             std::wstring n = fd.cFileName;
             if (n == L"." || n == L"..") continue;
             std::wstring p = dir + L"\\" + n;
-            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) mods_remove_tree(p);
-            else if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) RemoveDirectoryW(p.c_str());
-            else { SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL); DeleteFileW(p.c_str()); }
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                // a folder whose real path is not <this folder>\<name> is a link (also one Wine shows as a plain folder):
+                // only the link itself goes, never what it points at
+                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && is_plain_child(real_dir, p, n))
+                    remove_tree_in(p, real_dir + L"\\" + n);
+                RemoveDirectoryW(p.c_str());
+            } else {
+                SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL);   // (on a link: the link's, not the target's)
+                DeleteFileW(p.c_str());                                // a file link is removed, never followed
+            }
         } while (FindNextFileW(f, &fd));
         FindClose(f);
     }
+}
+
+// a folder COGBox made itself (the unpacking of a mod, a Fabricator backup), removed with everything in it; a link
+// (junction, symlink, a Wine Unix symlink) inside it - or the folder itself being one - is removed, never followed
+void mods_remove_tree(const std::wstring &dir)
+{
+    const DWORD at = GetFileAttributesW(dir.c_str());
+    if (at == INVALID_FILE_ATTRIBUTES) return;
+    if (!(at & FILE_ATTRIBUTE_DIRECTORY)) return;   // not a folder: nothing of ours
+    if (at & FILE_ATTRIBUTE_REPARSE_POINT) { RemoveDirectoryW(dir.c_str()); return; }   // a link itself: only the link goes
+    const size_t cut = dir.find_last_of(L"\\/");
+    if (cut == std::wstring::npos || cut + 1 >= dir.size()) return;
+    const std::wstring real_parent = real_path(dir.substr(0, cut)), real = real_path(dir);
+    if (real_parent.empty() || !same_path(real, real_parent + L"\\" + dir.substr(cut + 1))) {
+        RemoveDirectoryW(dir.c_str());   // the folder is a link to somewhere else: only the link goes
+        return;
+    }
+    remove_tree_in(dir, real);
     RemoveDirectoryW(dir.c_str());
 }
 
@@ -371,12 +398,18 @@ static bool zip_plan(const std::string &dataDir, ZipReader &zr, bool stripTop, Z
         std::vector<std::string> p = parts[i];
         if (!plan.top.empty()) p.erase(p.begin());
         if (p.empty()) continue;
-        bool device = false, record = false;
+        bool device = false, record = false, shortName = false;
         for (const std::string &c : p) {
             device = device || mod_file_is_device_name(c);   // CON, NUL, COM1 ...: a device to Windows, not a file
             record = record || lower(c) == "fabricator.json";   // COGBox's install record (or a folder of that name)
+            // review r369 F4: "FABRIC~1.JSO" is another file's 8.3 short name to Windows - it would open that file
+            for (size_t t = c.find('~'); t != std::string::npos; t = c.find('~', t + 1))
+                if (t + 1 < c.size() && c[t + 1] >= '0' && c[t + 1] <= '9') shortName = true;
         }
         if (device || record) continue;   // never from a zip: only COGBox writes a fabricator.json
+        std::string rel0;
+        for (const std::string &c : p) rel0 += (rel0.empty() ? "" : "\\") + c;
+        if (shortName) { plan.left_out.push_back(rel0); continue; }   // left out, with a note
         std::string rel;
         for (const std::string &c : p) rel += (rel.empty() ? "" : "\\") + c;
         if (mod_file_is_program(p.back())) { plan.left_out.push_back(rel); continue; }   // left out, with a note
@@ -385,12 +418,23 @@ static bool zip_plan(const std::string &dataDir, ZipReader &zr, bool stripTop, Z
     return true;
 }
 
-struct UnpackSink { FILE *f; uint64_t *total; bool over = false, writeFailed = false; };
+// a small file written as it is (an alternate data stream such as Zone.Identifier can't be written through a temporary
+// file and a rename, as write_file does)
+static void write_file_plain(const std::string &path, const std::string &data)
+{
+    HANDLE h = CreateFileW(widen(path).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;   // (Wine and FAT have no streams: the file just has no mark)
+    DWORD put = 0;
+    WriteFile(h, data.data(), (DWORD)data.size(), &put, nullptr);
+    CloseHandle(h);
+}
+
+struct UnpackSink { FILE *f; uint64_t *total; uint64_t limit; bool over = false, writeFailed = false; };
 static size_t unpack_cb(void *ud, mz_uint64, const void *buf, size_t len)
 {
     UnpackSink *s = (UnpackSink *)ud;
     *s->total += len;   // the bytes really inflated
-    if (*s->total > kUnpackMaxBytes) { s->over = true; return 0; }
+    if (*s->total > s->limit) { s->over = true; return 0; }
     if (fwrite(buf, 1, len, s->f) != len) { s->writeFailed = true; return 0; }
     return len;
 }
@@ -410,6 +454,19 @@ bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, 
     if (!zip_plan(dataDir, zr, stripTop, plan, err)) return false;
     if (left_out) left_out->insert(left_out->end(), plan.left_out.begin(), plan.left_out.end());
     if (!dir_exists(folder) && !make_dirs(folder)) { err = "Couldn't make the mod's folder (is the disk full?)."; return false; }
+    // review r369 F7: never fill the disk - the unpacking stops 2 GB before it would (a zip can lie about its sizes)
+    uint64_t limit = kUnpackMaxBytes;
+    {
+        ULARGE_INTEGER freeBytes;
+        if (GetDiskFreeSpaceExW(widen(folder).c_str(), &freeBytes, nullptr, nullptr)) {
+            const uint64_t keep = 2ull << 30;
+            limit = std::min<uint64_t>(limit, freeBytes.QuadPart > keep ? freeBytes.QuadPart - keep : 0);
+        }
+    }
+    // review r369 F2: the zip's "downloaded from the internet" mark (Mark of the Web) goes onto every file unpacked, so
+    // Windows and Office treat them as the zip itself is treated (no mark on the zip: none added)
+    std::string zone;
+    read_file(zipPath + ":Zone.Identifier", zone, 4096);
     uint64_t total = 0;
     for (const ZipEntry &e : plan.files) {
         const std::string out = folder + "\\" + e.rel;
@@ -417,16 +474,17 @@ bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, 
         if (cut > folder.size()) make_dirs(out.substr(0, cut));
         FILE *f = _wfopen(widen(out).c_str(), L"wb");
         if (!f) { err = "Couldn't write " + e.rel + " (is the disk full?)."; return false; }
-        UnpackSink s{f, &total};
+        UnpackSink s{f, &total, limit};
         bool ok = mz_zip_reader_extract_to_callback(&zr.z, e.index, unpack_cb, &s, 0) != 0;
         ok = fclose(f) == 0 && ok;
         if (!ok) {
             DeleteFileW(widen(out).c_str());   // no half-written file left
-            err = s.over ? "The zip unpacks to more than 8 GB - not added."
+            err = s.over ? (limit < kUnpackMaxBytes ? "There isn't enough free disk space for this mod - not added." : "The zip unpacks to more than 8 GB - not added.")
                 : s.writeFailed ? "Couldn't write " + e.rel + " (is the disk full?)."
                                 : "Couldn't unpack " + e.rel + " (the zip is damaged).";
             return false;
         }
+        if (!zone.empty()) write_file_plain(out + ":Zone.Identifier", zone);
     }
     return true;
 }
@@ -449,6 +507,7 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err, s
     while (!name.empty() && (name[0] == '.' || name[0] == ' ')) name.erase(0, 1);   // a name starting with '.' is hidden from the list
     if (name.size() >= 8 && lower(name.substr(name.size() - 8)) == ".partial") name += " mod";   // ... and so is "<name>.partial"
     if (name.empty()) name = "mod";
+    if (mod_file_is_device_name(name)) name += " mod";   // review r369 F8: CON, NUL ... are devices, not folders
     std::string dest = join(mods_dir(g), name);
     // 0.6.1: 0.6.0 installed an EMPTY folder for a zip mod (review C1); RemoveDirectoryW only removes an empty one, so
     // that leftover no longer blocks adding the zip again and a real mod of the same name is still refused.

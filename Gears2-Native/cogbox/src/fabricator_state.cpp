@@ -463,11 +463,11 @@ void fab_state_poll(App &a)
             j->name = j->info.name;
             FabInstallItem item;
             item.name = j->info.name; item.version = j->info.version; item.sha256 = j->sha256;
-            std::string match;
+            std::string match, oldAuthor;
             for (const ModItem &m : mods_list(a, g)) {
                 if (!m.fab) continue;
                 auto r = fab_read_record(m.path);
-                if (r && fab_same_install(*r, item)) { match = m.folder; j->old_version = r->version; break; }
+                if (r && fab_same_install(*r, item)) { match = m.folder; j->old_version = r->version; oldAuthor = m.author; break; }
             }
             if (!j->update_folder.empty() && match != j->update_folder) {
                 fail_ui(a, *j, trf("This zip is {1}, not the mod you chose to update. Add it with Add a mod instead.", { j->name }));
@@ -477,7 +477,15 @@ void fab_state_poll(App &a)
             if (match.empty()) { j->phase = FabJob::Waiting; continue; }
             const std::string from = j->old_version.empty() ? "" : " " + j->old_version, to = j->info.version.empty() ? "" : " to " + j->info.version;
             // "Update Horde Bank 1.0 to 1.1?" - the name and versions as the mod gives them (not translated)
-            ask(a, "fabupdate", g, "Update a mod", tr("Update") + std::string(" ") + j->name + from + to + "?\n\n" +
+            // review r369 F9: a mod is told apart by its Name only (until Nexus ids), so the question shows which file and
+            // author the new version comes from, and says so when the author isn't the installed one's
+            const std::string zipName = narrow(std::filesystem::path(widen(j->zip)).filename().wstring());
+            const std::string newAuthor = j->info.author;
+            std::string who = "\n\n" + trf("From: {1}", { zipName }) + (newAuthor.empty() ? "" : " - " + trf("by {1}", { newAuthor }));
+            if (!oldAuthor.empty() && lower_s(newAuthor) != lower_s(oldAuthor))
+                who += "\n" + trf("Careful: the installed {1} is by {2}, this one by {3}. Only update if you trust this file.",
+                                   { j->name, oldAuthor, newAuthor.empty() ? tr("nobody named") : newAuthor });
+            ask(a, "fabupdate", g, "Update a mod", tr("Update") + std::string(" ") + j->name + from + to + "?" + who + "\n\n" +
                 tr("The installed version is kept as a backup in the mods folder. The mod keeps its place in the order, and stays on or off as it is now."),
                 { "Update", "Cancel" }, std::to_string(j->id));
             j->phase = FabJob::Asking;

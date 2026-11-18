@@ -247,6 +247,7 @@ bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, 
 void mods_store(App &a, int game, const std::vector<ModItem> &v);   // the order and on/off state, as listed
 void mods_turn_on_last(App &a, int game, const std::string &folder);   // a new mod: on, last in the order
 void mods_remove_tree(const std::wstring &dir);   // only a folder COGBox made itself (a .partial unpacking, a backup)
+// (real_path / is_plain_child, review r369 F1: util.h)
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);
 // play.cpp

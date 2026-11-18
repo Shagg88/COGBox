@@ -585,7 +585,7 @@ std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, s
       // texture caches, movies), which go where the game keeps them (ue3/mod_extras.h)
       const std::string key = ue3::ModGameKey(rel, bundle_rel);
       if (key.empty()) continue;
-      const std::string ext = ModLower(it->path().extension().string());
+      const std::string ext = ModLower(rex::path_to_utf8(it->path().extension()));   // review r369 F5: string() throws on a name outside the code page
       if (ext == ".xex" || ext == ".xexp" || ext == ".dll" || ext == ".exe") {
         REXLOG_WARN("ue3_mods: {}: programs are not taken from mods - skipped", rex::path_to_utf8(it->path()));
         continue;

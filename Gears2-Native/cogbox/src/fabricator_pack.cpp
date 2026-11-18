@@ -51,15 +51,20 @@ struct Listing {
 // OneDrive placeholders, are ordinary files and folders).
 void list_entries(const std::string &root, const std::string &rel, Listing &L, size_t maxFiles)
 {
+    const std::string here = rel.empty() ? root : join(root, rel);
+    // review r369 F1: an entry whose real path isn't <this folder>\<name> is a link to somewhere else - also a Wine Unix
+    // symlink, which has no reparse-point attribute - and is listed as a link (never packed or copied)
+    const std::wstring realHere = real_path(widen(here));
     WIN32_FIND_DATAW fd;
-    HANDLE f = FindFirstFileW(widen(join(rel.empty() ? root : join(root, rel), "*")).c_str(), &fd);
-    if (f == INVALID_HANDLE_VALUE) { L.unreadable.push_back(rel.empty() ? "(the folder)" : rel); return; }
+    HANDLE f = FindFirstFileW(widen(join(here, "*")).c_str(), &fd);
+    if (f == INVALID_HANDLE_VALUE || realHere.empty()) { if (f != INVALID_HANDLE_VALUE) FindClose(f); L.unreadable.push_back(rel.empty() ? "(the folder)" : rel); return; }
     do {
         const std::string n = narrow(fd.cFileName);
         if (n == "." || n == ".." || skipped_name(n)) continue;
         const std::string r = rel.empty() ? n : rel + "\\" + n;
         if ((fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
             (fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT)) { L.links.push_back(r); continue; }
+        if (!is_plain_child(realHere, widen(join(here, n)), fd.cFileName)) { L.links.push_back(r); continue; }
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             L.entries.push_back({ r, 0, true });
             list_entries(root, r, L, maxFiles);

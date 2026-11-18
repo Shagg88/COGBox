@@ -433,3 +433,30 @@ bool any_game_exe_running()   // review r369 (util.h)
     checked_at.store(now ? now : 1, std::memory_order_release);
     return found;
 }
+
+// ---- review r369 F1 (util.h) ----
+// The real path of a file or folder (links followed; "" when it can't be opened). Review r369 F1: Wine shows a Unix
+// symlink as a plain folder (no reparse-point attribute), so the attribute alone can't tell a link; the real path can.
+std::wstring real_path(const std::wstring &p)
+{
+    HANDLE h = CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                           OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return L"";
+    std::wstring out(1024, L'\0');
+    DWORD n = GetFinalPathNameByHandleW(h, &out[0], (DWORD)out.size(), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (n >= out.size()) { out.resize(n + 1); n = GetFinalPathNameByHandleW(h, &out[0], (DWORD)out.size(), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS); }
+    CloseHandle(h);
+    if (n == 0 || n >= out.size()) return L"";
+    out.resize(n);
+    return out;
+}
+static bool same_path_u(const std::wstring &a, const std::wstring &b)
+{
+    return !a.empty() && CompareStringOrdinal(a.c_str(), (int)a.size(), b.c_str(), (int)b.size(), TRUE) == CSTR_EQUAL;
+}
+// dir's real path is real_parent\name: a folder in its place, not a link to somewhere else
+bool is_plain_child(const std::wstring &real_parent, const std::wstring &child_path, const std::wstring &name)
+{
+    return same_path_u(real_path(child_path), real_parent + L"\\" + name);
+}
+

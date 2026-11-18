@@ -18,6 +18,12 @@ const std::vector<std::string> &mod_file_program_exts()
         // ... and the other archives and disk images a program could hide in
         "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "lz", "lzma", "zst", "arj", "lzh", "ace", "iso", "img", "vhd",
         "vhdx", "wim", "dmg",
+        // review r369 F2 (security audit): documents that carry macros or code, themes, remote-desktop and web files,
+        // Python, databases, certificates, Excel web queries, and Linux launchers (for Wine / Proton players)
+        "docm", "dotm", "xlsm", "xltm", "xlam", "pptm", "potm", "ppam", "ppsm", "sldm", "doc", "dot", "xls", "xlt", "ppt",
+        "pot", "pps", "one", "theme", "themepack", "deskthemepack", "msstyles", "rdp", "py", "pyw", "pyz", "pyc", "htm",
+        "html", "xhtml", "mht", "mhtml", "svg", "mdb", "accde", "accdb", "adp", "cer", "crt", "der", "p7b", "iqy", "slk",
+        "desktop", "sh",
     };
     return exts;
 }
