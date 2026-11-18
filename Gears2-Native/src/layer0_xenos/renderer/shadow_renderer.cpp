@@ -14773,6 +14773,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     stats_.pipelines_recorded, pipeline_list_ ? pipeline_list_->Errors() : 0,
                     bs.pipelines_promoted - b0.pipelines_promoted);
       }
+      {  // 0.6.5: Vulkan pipeline libraries (the counts were kept since 0.6.2 but never logged); when they change
+        static std::string last_gpl_report;  // (one renderer per process)
+        std::string gpl = backend_->PipelineLibraryReport();
+        if (!gpl.empty() && gpl != "pipeline libraries: off" && gpl != last_gpl_report) {
+          REXLOG_INFO("gow2_renderer: frames {}-{}: {}", frame_ - uint64_t(log_every_) + 1, frame_, gpl);
+          last_gpl_report = std::move(gpl);
+        }
+      }
       if (prebuild_on_ && (pb_.prebuild_offered != prebuild_logged_offered_ ||
                            pb_.new_ps_pipelines != prebuild_logged_new_ps_)) {  // patch 0068
         REXLOG_INFO("gow2_renderer: frames {}-{}: shader prebuild (patch 0068): {} pixel shaders from opened packages, {} "
