@@ -851,7 +851,7 @@ class VulkanBackend final : public Backend {
   uint64_t PipelineJobsLeft() override {
     std::lock_guard<std::mutex> lock(job_mutex_);
     // 0.6.5: background whole builds for the pipeline cache are not counted (no draw or load hold waits for them).
-    const uint64_t all = jobs_.size() + backlog_jobs_.size() + jobs_busy_;
+    const uint64_t all = jobs_.size() + backlog_jobs_.size() + fill_jobs_.size() + jobs_busy_;  // (review r5555)
     return all > fills_left_ ? all - fills_left_ : 0;
   }
   void SetPipelineBacklog(bool on) override { pipeline_backlog_ = on; }  // patch 0076
@@ -3993,8 +3993,8 @@ class VulkanBackend final : public Backend {
   std::vector<std::thread> workers_;
   std::deque<PipelineJob> jobs_;
   uint64_t fills_left_ = 0;  // 0.6.5: cache-fill jobs queued or running (under job_mutex_)
-  std::deque<PipelineJob> backlog_jobs_;
-  std::deque<PipelineJob> fill_jobs_;  // 0.6.5: whole builds for the pipeline cache (after links), last of all  // patch 0076: start-up backlog / guessed pipelines, after live requests
+  std::deque<PipelineJob> backlog_jobs_;  // patch 0076: start-up backlog / guessed pipelines, after live requests
+  std::deque<PipelineJob> fill_jobs_;  // 0.6.5: whole builds for the pipeline cache (after links), last of all
   bool pipeline_backlog_ = false;
   // 0.6.1: the game's occlusion queries (see BeginOcclusionQuery).
   static constexpr uint32_t kGqBlock = 256, kGqBlocks = 128, kGqMaxParts = 256;
