@@ -110,7 +110,7 @@ static std::string to_backup(int g, const std::string &folder_in)
                 return "Couldn't put the backup of \"" + folder + "\" back (is a file in it open?).";
         } else {               // a crash after the move: the superseded backup
             mods_remove_tree(widen(old));
-            if (present(old)) return "Couldn't remove an old backup of \"" + folder + "\" (is a file in it open?).";
+            if (present(old)) return "Couldn't remove an old backup of \"" + folder + "\" (is a file in it open, or a link in it?) - remove the folder \".fabricator-backup\\.old-" + folder + "\" yourself.";
         }
     }
     const bool hadOld = present(bak);

@@ -355,7 +355,34 @@ void mods_remove_tree(const std::wstring &dir)
             FindClose(f);
         }
     }
-    if (!only_marker_left(dir)) return;   // something else is still there: the claim stays, for another try
+    if (!only_marker_left(dir)) {
+        // files the player added or changed after the install (r369 audit, round 3): on Windows the link-proof walk takes
+        // them too; under Wine (where a link the player added might not show as one) the folder is put aside as a hidden
+        // .trash-<token> beside it instead, so updates go on and nothing is followed
+        if (!running_under_wine()) {
+            const std::wstring real = real_path(dir);
+            if (!real.empty()) {
+                WIN32_FIND_DATAW fd;
+                HANDLE f = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+                if (f != INVALID_HANDLE_VALUE) {
+                    do {
+                        const std::wstring n = fd.cFileName;
+                        if (n == L"." || n == L".." || n == L".cogbox-owned") continue;
+                        const std::wstring p = dir + L"\\" + n;
+                        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) || !is_plain_child(real, p, n)) continue;
+                        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { remove_tree_in(p, real + L"\\" + n); RemoveDirectoryW(p.c_str()); }
+                        else { SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL); DeleteFileW(p.c_str()); }
+                    } while (FindNextFileW(f, &fd));
+                    FindClose(f);
+                }
+            }
+        } else {
+            const size_t cut = dir.find_last_of(L"\\/");
+            if (cut != std::wstring::npos) MoveFileExW(dir.c_str(), (dir.substr(0, cut + 1) + L".trash-" + widen(tok)).c_str(), 0);
+            return;   // the claim stays with the moved folder (its identity is unchanged)
+        }
+        if (!only_marker_left(dir)) return;   // still something (a file in use): the claim stays, for another try
+    }
     DeleteFileW((dir + L"\\.cogbox-owned").c_str());
     if (RemoveDirectoryW(dir.c_str())) dir_disown_token(tok);
 }
