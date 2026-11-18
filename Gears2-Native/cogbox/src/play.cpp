@@ -373,7 +373,15 @@ void play_start(App &a, int g, bool prepare)
     }
     a.env[g].log_dir = logDir;
     std::vector<std::string> notes;
-    std::vector<std::string> args = gs::build_args(G, ver, a.cur[g], a.env[g], &notes);
+    // A "Prepare all shaders" run never goes online (Shagg): building shaders needs no network, and signed in as the
+    // profile it was a second copy of the player on the COGBox server for minutes - no --net_online,
+    // --net_live_emulation, --net_master_server or --net_identity_dir for it.
+    gs::Environment runEnv = a.env[g];
+    if (prepare) {
+        runEnv.online_server.clear();
+        runEnv.identity_dir.clear();
+    }
+    std::vector<std::string> args = gs::build_args(G, ver, a.cur[g], runEnv, &notes);
     std::string shared = join(exe_dir(), "shared");
     bool useShared = dir_exists(shared);
     if (useShared) args.push_back("--gow2_dxc_dir=\"" + shared + "\"");

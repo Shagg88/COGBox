@@ -127,7 +127,19 @@ struct SceneCopyPicker {
   // when it learned on a frame that only had the mid-frame copy (a menu, a transition, match start).
   static constexpr uint32_t kFormatPatience = 60;
   uint32_t format = 0, other_frames = 0;
-  bool Take(uint32_t copy_format = 0) {
+  // anchored (Judgment): the scene copy comes after an anchor pass (the fog pass). Judgment adds a mid-frame scene copy
+  // before its fog pass on some frames only (what is visible decides); counted, it moved the taken copy to before the
+  // fog - the AO that goes in at the fog pass was then left out of that frame (a one-frame flash) and the upscalers got
+  // the scene without its last passes. Once a frame has drawn the anchor with a copy after it, copies before the anchor
+  // are neither taken nor counted. A frame without the anchor takes no copy (whether one comes later can't be known at
+  // the copy); after kNoAnchorFrames such frames in a row (a pause or menu over the world) it lets go, as it does after
+  // kAnchorPatience frames that draw the anchor with no copy after it, and every copy counts again. The count starts
+  // over at each switch, so the two ways of counting never mix.
+  bool anchored = false;
+  static constexpr uint32_t kAnchorPatience = 60, kNoAnchorFrames = 2;
+  bool Take(uint32_t copy_format = 0, bool after_anchor = true) {
+    if (anchored && after_anchor) ++after_anchor_copies_;
+    if (anchored && anchor_active_ && !after_anchor) return false;
     if (last_only && copy_format) frame_last_ = copy_format;   // the frame's last copy of any format
     if (last_only && format && copy_format && copy_format != format) return false;
     const uint32_t index = count++;
@@ -139,7 +151,7 @@ struct SceneCopyPicker {
     }
     return !last_only || last_count == 0 || index + 1 >= last_count;
   }
-  void EndFrame() {
+  void EndFrame(bool anchor_seen = true) {
     bool relearn = false;
     if (last_only && format && frame_last_) {   // a frame with no copies at all says nothing
       if (frame_last_ != format) relearn = ++other_frames >= kFormatPatience;
@@ -158,6 +170,17 @@ struct SceneCopyPicker {
           if (formats_[i] == format) last_count = format_counts_[i];
       }
     }
+    if (anchored) {
+      const bool good = anchor_seen && after_anchor_copies_;
+      frames_without_anchor_ = good ? 0 : frames_without_anchor_ + 1;   // no copy after the anchor
+      frames_no_anchor_ = anchor_seen ? 0 : frames_no_anchor_ + 1;      // no anchor at all
+      const bool active = frames_without_anchor_ < kAnchorPatience && frames_no_anchor_ < kNoAnchorFrames;
+      if (active != anchor_active_) {
+        anchor_active_ = active;
+        last_count = 0;   // learnt again in the new way of counting
+      }
+    }
+    after_anchor_copies_ = 0;
     count = 0;
     frame_last_ = 0;
     n_formats_ = 0;
@@ -167,6 +190,8 @@ struct SceneCopyPicker {
  private:
   static constexpr uint32_t kMaxFormats = 16;   // distinct formats in one frame (a frame has two in practice)
   uint32_t frame_last_ = 0, n_formats_ = 0;
+  bool anchor_active_ = false;
+  uint32_t frames_without_anchor_ = kAnchorPatience, frames_no_anchor_ = 0, after_anchor_copies_ = 0;
   uint32_t formats_[kMaxFormats] = {}, format_counts_[kMaxFormats] = {};
 };
 
