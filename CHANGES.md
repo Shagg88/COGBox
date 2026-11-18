@@ -114,6 +114,11 @@
   instead.
 
 ### Fixes
+- **Judgment: English voices with another language's text** (GitHub #367): the Voice language setting did nothing in
+  Judgment - every localised package kept its own language, because COGBox could not read the newer package format
+  Judgment uses (version 846; Gears 2 and 3 are older). It now reads it, so a package whose English twin has all its
+  objects gives the English voices, as in Gears 2 and 3. Checked on Judgment's English packages; not yet played with
+  another language's text.
 - Kernel fixes from the Xenia Canary / Edge comparison (timers, semaphores, a read/write lock, XMA): none of our four games
   was seen to use the changed paths, so no change is expected in play.
 

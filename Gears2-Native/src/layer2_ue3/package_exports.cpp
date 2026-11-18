@@ -141,7 +141,10 @@ bool ReadPackageExportPathsPlain(const PackageRead& read, uint64_t file_size, st
   Cursor s{head.data(), head.size()};
   if (s.U32() != kTag) return false;
   const uint32_t version = s.U32() & 0xFFFF;   // a package compressed as a whole has 0x20000 (or the tag) here
-  if (version < 543 || version >= 835) return false;   // 575 Gears 2, 828 Gears 3: no ComponentMap, no extra int
+  // 575 Gears 2, 828 Gears 3: no ComponentMap, no extra int. 0.6.5 (GitHub #367): Judgment's 846 has the same summary,
+  // name and export layout (checked on its GearGame_LOC_INT / Startup_LOC_INT: 16 / 17 exports read); other versions
+  // past 834 stay refused.
+  if (version < 543 || (version >= 835 && version != 846)) return false;
   s.Skip(4);                                           // header size
   s.FString();                                         // folder
   s.Skip(4);                                           // package flags

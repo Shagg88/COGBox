@@ -197,6 +197,25 @@ TEST_CASE("Package exports: a package compressed as a whole (Judgment's form)", 
   REQUIRE(paths == kPaths);
 }
 
+TEST_CASE("Package exports: Judgment's version 846, compressed as a whole (GitHub #367)", "[package-exports]") {
+  // Judgment's packages are version 846 with Gears 3's summary layout (its GearGame_LOC_INT / Startup_LOC_INT checked);
+  // 0.6.4 refused every version past 834, so the English voice swap kept every package's own language.
+  const auto plain = Uncompressed(846);
+  const auto block = FramedStored(plain);
+  std::vector<uint8_t> f;
+  U32(f, 0x9E2A83C1u);
+  U32(f, 0x20000);
+  U32(f, uint32_t(block.size()));
+  U32(f, uint32_t(plain.size()));
+  U32(f, uint32_t(block.size()));
+  U32(f, uint32_t(plain.size()));
+  f.insert(f.end(), block.begin(), block.end());
+  std::set<std::string> paths;
+  REQUIRE(Paths(f, &paths));
+  REQUIRE(paths == kPaths);
+  REQUIRE_FALSE(Paths(Uncompressed(845), &paths));   // a version not checked stays refused
+}
+
 TEST_CASE("Package exports: what it refuses", "[package-exports]") {
   std::set<std::string> paths;
   auto f = Uncompressed();
