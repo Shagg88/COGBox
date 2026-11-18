@@ -34,7 +34,7 @@ What you need
 
 Getting started
 ---------------
-1. Right-click COGBox-0.6.4.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
+1. Right-click COGBox-0.6.5.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
    7-zip.org) to a folder of its own that you can write to, for example C:\Games\COGBox. Don't start
    COGBox from inside the archive, and don't use Program Files (Windows protects it) - COGBox tells
    you on start-up if it's in such a place.
