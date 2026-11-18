@@ -194,6 +194,7 @@ class ShaderCache {
   // Exact Gears 2 scene / Canvas profile, a DXBC twin for float HDR composition.
   // Does not replace the guest's normal shader or change its constant layout.
   gpu::ShaderHandle GetNativeHdr(uint64_t hash, const uint32_t* dwords, size_t count, bool canvas_material = false);
+  const GuestShader* FindNativeOverlay(uint64_t hash, native_hdr::OverlayMode mode) const;
   const GuestShader& GetNativeOverlay(uint64_t hash, const uint32_t* dwords, size_t count,
                                       native_hdr::OverlayMode mode, bool warm = false);
   void SetPrepareNativeUi(bool on) { prepare_native_ui_ = on; }

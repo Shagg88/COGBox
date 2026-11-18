@@ -1899,8 +1899,11 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     }
     if(prepare_native_ui_ && !it.is_vertex &&
         (native_hdr::FindUi(it.hash) || it.hash == 0xB695005CAD57407Eull ||
-         it.hash == 0xE25008255E17EA26ull) && it.hash!=native_hdr::kSceneUi)
+         it.hash == 0xE25008255E17EA26ull ||
+         native_hdr::IsJudgmentAdditiveUi(it.hash)) && it.hash!=native_hdr::kSceneUi)
       GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kUi,true);
+    if (prepare_native_ui_ && !it.is_vertex && it.hash == native_hdr::kGears2Modulation)
+      GetNativeOverlay(it.hash, it.dwords.data(), it.dwords.size(), native_hdr::OverlayMode::kModulation, true);
     if(prepare_native_effects_ && !it.is_vertex && native_hdr::FindSceneEffect(it.hash)) {
       GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kFilterLinear,true);
       GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kFilterPremultiplied,true);
@@ -2090,6 +2093,13 @@ gpu::ShaderHandle ShaderCache::GetJudgmentFxaaPair(uint64_t hash,const uint32_t*
   judgment_fxaa_pairs_[hash]=shader;
   REXLOG_INFO("gow2_native_hdr: Judgment paired FXAA {:016X}: {}",hash,shader?"ready":"FAILED (replay fallback)");
   return shader;
+}
+
+const GuestShader* ShaderCache::FindNativeOverlay(uint64_t hash, native_hdr::OverlayMode mode) const {
+  const auto variants = native_hdr_overlays_.find(hash);
+  if (variants == native_hdr_overlays_.end()) return nullptr;
+  const auto shader = variants->second.find(uint8_t(mode));
+  return shader == variants->second.end() ? nullptr : shader->second.get();
 }
 
 const GuestShader& ShaderCache::GetNativeOverlay(uint64_t hash,const uint32_t* dwords,size_t count,

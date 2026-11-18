@@ -251,6 +251,8 @@ struct XenosRendererHints {
   bool native_hdr_fxaa = false;
   // Gears 1: captured post-grade motion blur consumes an encoded FP16 scene.
   bool native_hdr_motion_blur = false;
+  // Gears 3: replay the captured late scene blend with automatic HDR UI enabled.
+  bool native_hdr_scene_blend = false;
 };
 void XenosInstallRendererIfRequested(rex::Runtime* runtime, const XenosRendererHints& hints = {});
 // --gow2_pm4_shadow=N (Stage 5B, notes/49): our own PM4 processor runs on every ring range (SDK patch 20) and the GPU
