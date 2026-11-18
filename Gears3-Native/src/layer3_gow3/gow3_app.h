@@ -120,10 +120,17 @@ class Gow3App : public rex::ReXApp {
     //    per frame into the scene depth AFTER the scene colour resolve that runs the upscaler (later lighting passes);
     //    unjittered, whole character triangles lost their lighting under DLSS / FSR. Jittered, the frames are clean.
     game_default("gow2_upscale_jitter_late", "true");
+    // The scene copy is the first 10:10:10:2 UNORM copy (guest format 2) after the camera: the finished scene. The
+    // float scene's mid-frame copies (format 10, for translucency) came first, ~170 lighting passes before the end
+    // (chapter 8's cutscenes); upscaled there, those passes ran at the output scale in Quality / Ultra Performance
+    // against a resampled scene depth and failed their depth-equal test (firelit shadows switching on and off).
+    game_default("gow2_upscale_scene_guest_formats", "2");
     // At Gears 3's scene copy the scene depth is already overwritten in places (chapter 1: all far plane), so the
     // upscaler takes it from the frame's last scene-depth copy before it instead (as Judgment does).
     game_default("gow2_upscale_depth_at_resolve", "true");
     game_default("gow2_upscale_depth_last_copy", "true");   // the last of its two scene-depth copies
+    // Chapter 1's planar reflection (a mirrored camera, determinant < 0) is never the camera; the real one is > 0.
+    game_default("gow2_upscale_camera_handedness", "1");
     //  - XeGTAO (Gears 2 notes/80 s.9, with --gow2_ao=gtao): some Gears 3 levels draw Gears 2's real-time AO chain
     //    (half-res 16_16_FLOAT, ch12) - XeGTAO replaces it at Gears 2's strength; most bake their AO into the lightmaps
     //    and draw none (ch8) - there XeGTAO is added just before the fog pass (this pixel shader, the anchor of
