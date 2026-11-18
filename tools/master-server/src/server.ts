@@ -91,10 +91,10 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
     };
   });
 
+  // Register API routes
+  await server.register(authRoutes, { prefix: '/api/v1/auth', db });
   // Who is connected (launcher and game per account): signaling, presence and the friends API share it.
   const registry = new Registry(opts.now ?? Date.now);
-  // Register API routes
-  await server.register(authRoutes, { prefix: '/api/v1/auth', db, onDeleted: (uuid: string) => registry.forgetMet(uuid) });
   // Every signed-in request marks its account as seen (the launcher's 5 s poll keeps it "Online - In Launcher").
   server.addHook('onRequest', async (request) => {
     if (!request.headers.authorization) return;

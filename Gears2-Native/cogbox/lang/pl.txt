@@ -1598,8 +1598,8 @@ Gears 3 and Judgment: also a System Link or online game you host - please keep i
 Achievements and saves are your own business. = Osiągnięcia i zapisy to twoja sprawa.
 # GitHub #353: recent players (machine-made; corrections welcome)
 RECENT PLAYERS = OSTATNI GRACZE
-Played with you recently = Niedawno graliście razem
-Played {1} with you recently = Niedawno graliście razem w {1}
+Played with you recently = Grał z tobą niedawno
+Played {1} with you recently = Grał z tobą niedawno w {1}
 Send a friend request. = Wyślij zaproszenie do znajomych.
 At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution. = Przy tej rozdzielczości renderowania (3x) Wydajność zostawia scenę w pełnym rozmiarze, więc upscaler tylko wygładza krawędzie (bez dodatkowych klatek). Wybierz Jakość lub Ultra wydajność albo rozdzielczość renderowania 2x.
 At this render resolution Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution. = Przy tej rozdzielczości renderowania Wydajność zostawia scenę w pełnym rozmiarze, więc upscaler tylko wygładza krawędzie (bez dodatkowych klatek). Wydajność wymaga rozdzielczości renderowania 2x lub 4x.

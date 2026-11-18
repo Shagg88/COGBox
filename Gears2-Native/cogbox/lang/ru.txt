@@ -1605,8 +1605,8 @@ Gears 3 and Judgment: also a System Link or online game you host - please keep i
 Achievements and saves are your own business. = Достижения и сохранения - ваше дело.
 # GitHub #353: recent players (machine-made; corrections welcome)
 RECENT PLAYERS = НЕДАВНИЕ ИГРОКИ
-Played with you recently = Недавно играли вместе
-Played {1} with you recently = Недавно играли вместе в {1}
+Played with you recently = Недавно играл с вами
+Played {1} with you recently = Недавно играл с вами в {1}
 Send a friend request. = Отправить заявку в друзья.
 At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution. = При этом разрешении рендеринга (3x) режим «Производительность» оставляет сцену в полном размере, и апскейлер только сглаживает (без лишних кадров). Выберите «Качество» или «Ультрапроизводительность» либо разрешение рендеринга 2x.
 At this render resolution Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution. = При этом разрешении рендеринга режим «Производительность» оставляет сцену в полном размере, и апскейлер только сглаживает (без лишних кадров). Для «Производительности» нужно разрешение рендеринга 2x или 4x.

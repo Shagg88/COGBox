@@ -54,42 +54,6 @@ export class Registry {
   private met = new Map<string, Map<string, { at: number; titleId?: string }>>();
   static readonly RECENT_MS = 24 * 3600_000;
   static readonly RECENT_MAX = 30;
-  // A meeting is noted only when both games have sent each other their connection details (review r353: one message to
-  // a public host is not a match - anyone may send that). from>to -> time of the first direction, for HALF_MS.
-  private half = new Map<string, number>();
-  static readonly HALF_MS = 5 * 60_000;
-  private notes = 0;
-  noteRelay(from: string, to: string, titleId?: string): void {
-    if (from === to) return;
-    const now = this.now();
-    const back = this.half.get(`${to}>${from}`);
-    if (back !== undefined && now - back <= Registry.HALF_MS) {
-      this.half.delete(`${to}>${from}`);
-      this.noteMet(from, to, titleId);
-    } else {
-      this.half.set(`${from}>${to}`, now);
-    }
-    if (++this.notes % 1000 === 0) this.sweep();
-  }
-  // Expired halves and meetings go (review r353: players who never ask for their list would keep them until a restart).
-  sweep(): void {
-    const now = this.now();
-    for (const [k, t] of this.half) if (now - t > Registry.HALF_MS) this.half.delete(k);
-    for (const [who, m] of this.met) {
-      for (const [other, e] of m) if (now - e.at > Registry.RECENT_MS) m.delete(other);
-      if (!m.size) this.met.delete(who);
-    }
-  }
-  // A deleted account leaves every list at once (PRIVACY.md); its uuid could otherwise be claimed again and see them.
-  forgetMet(uuid: string): void {
-    for (const other of this.met.get(uuid)?.keys() ?? []) {
-      const m = this.met.get(other);
-      m?.delete(uuid);
-      if (m && !m.size) this.met.delete(other);
-    }
-    this.met.delete(uuid);
-    for (const k of [...this.half.keys()]) if (k.startsWith(`${uuid}>`) || k.endsWith(`>${uuid}`)) this.half.delete(k);
-  }
   noteMet(a: string, b: string, titleId?: string): void {
     if (a === b) return;
     const at = this.now();

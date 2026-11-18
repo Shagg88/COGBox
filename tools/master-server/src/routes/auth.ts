@@ -27,7 +27,7 @@ function pickDiscriminator(db: DatabaseInstance, name: string, exceptUuid = ''):
   return '';
 }
 
-export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onDeleted?: (uuid: string) => void }> = async (fastify, opts) => {
+export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance }> = async (fastify, opts) => {
   const { db } = opts;
 
   // Rename keeps the account (uuid, XUID, token); the discriminator stays unless another account already has the new
@@ -82,7 +82,6 @@ export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onDeleted?: 
       db.prepare('DELETE FROM users WHERE uuid = ?').run(me.uuid);
     })();
     forgetAuth(db, me.uuid);
-    opts.onDeleted?.(me.uuid);   // #353: out of every Recent players list at once
     return reply.send({ deleted: true });
   });
 

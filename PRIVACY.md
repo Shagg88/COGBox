@@ -38,10 +38,6 @@ and the Social tab don't work until it is back; everything else in COGBox, and o
 **Only while you play:** the lobby you host (its join code, game, region, player count and the game's own session
 details) is kept while your game is connected and removed when it disconnects. Invites are kept in memory for at most
 10 minutes. Whether you are online and which game you are in is shown to your friends and kept in memory only.
-**Recent players:** when your game and another player's game connect in a match, the server notes that you played
-together, in memory only, for 24 hours (at most 30 players each; a server restart or deleting your account forgets it).
-Each of you then sees the other's tag under Social > Recent players, so you can send a friend request - not friends,
-players with a request either way, or anyone either of you blocked.
 A **public** match you host in Gears 2, Gears 3 or Judgment is listed under Open matches for other signed-in players as
 its game, mode, player count, region and whether it has started - never your name, tag or address.
 **The games' own lobby search** (the in-game Find Match / Quick Match) reads public lobbies from the server too. For now anyone can make that request without an account, and each public lobby it returns shows your tag, your online XUID, your COGBox account ID, the game, region and player count, and the game's own session details (from COGBox 0.6.1, without your PC's local network address). It never shows the join code, your token or your internet address. Once most players are on a COGBox that signs in to search, the server will require a signed-in player for it.

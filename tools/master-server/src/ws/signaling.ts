@@ -70,7 +70,7 @@ export const signalingRoutes: FastifyPluginAsync<SignalingPluginOptions> = async
       if (target && target.readyState === WebSocket.OPEN) {
         registry.addContact(user.uuid, target_uuid as string);
         // GitHub #353: two games exchanging connection details = two players in one match (Social "Recent players")
-        if (met) registry.noteRelay(user.uuid, target_uuid as string, registry.game(user.uuid)?.titleId);
+        if (met) registry.noteMet(user.uuid, target_uuid as string, registry.game(user.uuid)?.titleId);
         target.send(JSON.stringify({ ...message, from_uuid: user.uuid, from_xuid: user.xuid }));
       } else {
         socket.send(JSON.stringify({ type: errorType, target_uuid, error: 'Target peer is offline or not found' }));
