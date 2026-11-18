@@ -111,6 +111,6 @@ extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
   Ue3ConsoleRunQueued(ctx, base);
   GowjAdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   GowjFirstPersonTick();        // --gowj_first_person (first_person.cpp; off: one flag test)
-  // GitHub #353: COGBox tags after the players' names, in the name's own colour (the kill feed shows <font> as text)
-  Ue3NameTagsTick(&GowjObjectsReady, Ue3NameTagStyle{});
+  // GitHub #353: COGBox tags after the players' names, grey (Judgment's Flash text fields render <font>, as Gears 3's)
+  Ue3NameTagsTick(&GowjObjectsReady, Ue3NameTagStyle{"<font color='#808080'>", "</font>"});
 }
