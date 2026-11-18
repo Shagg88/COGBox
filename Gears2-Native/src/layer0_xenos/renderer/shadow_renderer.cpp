@@ -14497,7 +14497,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const xenos::dxbc_gen::RuleHits rh = xenos::dxbc_gen::CanaryRuleHits();  // patch 0087
       REXLOG_INFO("gow2_renderer: DXBC back end: {} shaders made as DXBC so far ({:.1f} ms translating in all), {} left "
                   "to the HLSL path | {} draws in these frames paired DXBC with DXIL, {} drawn with a DXIL twin of the vertex "
-                  "shader | newer Canary rules (patch 0087), shaders changed: tfetch1D XY {}, mulsc toward zero {}, float16 "
+                  "shader | newer Canary rules (patch 0087), shaders translated this run (not read from the DXBC store) changed: tfetch1D XY {}, mulsc toward zero {}, float16 "
                   "export NaN {}",
                   cs.dxbc, cs.translate_ms, cs.dxbc_fallbacks, stats_.dxbc_mixed, stats_.dxil_twins, rh.tfetch1d_xy,
                   rh.mulsc_round_toward_zero, rh.memexport_f16_nan_zero);

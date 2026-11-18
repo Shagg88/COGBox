@@ -1205,7 +1205,7 @@ bool DxbcStoreGet(uint64_t key, dxbc_gen::DxbcTranslation& dt) {
   return true;
 }
 void DxbcStorePut(uint64_t key, const dxbc_gen::DxbcTranslation& dt) {
-  if (!dt.ok || dt.bytecode.empty()) return;  // only good translations (a failure takes the HLSL path each time)
+  if (!dt.ok || dt.bytecode.empty() || dt.bytecode.size() > (32u << 20)) return;  // only good translations (a failure takes the HLSL path each time)
   {
     std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
     if (g_dxbc_store.path.empty() || g_dxbc_store.index.count(key)) return;
@@ -1242,7 +1242,6 @@ uint64_t ExecutableIdentity() {
   if (ec) return 0;
   k.u64(size);
   k.u64(uint64_t(when.time_since_epoch().count()));
-  k.str(exe.filename().string());
   return k.h | 1;  // never 0 (0 = unknown: no store)
 #else
   return 0;
@@ -1294,14 +1293,23 @@ void ShaderCache::SetDxbcStore(const std::filesystem::path& dir) {
     if (size && !other_build) fs::rename(p, dir / "dxbc-store.unreadable.bin", ec);
     g_dxbc_store.index.clear();
     std::ofstream f(p, std::ios::binary | std::ios::trunc);
-    if (!f.write(kDxbcMagic, 8) || !f.write(reinterpret_cast<const char*>(&g_dxbc_store.build), 8)) return;
+    if (!f.write(kDxbcMagic, 8) || !f.write(reinterpret_cast<const char*>(&g_dxbc_store.build), 8)) {
+      REXLOG_WARN("gow2_renderer: DXBC store off: {} could not be written", rex::path_to_utf8(p));
+      return;
+    }
     good = 16;
   } else if (good < size) {
     fs::resize_file(p, good, ec);  // a torn last record
-    if (ec) return;
+    if (ec) {
+      REXLOG_WARN("gow2_renderer: DXBC store off: {} could not be cut to its last whole record", rex::path_to_utf8(p));
+      return;
+    }
   }
   g_dxbc_store.out.open(p, std::ios::binary | std::ios::app);
-  if (!g_dxbc_store.out.is_open()) return;
+  if (!g_dxbc_store.out.is_open()) {
+    REXLOG_WARN("gow2_renderer: DXBC store off: {} could not be opened for writing", rex::path_to_utf8(p));
+    return;
+  }
   g_dxbc_store.end = good;
   g_dxbc_store.path = p;
   REXLOG_INFO("gow2_renderer: DXBC store {}: {} records, {:.1f} MB{}", rex::path_to_utf8(p), g_dxbc_store.index.size(),
