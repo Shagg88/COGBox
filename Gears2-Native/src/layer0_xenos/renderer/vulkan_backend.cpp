@@ -244,6 +244,7 @@ struct Pipeline {
   ShaderHandle compute = 0;  // compute pipelines: their shader (layout and binding types)
   std::atomic<bool> ready{true};
   std::atomic<bool> failed{false};
+  std::atomic<bool> promoted{false};  // 0.6.5: a queued job moved to the live queue once (as D3D12's backlog_class)
 };
 
 struct PipelineJob {
@@ -791,7 +792,9 @@ class VulkanBackend final : public Backend {
         }
         // Patch 0076 (as D3D12's 0062): a draw that needs a job still queued - behind the start-up backlog or the
         // guessed pipelines - doesn't wait its turn: a waiting draw builds it now, an async one moves it to the front.
-        if (!pipeline_backlog_) {
+        // 0.6.5 (job 2028: 45,079 moves on a cold start - every pending draw moved the same job again, to the front, and
+        // scanned both queues each time): once per pipeline, to the back of the live queue (draws served in turn).
+        if (!pipeline_backlog_ && !p.promoted.exchange(true)) {
           PipelineJob queued;
           if (TakeQueued(handle, queued)) {
             if (!async) {
@@ -801,7 +804,7 @@ class VulkanBackend final : public Backend {
             }
             {
               std::lock_guard<std::mutex> lock(job_mutex_);
-              jobs_.push_front(queued);
+              jobs_.push_back(queued);
             }
             ++stats_.pipelines_promoted;
             job_cv_.notify_one();
@@ -874,6 +877,37 @@ class VulkanBackend final : public Backend {
           q->erase(it);
           return true;
         }
+    return false;
+  }
+  // 0.6.5 (job 2028: a 760 ms synchronous build while recording a cold-start frame - Vulkan had no bounded wait, so
+  // stand-in draws built on the recording thread and full-screen / depth waits never succeeded): as D3D12's patch 0132,
+  // wait up to max_ms for a worker to build a queued pipeline (moved to the live queue once) - never built here.
+  bool PipelineWaitSupported() const override { return true; }
+  bool WaitGraphicsPipeline(const GraphicsPipelineDesc& d, double max_ms) override {
+    if (!ready_ || lost_ || max_ms <= 0.0) return false;
+    auto it = pipeline_cache_.find(HashPipelineDesc(d));
+    if (it == pipeline_cache_.end()) return false;
+    for (const auto& [desc, handle] : it->second) {
+      if (!(desc == d) || !handle) continue;
+      Pipeline& p = *pipelines_[handle];
+      if (!pipeline_backlog_ && !p.promoted.exchange(true)) {
+        PipelineJob queued;
+        if (TakeQueued(handle, queued)) {
+          {
+            std::lock_guard<std::mutex> lock(job_mutex_);
+            jobs_.push_back(queued);
+          }
+          ++stats_.pipelines_promoted;
+          job_cv_.notify_one();
+        }
+      }
+      const auto t0 = std::chrono::steady_clock::now();
+      while (!p.ready.load(std::memory_order_acquire)) {
+        if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() >= max_ms) return false;
+        std::this_thread::yield();
+      }
+      return !p.failed.load();
+    }
     return false;
   }
   bool PipelinePending(const GraphicsPipelineDesc& d) override {
