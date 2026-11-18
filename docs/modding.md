@@ -17,8 +17,9 @@ mods\MyMod\
 
 Mods made for the Xbox 360 are often shared as bare files. A package (`.xxx`, `.upk`), texture cache (`.tfc`) or
 `Coalesced_*.bin` at the mod's top goes to `GearGame\CookedXbox360`, and a movie (`.bik`) to `GearGame\Movies`.
-Programs (`.xex`, `.dll`, `.exe`) are never used from a mod. Folders inside a mod that are links (junctions or
-symlinks) are not followed: copy the files in (the log names any link it skipped).
+Program files are never used from a mod: programs and libraries, scripts, installers, shortcuts and other things
+Windows runs, and archives inside the mod are left out when it is added. Folders inside a mod that are links
+(junctions or symlinks) are not followed: copy the files in (the log names any link it skipped).
 
 **Load order:** the Mods tab's order, top to bottom. Where two mods have the same file, the lower one wins.
 
@@ -176,6 +177,44 @@ textures each pack gives (`gow2_texture_pack:`), and names any file it could not
 
 Textures made from the game's art are derived from it: whether you may share them is a question of its owner's rules,
 as for any mod that carries the game's files.
+
+## Packaging and publishing your mod
+
+COGBox's **FABRICATOR** screen (the launcher's FABRICATOR button, or **More in FABRICATOR** on a game's Mods tab) has a
+**CREATOR** tab that checks your mod's folder and makes the zip. It works offline.
+
+1. **Choose your mod's folder** (or drop it on the window): the folder laid out as in "The folder" above, with its
+   `mod.ini`.
+2. **Fill in mod.ini.** The form edits these `[Mod]` keys and nothing else; other sections, keys and comments in your
+   `mod.ini` stay as they are. **Save mod.ini** writes it.
+
+   | Key | What to put |
+   |---|---|
+   | `Name` | The mod's name players see. An update of an already added mod is matched by this name (case is ignored). |
+   | `Game` | `gears1`, `gears2`, `gears3` or `judgment`. |
+   | `Version` | Free text, such as `1.0`. |
+   | `Author` | Your name. |
+   | `Description` | What it does. |
+   | `Side` | `everyone`, `host` or `client` (see above). |
+   | `Requires` | Mods that must be on too, by name, comma-separated: `Other Mod, Another Mod`. The game leaves your mod out without them. |
+
+3. **Fix what the check lists.** The check looks for what a clean package needs: a `mod.ini` with `Name` and `Game`
+   (not for a newer mod API), safe file names (no unsafe or duplicate names, no links), and the limits (50 000 files,
+   8 GiB unpacked, a `mod.ini` of at most 256 KB; the 4 GiB zip limit is checked when the zip is made). It also
+   lists **program files**, because a clean package has none: programs and libraries (`.exe`, `.dll`, `.xex`), scripts (`.bat`, `.cmd`, `.ps1`, `.vbs`, `.js`), installers, shortcuts, registry files and other
+   things Windows runs, and archives (`.zip`, `.7z`, `.rar`, `.cab`) inside the mod. When a player adds a mod that has
+   such files, they are left out and the install says so. `fabricator.json` is never packed, and a zip's own is ignored.
+4. **Make a zip.** Pick where to save it; its name is the mod's name and version. Test it by adding it to your own
+   LIBRARY.
+5. **Publish it** where you like. COGBox has no mod hosting. A common place is Nexus Mods (nexusmods.com), which COGBox
+   plans to browse later:
+   1. Make a mod page for your game there.
+   2. Upload the zip as the main file.
+   3. Add the **COGBox** tag.
+   4. Say which COGBox version it needs (the CREATOR tab shows the version you have).
+
+Don't put the game's own files, or files made from them, in what you share (see "The folder" above). Using Nexus Mods
+doesn't mean Nexus Mods supports or endorses COGBox, and its own rules apply to your page.
 
 ## What the game checks, and where to see it
 

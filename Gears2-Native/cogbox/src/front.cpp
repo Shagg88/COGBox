@@ -7,6 +7,7 @@
 #include "update.h"
 #include "social_client.h"   // 0.6.0: social_stop (deleting a profile)
 #include "profiles.h"   // 0.6.0: profile_dir (deleting a profile)
+#include "fabricator_state.h"   // the FABRICATOR button's job figure
 #include "imgui_internal.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -811,7 +812,7 @@ void front_draw(App &a, ImVec2 size)
             if (left) turn(a, -1);
             if (right) turn(a, 1);
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) a.frontSel = std::max(0, a.frontSel - 1);
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) a.frontSel = std::min(3, a.frontSel + 1);   // achievements part 4: 3; social step 3: 4
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) a.frontSel = std::min(4, a.frontSel + 1);   // achievements part 4: 3; social step 3: 4; the Fabricator: 5 buttons, frontSel 0-4
             if (up) a.frontSel = 10;
         }
         if (ImGui::IsWindowHovered() && io.MouseWheel != 0) turn(a, io.MouseWheel > 0 ? -1 : 1);
@@ -939,12 +940,14 @@ void front_draw(App &a, ImVec2 size)
         bool sel0 = a.padConnected && a.frontSel == 0, sel1 = a.padConnected && a.frontSel == 1;
         bool sel2 = a.padConnected && a.frontSel == 2;   // achievements part 4
         bool sel3 = a.padConnected && a.frontSel == 3;   // social step 3
+        bool sel4 = a.padConnected && a.frontSel == 4;   // FABRICATOR
         bool padA = nav && a.padConnected && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
         // 0.4.6 (Shagg 6 Nov): ACHIEVEMENTS is a third button like the other two, and the row is centred
         const bool achShown = st.ready != R_NO_PORT;
         const float aw = std::max(bw, F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, tr("ACHIEVEMENTS")).x + S(36));
         const float sw = std::max(bw, F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, tr("SOCIAL")).x + S(36));   // social step 3
-        const float rowW = bw * 2 + gap + (achShown ? gap + aw + gap + sw : 0);
+        const float fw = std::max(bw, F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, tr("FABRICATOR")).x + S(36));
+        const float rowW = bw * 2 + gap + (achShown ? gap + aw + gap + sw + gap + fw : 0);
         ImGui::SetCursorScreenPos(ImVec2(cx - rowW * 0.5f, y));
         if (st.ready == R_READY) {
             // A presses the choice LB / RB made (a.frontSel); Enter plays
@@ -978,6 +981,25 @@ void front_draw(App &a, ImVec2 size)
             hover_tip(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), tr("Friends, invites and online play."));
             if (socialPressed || (nav && padA && a.frontSel == 3)) {
                 a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 5; a.barSel = -1;   // page.cpp k_tabSocial
+            }
+            // FABRICATOR, right of SOCIAL: the local mod manager (LIBRARY, STORE, CREATOR). While it adds or packs a mod,
+            // the figure shows in the button's corner and a thin bar along its bottom.
+            ImGui::SameLine(0, gap);
+            const bool fabPressed = th_button("FABRICATOR", ImVec2(fw, bh), true, F_HEAD, sel4);
+            const ImVec2 fb0 = ImGui::GetItemRectMin(), fb1 = ImGui::GetItemRectMax();
+            hover_tip(fb0, fb1, tr("Manage your mods and package your own."));
+            const int pct = fab_job_percent();
+            if (pct != -1) {
+                const std::string t = pct >= 0 ? std::to_string(pct) + "%" : std::string("...");
+                const float tw = F_SMALL->CalcTextSizeA(FS(F_SMALL) * 0.8f, FLT_MAX, 0, t.c_str()).x;
+                ImDrawList *fd = ImGui::GetWindowDrawList();
+                fd->AddText(F_SMALL, FS(F_SMALL) * 0.8f, ImVec2(fb1.x - tw - S(10), fb0.y + S(2)), U(col::amber), t.c_str());
+                const float x0 = fb0.x + S(10), x1 = fb1.x - S(10);
+                fd->AddRectFilled(ImVec2(x0, fb1.y - S(5)), ImVec2(x1, fb1.y - S(3)), U(col::faint, 0.6f));
+                if (pct >= 0) fd->AddRectFilled(ImVec2(x0, fb1.y - S(5)), ImVec2(x0 + (x1 - x0) * pct / 100.0f, fb1.y - S(3)), U(col::amber));
+            }
+            if (fabPressed || (nav && padA && a.frontSel == 4)) {
+                a.zoomTo = SCR_FABRICATOR; a.zoomStart = now; a.barSel = -1;   // (on the tab it was left on)
             }
         }
         // Shagg 1 Nov: the drop tip, under the buttons (and the folder button when it shows)
