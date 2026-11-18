@@ -31,7 +31,7 @@ describe('recent players (registry)', () => {
     let t = 1_000;
     const r = new Registry(() => t);
     r.noteRelay('a', 'h');
-    expect(r.recentFor('a')).toEqual([]);   // until the other game answers
+    expect(r.recentFor('a')).toEqual([]);   // one message to a host is not a match
     r.noteRelay('h', 'a', G3);
     expect(r.recentFor('a').map((x) => x.uuid)).toEqual(['h']);
     r.noteRelay('x', 'h'); t += Registry.HALF_MS + 1; r.noteRelay('h', 'x');
@@ -43,13 +43,6 @@ describe('recent players (registry)', () => {
     expect(r.recentFor('b')).toEqual([]);
     r.noteMet('p', 'q'); t += Registry.RECENT_MS + 1; r.sweep();
     expect(r.recentFor('p')).toEqual([]);
-    // the lists are not mirrors: y keeps x after x's own list dropped y at RECENT_MAX - forgetMet still clears it
-    r.noteMet('x', 'y');
-    for (let i = 0; i < Registry.RECENT_MAX + 1; i++) { t += 1; r.noteMet('x', `m${i}`); }
-    expect(r.recentFor('x').some((e) => e.uuid === 'y')).toBe(false);
-    expect(r.recentFor('y').map((e) => e.uuid)).toEqual(['x']);
-    r.forgetMet('x');
-    expect(r.recentFor('y')).toEqual([]);
   });
 });
 

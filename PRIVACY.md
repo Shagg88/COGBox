@@ -39,8 +39,7 @@ and the Social tab don't work until it is back; everything else in COGBox, and o
 details) is kept while your game is connected and removed when it disconnects. Invites are kept in memory for at most
 10 minutes. Whether you are online and which game you are in is shown to your friends and kept in memory only.
 **Recent players:** when your game and another player's game connect in a match, the server notes that you played
-together, in memory only, for 24 hours (at most 30 players each; a server restart forgets it, deleting your account
-removes you from every list at once).
+together, in memory only, for 24 hours (at most 30 players each; a server restart or deleting your account forgets it).
 Each of you then sees the other's tag under Social > Recent players, so you can send a friend request - not friends,
 players with a request either way, or anyone either of you blocked.
 A **public** match you host in Gears 2, Gears 3 or Judgment is listed under Open matches for other signed-in players as
