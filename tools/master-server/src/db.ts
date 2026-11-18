@@ -78,6 +78,16 @@ export function initDb(dbPath: string = process.env.DB_PATH || 'master.db'): Dat
 
     CREATE INDEX IF NOT EXISTS idx_lobbies_room_code
       ON lobbies(room_code);
+
+    CREATE TABLE IF NOT EXISTS recent_players (
+      owner_uuid TEXT NOT NULL,
+      other_uuid TEXT NOT NULL,
+      title_id TEXT NOT NULL,
+      seen_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_uuid, other_uuid),
+      FOREIGN KEY (owner_uuid) REFERENCES users(uuid) ON DELETE CASCADE,
+      FOREIGN KEY (other_uuid) REFERENCES users(uuid) ON DELETE CASCADE
+    );
   `);
 
   // Columns added after a database was first made.

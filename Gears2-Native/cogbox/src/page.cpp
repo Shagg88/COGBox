@@ -22,6 +22,7 @@
 #include <cwctype>
 #include <cstdio>
 #include <algorithm>
+#include <functional>
 
 // ---- the PC, for the settings ---------------------------------------------------------------------------------------
 // Searching a 100 MB exe for a word takes a moment, so each (file, word) answer is kept.
@@ -417,6 +418,36 @@ void ui_section(const char *title_en)   // (also achievements_tab.cpp)
     th_heading(title_en, g_rowX1);
     ImGui::Dummy(ImVec2(0, S(2)));
 }
+
+// 0.6.5 (Shagg: the bigger window): a tab's sections in two columns side by side when the page is wide enough, else in
+// one. body(0) draws the left column's sections, body(1) the right's; body(-1) all of them (the one-column case). Each
+// column is its own child window, so a row's label / SameLine(g_labelW) / control works in it as in the page.
+void ui_columns(const std::function<void(int)> &body)   // (also achievements_tab.cpp, social_tab.cpp)
+{
+    const float avail = ImGui::GetContentRegionAvail().x - S(16), gap = S(40);
+    if (avail < S(1060)) { body(-1); return; }
+    const float colW = std::floor((avail - gap) * 0.5f);
+    const float keepLabel = g_labelW, keepX1 = g_rowX1;
+    const int keepSections = g_sections;
+    float bottom = ImGui::GetCursorScreenPos().y;
+    for (int side = 0; side < 2; side++) {
+        if (side) ImGui::SameLine(0, gap);
+        ImGui::BeginChild(side ? "##colR" : "##colL", ImVec2(colW, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        g_labelW = std::max(S(160), colW - g_ctrlW - S(4));
+        g_rowX1 = ImGui::GetCursorScreenPos().x + colW - S(4);
+        g_sections = keepSections;
+        body(side);
+        ImGui::EndChild();
+        bottom = std::max(bottom, ImGui::GetItemRectMax().y);
+    }
+    g_labelW = keepLabel; g_rowX1 = keepX1;
+    g_sections = keepSections + 1;
+    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetStyle().WindowPadding.x - ImGui::GetScrollX(), bottom));
+    ImGui::Dummy(ImVec2(0, 0));
+}
+float ui_label_w() { return g_labelW; }   // (achievements_tab.cpp / social_tab.cpp, inside a column)
+float ui_row_x1() { return g_rowX1; }
 
 static bool small_button(const char *label_en)
 {
@@ -1466,6 +1497,8 @@ static void about_tab(App &a, int g)
     const GameDef &d = game_def(g);
     GameState &st = a.st[g];
     bool busy = a.job.state.load() == 1, running = a.run.proc != nullptr;
+    ui_columns([&](int side) {   // 0.6.5: COGBOX and YOUR COPY on the left, the rest on the right
+    if (side != 1) {
 
     // ---- COGBOX: the version and the update
     ui_section("COGBOX");
@@ -1577,6 +1610,8 @@ static void about_tab(App &a, int g)
         linux_copy_buttons(a);
     }
 
+    }
+    if (side != 0) {
     // ---- FOLDERS: folders, saves, shaders and desktop shortcuts
     ui_section("FOLDERS");
     if (small_button("Saves")) { make_dirs(game_user_dir(g)); open_folder(a, game_user_dir(g)); }
@@ -1698,10 +1733,12 @@ static void about_tab(App &a, int g)
         const std::string ld = join(exe_dir(), "licenses");
         if (dir_exists(ld)) open_folder(a, ld); else set_message(a, "The licenses folder is missing - unzip the release again.", true);
     }
+    }
+    });
 }
 
 // ---- the settings tabs' groups (presentation only: which heading an option shows under) -------------------------------
-struct TabGroups { const char *heading[4]; const char *const *ids[4]; };
+struct TabGroups { const char *heading[4]; const char *const *ids[4]; int column[4]; };   // column: 0.6.5, two-column page
 static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", "AspectRatio", "HideNotes", nullptr };
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
 static const char *const k_dispPicture[] = { "HDR", "PaperWhite", "Peak", nullptr };
@@ -1717,11 +1754,11 @@ static const char *const k_achPopups[] = { "AchievementStyle", "AchievementColou
                                            "HideAchievementPopups", nullptr };   // PR #187
 static const char *const k_none[] = { nullptr };
 static const TabGroups k_groups[5] = {   // one per gs::Tab, in its order
-    { { "SCREEN", "FRAME RATE", "PICTURE", nullptr }, { k_dispScreen, k_dispFrames, k_dispPicture, k_none } },
-    { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none } },
-    { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none } },
-    { { "GAME", "PLAYERS", "EXTRAS", nullptr }, { k_playGame, k_playPlayers, k_playExtras, k_none } },
-    { { "ACHIEVEMENT POPUPS", nullptr, nullptr, nullptr }, { k_achPopups, k_none, k_none, k_none } },
+    { { "SCREEN", "FRAME RATE", "PICTURE", nullptr }, { k_dispScreen, k_dispFrames, k_dispPicture, k_none }, { 0, 1, 1, 0 } },
+    { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none }, { 0, 1, 0, 0 } },
+    { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none }, { 0, 0, 0, 0 } },
+    { { "GAME", "PLAYERS", "EXTRAS", nullptr }, { k_playGame, k_playPlayers, k_playExtras, k_none }, { 0, 0, 1, 0 } },
+    { { "ACHIEVEMENT POPUPS", nullptr, nullptr, nullptr }, { k_achPopups, k_none, k_none, k_none }, { 0, 0, 0, 0 } },
 };
 
 // ---- the page --------------------------------------------------------------------------------------------------------
@@ -1754,7 +1791,8 @@ void page_draw(App &a, ImVec2 size)
     int g = a.page;
     const GameDef &d = game_def(g);
     ImDrawList *dl = ImGui::GetWindowDrawList();
-    float pw = std::min(size.x - S(40), S(980)), ph = std::min(size.y - S(40), S(760));
+    // 0.6.5 (Shagg): the bigger window - the panel reaches to about 40 px from each side (it used to stop at 980 wide)
+    float pw = std::min(size.x - S(100), S(1540)), ph = std::min(size.y - S(40), S(940));
     ImVec2 p0((size.x - pw) * 0.5f, (size.y - ph) * 0.5f), p1(p0.x + pw, p0.y + ph);
     // see-through so the game's art shows, dark enough behind the text to read it (Shagg 18:41)
     th_plate(dl, p0, p1, S(18), false, 0.45f);
@@ -1859,24 +1897,44 @@ void page_draw(App &a, ImVec2 size)
                 for (const char *const *x = tg.ids[k]; *x; x++) if (id == *x) return k;
             return 0;
         };
-        for (int k = 0; k < 4 && tg.heading[k]; k++) {
-            bool any = false;
-            for (const gs::Option *o : mine) any |= group_of(o->id) == k;
-            if (!any) continue;
-            ui_section(tg.heading[k]);
-            for (const gs::Option *o : mine) if (group_of(o->id) == k) {
-                option_row(a, g, *o);
-                shown++;
-                if (o->id == "PadLayout") pad_layout_section(a, g);   // 0.6.3: the Custom layout's buttons
+        auto groups = [&](int side) {   // 0.6.5: k_groups' column for each heading (0 left, 1 right)
+            for (int k = 0; k < 4 && tg.heading[k]; k++) {
+                if (side >= 0 && tg.column[k] != side) continue;
+                bool any = false;
+                for (const gs::Option *o : mine) any |= group_of(o->id) == k;
+                if (!any) continue;
+                ui_section(tg.heading[k]);
+                for (const gs::Option *o : mine) if (group_of(o->id) == k) {
+                    option_row(a, g, *o);
+                    shown++;
+                    if (o->id == "PadLayout") pad_layout_section(a, g);   // 0.6.3: the Custom layout's buttons
+                }
             }
+        };
+        if (want == gs::Tab::Achievements) {
+            // 0.6.5 (Shagg): the popup settings at the top in two columns (the lists left, the switches right), the
+            // achievements below them across the whole width (achievements_tab.cpp)
+            if (tg.heading[0]) ui_section(tg.heading[0]);
+            ui_columns([&](int side) {
+                for (const gs::Option *o : mine) {
+                    const int col = o->kind == gs::Kind::Bool ? 1 : 0;
+                    if (side < 0 || col == side) { option_row(a, g, *o); shown++; }
+                }
+            });
+            achievements_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // achievements part 4
+        } else {
+            ui_columns([&](int side) {
+                groups(side);
+                if (side != 0) {   // the tab's own sections go on the right
+                    if (want == gs::Tab::Gameplay) saves_section(a, g);   // 0.6.4 (Shagg 16 Nov): saves on the Gameplay tab
+                    if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
+                    if (want == gs::Tab::Controls) window_key_section(a, g);   // 0.6.3, GitHub #316
+                    if (want == gs::Tab::Graphics) dlss_file_section(a, g);   // 0.4.9
+                    if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
+                }
+            });
+            if (!shown) ui_note("Nothing to set here yet.");
         }
-        if (want == gs::Tab::Gameplay) saves_section(a, g);   // 0.6.4 (Shagg 16 Nov): saves on the Gameplay tab
-        if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
-        if (want == gs::Tab::Controls) window_key_section(a, g);   // 0.6.3, GitHub #316
-        if (want == gs::Tab::Graphics) dlss_file_section(a, g);   // 0.4.9
-        if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
-        if (want == gs::Tab::Achievements) achievements_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // achievements part 4
-        else if (!shown) ui_note("Nothing to set here yet.");
     } else if (a.tab == k_tabSocial) social_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // social step 3
     else if (a.tab == k_tabMods) mods_tab(a, g);
     else about_tab(a, g);

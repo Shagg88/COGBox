@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 struct PPCContext;
@@ -45,6 +46,10 @@ void Ue3ConsoleInstallHotkeys(const std::string& defaults = std::string());
 bool Ue3ConsoleIsDisplaySetting(const std::string& command);
 // Thread-safe; runs on the next Ue3ConsoleRunQueued.
 void Ue3ConsoleQueue(const std::string& command);
+// GitHub #353: a command COGBox itself issues (the players' name tags: `set <PRI> PlayerName ...`). Not asked of the gate
+// (it is no cheat) and not preceded by before_each; never from user input (hotkeys and --ue3_exec use Ue3ConsoleQueue).
+// `after` (optional) runs on the game thread straight after the command, in the same frame.
+void Ue3ConsoleQueueTrusted(const std::string& command, std::function<void()> after = {});
 // Game thread only (layer 3's override of a once-per-frame engine function, after the original): runs what is queued.
 // Leaves `ctx` as it found it.
 void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base);

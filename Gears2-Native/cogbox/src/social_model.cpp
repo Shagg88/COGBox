@@ -326,3 +326,31 @@ std::string match_label(const SocialMatch& m) {
     if (!region.empty()) s += dot + region;
     return s;
 }
+
+std::vector<SocialRecent> parse_recent(const std::string& body) {
+    std::vector<SocialRecent> out;
+    const json j = json::parse(body, nullptr, false);
+    if (!j.is_object() || !j.contains("recent") || !j["recent"].is_array()) return out;
+    for (const json& e : j["recent"]) {
+        SocialRecent r;
+        r.uuid = str(e, "uuid");
+        const std::string name = str(e, "display_name"), disc = str(e, "discriminator");
+        if (!plain_id(r.uuid) || name.empty() || disc.empty()) continue;
+        r.tag = name + "#" + disc;
+        r.icon = str(e, "icon");
+        r.title_id = upper(str(e, "title_id"));
+        r.relation = str(e, "relation");
+        r.seen_at = e.is_object() && e.contains("seen_at") && e["seen_at"].is_number() ? e["seen_at"].get<long long>() : 0;
+        out.push_back(r);
+    }
+    return out;
+}
+
+std::string recent_when(long long when_ms, long long now_ms) {
+    const long long s = std::max(0LL, (now_ms - when_ms) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return std::to_string(s / 60) + " min ago";
+    if (s < 86400) return std::to_string(s / 3600) + " h ago";
+    if (s < 2 * 86400) return "yesterday";
+    return std::to_string(s / 86400) + " days ago";
+}

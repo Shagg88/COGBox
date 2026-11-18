@@ -25,6 +25,7 @@
 #include <rex/ppc/context.h>
 
 #include <ue3/console.h>
+#include <ue3/name_tags.h>  // GitHub #353
 #include <ue3/match_guard.h>
 
 REXCVAR_DEFINE_BOOL(gow1_cheats, false, "Gears1",
@@ -81,6 +82,9 @@ void Gow1AdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_
 extern "C" void __imp__sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base);
 extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
   __imp__sub_8222A6E0(ctx, base);
+  // GitHub #353: COGBox tags after the players' names. Gears 1's set takes a class only: the class-wide form, put right
+  // in the same frame (so before Ue3ConsoleRunQueued). Grey: its one grey text style, set to the names' own font.
+  Ue3NameTagsTick([] { return ue3::obj::Ready() || OpenObjects(); }, Ue3NameTagStyle{"<Styles:credits_headers>", "<Styles:/>", true, "credits_headers=WarfareFonts_Euro20"});
   Ue3ConsoleRunQueued(ctx, base);
   Gow1AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
 }

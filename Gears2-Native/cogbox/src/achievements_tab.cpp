@@ -16,6 +16,8 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
+#include <functional>
 #include <ctime>
 #include <map>
 #include <utility>
@@ -25,6 +27,8 @@ namespace ach = xenos::ach;
 
 // page.cpp's 0.4.6 building blocks, so this tab looks like the others: a section heading, a hover tooltip, a short note
 void ui_section(const char *title_en);
+void ui_columns(const std::function<void(int)> &body);   // page.cpp (0.6.5)
+float ui_label_w();
 void ui_tip(const std::string &text_en);
 void ui_note(const std::string &text_en, ImVec4 c = col::dim);
 
@@ -195,8 +199,11 @@ void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
     static const ach::SortOrder kSorts[] = { ach::SortOrder::kUnlockTime, ach::SortOrder::kRarity, ach::SortOrder::kGameOrder,
                                              ach::SortOrder::kGamerscore, ach::SortOrder::kName };
     static const ach::ShowFilter kShows[] = { ach::ShowFilter::kAll, ach::ShowFilter::kUnlocked, ach::ShowFilter::kLocked };
-    if (choice_row("Sort", "##achsort", g_sort, kSorts, ach::SortName, labelW, ctrlW)) rebuild_rows();
-    if (choice_row("Show", "##achshow", g_show, kShows, ach::ShowName, labelW, ctrlW)) rebuild_rows();
+    ui_columns([&](int side) {   // 0.6.5: Sort on the left, Show on the right (one under the other when narrow)
+        const float lw = side < 0 ? labelW : ui_label_w();
+        if (side != 1 && choice_row("Sort", "##achsort", g_sort, kSorts, ach::SortName, lw, ctrlW)) rebuild_rows();
+        if (side != 0 && choice_row("Show", "##achshow", g_show, kShows, ach::ShowName, lw, ctrlW)) rebuild_rows();
+    });
     ImGui::Dummy(ImVec2(0, S(4)));
 
     // the list
@@ -206,14 +213,22 @@ void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
         ui_note(!sel.loaded && !sel.all ? std::string("Start this game once from COGBox to load its achievements.") : ach::EmptyMessage(sel, g_show));
         return;
     }
-    const float x0 = ImGui::GetCursorScreenPos().x, rw = rowX1 - x0, rh = T(46), ic = T(38), pad = S(6);
+    // 0.6.5 (Shagg): two achievements side by side when the page is wide enough (row by row, in the sort order)
+    const float x0 = ImGui::GetCursorScreenPos().x, full = rowX1 - x0, rh = T(46), ic = T(38), pad = S(6);
+    const int per = full >= S(1000) ? 2 : 1;
+    const float cgap = S(30), rw = per == 2 ? std::floor((full - cgap) * 0.5f) : full;
     const float fb = FS(F_BODY), fsm = FS(F_SMALL);
+    const int lines = ((int)g_rows.size() + per - 1) / per;
     ImGuiListClipper clip;
-    clip.Begin((int)g_rows.size(), rh + ImGui::GetStyle().ItemSpacing.y);
+    clip.Begin(lines, rh + ImGui::GetStyle().ItemSpacing.y);
     while (clip.Step()) {
-        for (int i = clip.DisplayStart; i < clip.DisplayEnd; i++) {
+        for (int ln = clip.DisplayStart; ln < clip.DisplayEnd; ln++)
+        for (int c = 0; c < per; c++) {
+            const int i = ln * per + c;
+            if (i >= (int)g_rows.size()) break;
             const ach::BrowserRow &r = g_rows[(size_t)i];
             ImGui::PushID(i);
+            if (c) ImGui::SameLine(0, cgap);
             const ImVec2 p = ImGui::GetCursorScreenPos();
             if (ImGui::Selectable("##achrow", false, 0, ImVec2(rw, rh)) && r.hidden_secret && r.a) {
                 g_reveal = { r.a->title_id, r.a->id };

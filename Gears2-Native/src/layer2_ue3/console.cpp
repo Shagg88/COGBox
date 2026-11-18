@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -43,7 +44,14 @@ REXCVAR_DEFINE_STRING(ue3_exec_at, "", GN_UE3_CONSOLE_GROUP,
 
 namespace {
 std::mutex g_mutex;
-std::deque<std::string> g_queue;
+// A COGBox command (Ue3ConsoleQueueTrusted): no gate, no before_each, logged at debug level; `after` runs on the game
+// thread straight after it, in the same frame.
+struct Queued {
+  std::string command;
+  bool trusted = false;
+  std::function<void()> after;
+};
+std::deque<Queued> g_queue;
 Ue3ConsoleTarget g_target;
 std::atomic<bool> g_have_target{false};
 std::thread::id g_game_thread;
@@ -148,7 +156,12 @@ void Ue3ConsoleSetTarget(const Ue3ConsoleTarget& target) {
 
 void Ue3ConsoleQueue(const std::string& command) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  g_queue.push_back(command);
+  g_queue.push_back(Queued{command, false, {}});
+}
+
+void Ue3ConsoleQueueTrusted(const std::string& command, std::function<void()> after) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_queue.push_back(Queued{command, true, std::move(after)});
 }
 
 void Ue3ConsoleInstallHotkeys(const std::string& defaults) {
@@ -200,15 +213,19 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
   }
   for (;;) {
     std::string command;
+    bool trusted = false;
+    std::function<void()> after;
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       if (g_queue.empty()) return;
-      command = g_queue.front();
+      command = g_queue.front().command;
+      trusted = g_queue.front().trusted;
+      after = g_queue.front().after;
     }
     bool handled = false;
     // 0.6.3: cheats are refused in Versus matches (g_target.gate = ue3/match_guard.h, asked for every command at the moment
     // it would run, so a command held over a map change meets the new map's answer). The launcher's own settings are not cheats.
-    if (g_target.gate && !Ue3ConsoleIsDisplaySetting(command)) {
+    if (g_target.gate && !trusted && !Ue3ConsoleIsDisplaySetting(command)) {
       const int verdict = g_target.gate();
       if (verdict == 1) return;  // the game state is not readable yet: keep it queued
       if (verdict == 2) {
@@ -220,16 +237,20 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
         continue;
       }
     }
-    if (g_target.before_each && *g_target.before_each) {
+    if (!trusted && g_target.before_each && *g_target.before_each) {
       bool ignored = false;
       if (!ExecNow(ctx, base, g_target.before_each, &ignored)) return;  // no player yet: keep it queued
     }
     if (!ExecNow(ctx, base, command, &handled)) return;  // no player yet: keep it queued for a later tick
+    if (after) after();  // GitHub #353: same thread, same frame
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       g_queue.pop_front();
     }
-    REXLOG_INFO("ue3_console: tick {} ({:.1f} s): '{}' {}", g_ticks, secs, command,
-                handled ? "done" : "not recognised by the engine");
+    if (trusted)
+      REXLOG_DEBUG("ue3_console: tick {}: COGBox '{}' {}", g_ticks, command, handled ? "done" : "not recognised");
+    else
+      REXLOG_INFO("ue3_console: tick {} ({:.1f} s): '{}' {}", g_ticks, secs, command,
+                  handled ? "done" : "not recognised by the engine");
   }
 }
