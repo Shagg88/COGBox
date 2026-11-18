@@ -230,9 +230,18 @@ std::vector<uint8_t> MergeConfig(const std::vector<uint8_t>& base, const std::ve
 {
     std::vector<File> files;
     if (base.empty() || !Parse(base, files)) return {};
+    // review r369 audit F3: a bound on the whole merge too (each key line can scan its section), far above real mods
+    constexpr long kMaxMergedLines = 20000;
+    long merged = 0;
     for (const auto& [mod, frag] : fragments)
     {
+        if (merged > kMaxMergedLines)
+        {
+            if (log) log("config " + U8(frag.filename()) + " from " + mod + ": left out (the mods' config fragments add up to more than 20,000 lines)");
+            continue;
+        }
         const int n = Apply(files, frag, mod, log);
+        merged += n;
         if (log) log("config " + U8(frag.filename()) + " from " + mod + ": " + std::to_string(n) + " lines");
     }
     return Write(files);

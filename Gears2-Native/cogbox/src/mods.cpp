@@ -258,6 +258,10 @@ static bool same_path(const std::wstring &a, const std::wstring &b)
     return !a.empty() && CompareStringOrdinal(a.c_str(), (int)a.size(), b.c_str(), (int)b.size(), TRUE) == CSTR_EQUAL;
 }
 
+// Everything under dir (whose real path is real_dir), never through a link: an entry - file or folder - is removed only
+// when its real path is <real_dir>\<name>. Anything else (a junction, a symlink, a Wine Unix symlink of either kind, or
+// an entry whose real path can't be read) is left exactly as it is: removing even a link is skipped, because on Wine
+// deleting a file symlink deletes its target (review r369 audit F1).
 static void remove_tree_in(const std::wstring &dir, const std::wstring &real_dir)
 {
     WIN32_FIND_DATAW fd;
@@ -267,38 +271,44 @@ static void remove_tree_in(const std::wstring &dir, const std::wstring &real_dir
             std::wstring n = fd.cFileName;
             if (n == L"." || n == L"..") continue;
             std::wstring p = dir + L"\\" + n;
+            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) || !is_plain_child(real_dir, p, n)) continue;
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                // a folder whose real path is not <this folder>\<name> is a link (also one Wine shows as a plain folder):
-                // only the link itself goes, never what it points at
-                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && is_plain_child(real_dir, p, n))
-                    remove_tree_in(p, real_dir + L"\\" + n);
+                remove_tree_in(p, real_dir + L"\\" + n);
                 RemoveDirectoryW(p.c_str());
             } else {
-                SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL);   // (on a link: the link's, not the target's)
-                DeleteFileW(p.c_str());                                // a file link is removed, never followed
+                SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL);
+                DeleteFileW(p.c_str());
             }
         } while (FindNextFileW(f, &fd));
         FindClose(f);
     }
 }
 
-// a folder COGBox made itself (the unpacking of a mod, a Fabricator backup), removed with everything in it; a link
-// (junction, symlink, a Wine Unix symlink) inside it - or the folder itself being one - is removed, never followed
-void mods_remove_tree(const std::wstring &dir)
+// dir removed with everything in it, never following a link (remove_tree_in); nothing when dir itself is a link
+void cogbox_remove_tree(const std::wstring &dir)
 {
     const DWORD at = GetFileAttributesW(dir.c_str());
-    if (at == INVALID_FILE_ATTRIBUTES) return;
-    if (!(at & FILE_ATTRIBUTE_DIRECTORY)) return;   // not a folder: nothing of ours
-    if (at & FILE_ATTRIBUTE_REPARSE_POINT) { RemoveDirectoryW(dir.c_str()); return; }   // a link itself: only the link goes
+    if (at == INVALID_FILE_ATTRIBUTES || !(at & FILE_ATTRIBUTE_DIRECTORY) || (at & FILE_ATTRIBUTE_REPARSE_POINT)) return;
     const size_t cut = dir.find_last_of(L"\\/");
     if (cut == std::wstring::npos || cut + 1 >= dir.size()) return;
-    const std::wstring real_parent = real_path(dir.substr(0, cut)), real = real_path(dir);
-    if (real_parent.empty() || !same_path(real, real_parent + L"\\" + dir.substr(cut + 1))) {
-        RemoveDirectoryW(dir.c_str());   // the folder is a link to somewhere else: only the link goes
-        return;
-    }
+    std::wstring parent = real_path(dir.substr(0, cut));
+    if (!parent.empty() && (parent.back() == L'\\' || parent.back() == L'/')) parent.pop_back();   // a drive root
+    const std::wstring real = real_path(dir);
+    if (parent.empty() || !same_path(real, parent + L"\\" + dir.substr(cut + 1))) return;   // a link: left alone
     remove_tree_in(dir, real);
     RemoveDirectoryW(dir.c_str());
+}
+
+// a folder in a mods folder COGBox made itself (a .partial unpacking, an installed mod, a Fabricator backup): removed
+// only when it holds one of COGBox's own tokens (dir_claim) - a folder a mod or a player put there, even one with a
+// fabricator.json, is never removed (review r369 audit F1)
+void mods_remove_tree(const std::wstring &dir)
+{
+    const std::string d = narrow(dir);
+    if (!dir_owned(d)) return;
+    const std::string tok = dir_owned_token(d);
+    cogbox_remove_tree(dir);
+    if (GetFileAttributesW(dir.c_str()) == INVALID_FILE_ATTRIBUTES) dir_disown_token(tok);
 }
 
 void mods_turn_on_last(App &a, int g, const std::string &folder)
@@ -401,10 +411,15 @@ static bool zip_plan(const std::string &dataDir, ZipReader &zr, bool stripTop, Z
         bool device = false, record = false, shortName = false;
         for (const std::string &c : p) {
             device = device || mod_file_is_device_name(c);   // CON, NUL, COM1 ...: a device to Windows, not a file
-            record = record || lower(c) == "fabricator.json";   // COGBox's install record (or a folder of that name)
+            record = record || lower(c) == "fabricator.json" || lower(c) == ".cogbox-owned";   // COGBox's own files (or folders of those names)
             // review r369 F4: "FABRIC~1.JSO" is another file's 8.3 short name to Windows - it would open that file
-            for (size_t t = c.find('~'); t != std::string::npos; t = c.find('~', t + 1))
-                if (t + 1 < c.size() && c[t + 1] >= '0' && c[t + 1] <= '9') shortName = true;
+            {   // the 8.3 shape only: a base of at most 8 characters holding "~<digits>", an extension of at most 3
+                const size_t dot = c.find_last_of('.');
+                const std::string base = c.substr(0, dot), ext = dot == std::string::npos ? "" : c.substr(dot + 1);
+                const size_t t = base.find('~');
+                shortName = shortName || (base.size() <= 8 && ext.size() <= 3 && t != std::string::npos && t + 1 < base.size() &&
+                                          std::all_of(base.begin() + (long)t + 1, base.end(), [](char x) { return x >= '0' && x <= '9'; }));
+            }
         }
         if (device || record) continue;   // never from a zip: only COGBox writes a fabricator.json
         std::string rel0;
@@ -466,7 +481,8 @@ bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, 
     // review r369 F2: the zip's "downloaded from the internet" mark (Mark of the Web) goes onto every file unpacked, so
     // Windows and Office treat them as the zip itself is treated (no mark on the zip: none added)
     std::string zone;
-    read_file(zipPath + ":Zone.Identifier", zone, 4096);
+    if (!read_file(zipPath + ":Zone.Identifier", zone, 4096) && GetFileAttributesW(widen(zipPath + ":Zone.Identifier").c_str()) != INVALID_FILE_ATTRIBUTES)
+        zone = "[ZoneTransfer]\r\nZoneId=3\r\n";   // marked, but the mark couldn't be read: the internet zone
     uint64_t total = 0;
     for (const ZipEntry &e : plan.files) {
         const std::string out = folder + "\\" + e.rel;
@@ -507,7 +523,10 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err, s
     while (!name.empty() && (name[0] == '.' || name[0] == ' ')) name.erase(0, 1);   // a name starting with '.' is hidden from the list
     if (name.size() >= 8 && lower(name.substr(name.size() - 8)) == ".partial") name += " mod";   // ... and so is "<name>.partial"
     if (name.empty()) name = "mod";
-    if (mod_file_is_device_name(name)) name += " mod";   // review r369 F8: CON, NUL ... are devices, not folders
+    if (mod_file_is_device_name(name)) {   // review r369 F8: CON, NUL, AUX.1 ... are devices, not folders
+        const size_t dot = name.find('.');
+        name = dot == std::string::npos ? name + " mod" : name.substr(0, dot) + " mod" + name.substr(dot);
+    }
     std::string dest = join(mods_dir(g), name);
     // 0.6.1: 0.6.0 installed an EMPTY folder for a zip mod (review C1); RemoveDirectoryW only removes an empty one, so
     // that leftover no longer blocks adding the zip again and a real mod of the same name is still refused.
@@ -515,8 +534,11 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err, s
     // a <name>.partial with COGBox's record is a Fabricator install unpacking now (or the next start's sweep's): never
     // removed here - another unpacking name is used instead
     std::string part = dest + ".partial";
-    for (int i = 2; dir_exists(part) && fab_read_record(part); i++) part = dest + " " + std::to_string(i) + ".partial";
-    mods_remove_tree(widen(part));   // what an earlier, failed try left
+    // an existing <name>.partial: COGBox's own from an earlier try is removed; anyone else's (a Fabricator install
+    // unpacking now has a record; a folder COGBox didn't make) is left alone and another name used
+    if (dir_exists(part) && !fab_read_record(part)) mods_remove_tree(widen(part));
+    for (int i = 2; dir_exists(part) && i < 100; i++) part = dest + " " + std::to_string(i) + ".partial";
+    if (dir_exists(part) || !make_dirs(part) || !dir_claim(part)) { err = "Couldn't make the mod's folder (is the disk full?)."; return false; }
     std::vector<std::string> left;
     bool ok = mods_unpack_zip(a, g, zipPath, part, true, err, &left);
     if (ok && !MoveFileExW(widen(part).c_str(), widen(dest).c_str(), 0)) { ok = false; err = "The unpacked mod couldn't be moved into place."; }

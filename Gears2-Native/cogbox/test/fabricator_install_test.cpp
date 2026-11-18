@@ -260,10 +260,16 @@ int main()
         CHECK(text_of(join(mods, "Foo\\GearGame\\a.xxx")) == "f4");
         CHECK(!exists(join(br, ".old-Foo")));
         CHECK(text_of(join(br, "Foo.old\\GearGame\\a.xxx")) == "fo1");
-        // a crash after the move (both there): .old-Foo is the superseded backup, removed (it has a record)
+        // audit F1: a .old-Foo COGBox didn't make (a record, no token of COGBox's) is never removed - refused
         make_dirs(join(br, ".old-Foo"));
         FabInstallRecord rec; rec.name = "Foo"; rec.version = "1";
         fab_write_record(join(br, ".old-Foo"), rec);
+        write_file(join(br, ".old-Foo\\keep.txt"), "keep");
+        CHECK(fab_uninstall(a, g, "Foo") != "");
+        CHECK(text_of(join(br, ".old-Foo\\keep.txt")) == "keep");
+        DeleteFileW(widen(join(br, ".old-Foo\\keep.txt")).c_str());
+        // a crash after the move (both there): .old-Foo is the superseded backup, removed (a record and COGBox's token)
+        CHECK(dir_claim(join(br, ".old-Foo")));
         CHECK(fab_uninstall(a, g, "Foo") == "");
         CHECK(text_of(join(br, "Foo\\GearGame\\a.xxx")) == "f4");
         CHECK(!exists(join(br, ".old-Foo")));
@@ -470,10 +476,18 @@ int main()
         CHECK(fab_write_record(recorded, rec));
         make_dirs(handOwn);
         write_file(join(handOwn, "x.xxx"), "x");
+        // audit F1: a .partial with a record but no token of COGBox's (a forged one) is left alone
+        const std::string forged = join(mods, "Forged.partial");
+        make_dirs(forged);
+        write_file(join(forged, "y.xxx"), "y");
+        CHECK(fab_write_record(forged, rec));
+        CHECK(dir_claim(recorded));
         fab_sweep_partials(g);
         CHECK(!exists(recorded));                 // COGBox's unfinished install: removed
-        CHECK(text_of(join(handOwn, "x.xxx")) == "x");   // no record: left alone
+        CHECK(text_of(join(handOwn, "x.xxx")) == "x");   // not COGBox's: left alone
+        CHECK(text_of(join(forged, "y.xxx")) == "y");    // a record alone doesn't make it COGBox's
         remove_tree(widen(handOwn));
+        remove_tree(widen(forged));
 
         // the record is written before the unpack: a failed unpack leaves nothing; a finished one has it
         FabInstallItem ti;

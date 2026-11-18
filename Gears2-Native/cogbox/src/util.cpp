@@ -6,6 +6,8 @@
 #include <shobjidl.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
+#include <bcrypt.h>
+#include <mutex>
 #include <atomic>
 #include <ctime>
 #include <cstdio>
@@ -460,3 +462,67 @@ bool is_plain_child(const std::wstring &real_parent, const std::wstring &child_p
     return same_path_u(real_path(child_path), real_parent + L"\\" + name);
 }
 
+
+// ---- review r369 audit F1 (util.h): folders COGBox made itself ----
+static std::mutex g_owned_mutex;
+static std::string owned_registry() { return join(join(exe_dir(), "fabricator"), "owned.txt"); }
+static std::string owned_marker(const std::string &dir) { return join(dir, ".cogbox-owned"); }
+static std::string trim_ws(std::string s)
+{
+    while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ')) s.pop_back();
+    return s;
+}
+bool dir_claim(const std::string &dir)
+{
+    unsigned char rnd[16];
+    if (BCryptGenRandom(nullptr, rnd, sizeof rnd, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) return false;
+    static const char *hx = "0123456789abcdef";
+    std::string tok;
+    for (unsigned char c : rnd) { tok += hx[c >> 4]; tok += hx[c & 15]; }
+    std::lock_guard<std::mutex> lock(g_owned_mutex);
+    std::string reg;
+    read_file(owned_registry(), reg, 8u << 20);
+    if (!reg.empty() && reg.back() != '\n') reg += "\n";
+    reg += tok + "\n";
+    if (!make_dirs(join(exe_dir(), "fabricator")) || !write_file(owned_registry(), reg)) return false;
+    return write_file(owned_marker(dir), tok + "\n");
+}
+static std::string owned_token(const std::string &dir)
+{
+    std::string t;
+    if (!read_file(owned_marker(dir), t, 64)) return "";
+    t = trim_ws(t);
+    return t.size() == 32 && t.find_first_not_of("0123456789abcdef") == std::string::npos ? t : "";
+}
+bool dir_owned(const std::string &dir)
+{
+    const std::string tok = owned_token(dir);
+    if (tok.empty()) return false;
+    std::lock_guard<std::mutex> lock(g_owned_mutex);
+    std::string reg;
+    if (!read_file(owned_registry(), reg, 8u << 20)) return false;
+    for (size_t at = 0; at < reg.size();) {
+        size_t e = reg.find('\n', at);
+        if (e == std::string::npos) e = reg.size();
+        if (trim_ws(reg.substr(at, e - at)) == tok) return true;
+        at = e + 1;
+    }
+    return false;
+}
+void dir_disown_token(const std::string &tok)
+{
+    if (tok.empty()) return;
+    std::lock_guard<std::mutex> lock(g_owned_mutex);
+    std::string reg, out;
+    if (!read_file(owned_registry(), reg, 8u << 20)) return;
+    for (size_t at = 0; at < reg.size();) {
+        size_t e = reg.find('\n', at);
+        if (e == std::string::npos) e = reg.size();
+        const std::string l = trim_ws(reg.substr(at, e - at));
+        if (!l.empty() && l != tok) out += l + "\n";
+        at = e + 1;
+    }
+    write_file(owned_registry(), out);
+}
+std::string dir_owned_token(const std::string &dir) { return owned_token(dir); }
+bool running_under_wine() { return under_wine(); }

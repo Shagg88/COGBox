@@ -123,7 +123,7 @@ std::string sha256_file(const std::string &path)
 void drop_temp(FabJob &j)
 {
     if (j.work_dir.empty()) return;
-    mods_remove_tree(widen(j.work_dir));
+    cogbox_remove_tree(widen(j.work_dir));
     j.work_dir.clear();
 }
 
@@ -330,7 +330,7 @@ void fab_cancel(const std::shared_ptr<FabJob> &j)
         const FabInstallPlan plan = j->plan;
         const std::string work = j->work_dir;
         j->work_dir.clear();
-        worker().post([plan, work] { fab_install_abandon(plan); if (!work.empty()) mods_remove_tree(widen(work)); });
+        worker().post([plan, work] { fab_install_abandon(plan); if (!work.empty()) cogbox_remove_tree(widen(work)); });
     }
 }
 
@@ -425,7 +425,7 @@ void fab_state_poll(App &a)
     static bool swept = false;
     if (!swept) {   // what a closed (or crashed) COGBox left: temporary zips, unfinished installs; no job exists yet
         swept = true;
-        mods_remove_tree(widen(work_root()));
+        cogbox_remove_tree(widen(work_root()));
         sweep_partials();
     }
     bool installing = false;

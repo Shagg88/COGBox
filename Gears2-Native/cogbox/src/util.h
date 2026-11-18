@@ -48,6 +48,15 @@ struct Ini {
 std::wstring real_path(const std::wstring &p);
 bool is_plain_child(const std::wstring &real_parent, const std::wstring &child_path, const std::wstring &name);
 
+// Review r369 audit F1: folders COGBox made itself. dir_claim writes a random token into <dir>\.cogbox-owned and keeps it
+// in <COGBox>\fabricator\owned.txt; dir_owned is true only for a folder holding a token from that list (a mod or a
+// hand-made folder can't know one). mods_remove_tree removes only such folders. The token moves with the folder.
+bool dir_claim(const std::string &dir);
+bool dir_owned(const std::string &dir);
+std::string dir_owned_token(const std::string &dir);   // "" none
+void dir_disown_token(const std::string &tok);         // after the folder is gone
+bool running_under_wine();
+
 // Review r369: a game program (gow1.exe, gow2.exe, gow3.exe, gowj.exe) is running, started by COGBox or not (Steam,
 // a shortcut, the exe itself) - what the mods folder's writers check besides the launcher's own a.run.proc. Looked up
 // at most once a second (the answer is kept); any thread.

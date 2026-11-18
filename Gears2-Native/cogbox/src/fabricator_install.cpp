@@ -81,7 +81,7 @@ static std::string backup_name(const std::string &root, const std::string &folde
         // taken: by this same mod's older backup (or, after a crash, only its .old-<cand>) -> that name, which to_backup
         // replaces or recovers; by another mod's, or by something COGBox didn't make -> the next name
         const std::string &have = present(at) ? at : old;
-        if (!cur || !plain_dir(attrs_of(have))) continue;
+        if (!cur || !plain_dir(attrs_of(have)) || !dir_owned(have)) continue;   // audit F1: only COGBox's own is replaced
         const auto r = fab_read_record(have);
         if (r && fab_same_install(*r, FabInstallItem{cur->source, cur->name, cur->version, cur->sha256})) return cand;
     }
@@ -103,7 +103,7 @@ static std::string to_backup(int g, const std::string &folder_in)
     // is never another mod's backup.
     const std::string old = join(root, ".old-" + folder);
     if (present(old)) {
-        if (!plain_dir(attrs_of(old)) || !fab_read_record(old))
+        if (!plain_dir(attrs_of(old)) || !fab_read_record(old) || !dir_owned(old))
             return "The Fabricator's backup folder has a \".old-" + folder + "\" COGBox didn't make - move it away first.";
         if (!present(bak)) {   // a crash after putting it aside, before the move: it is still the backup
             if (!MoveFileExW(widen(old).c_str(), widen(bak).c_str(), 0))
@@ -115,7 +115,7 @@ static std::string to_backup(int g, const std::string &folder_in)
     }
     const bool hadOld = present(bak);
     if (hadOld) {
-        if (!plain_dir(attrs_of(bak)) || !fab_read_record(bak))
+        if (!plain_dir(attrs_of(bak)) || !fab_read_record(bak) || !dir_owned(bak))
             return "The Fabricator's backup folder has a \"" + folder + "\" COGBox didn't make - move it away first.";
         if (!MoveFileExW(widen(bak).c_str(), widen(old).c_str(), 0))
             return "Couldn't put the older backup of \"" + folder + "\" aside (is a file in it open?).";
@@ -163,14 +163,14 @@ std::string fab_install_unpack(const FabInstallPlan &p, std::vector<std::string>
     std::string e = check_zip(p);
     if (!e.empty()) return e;
     const std::string part = join(mods_dir(p.g), p.folder) + ".partial";
-    mods_remove_tree(widen(part));   // what an earlier, failed try left
-    if (present(part)) return "An unfinished install of this mod is still there and couldn't be removed.";
+    mods_remove_tree(widen(part));   // what an earlier, failed try left (only a folder COGBox made: audit F1)
+    if (present(part)) return "A folder named \"" + p.folder + ".partial\" is in the mods folder and COGBox didn't make it (or couldn't remove it) - move it away first.";
     std::string err;
     FabInstallRecord rec;   // COGBox's own: a fabricator.json in the zip is never unpacked (mods_unpack_zip_in)
     rec.source = p.item.source; rec.name = p.item.name; rec.version = p.item.version; rec.sha256 = p.item.sha256;
     // the record first: a .partial an unpack cut short (COGBox closed or crashed) is then COGBox's, and the next start's
     // sweep (fab_sweep_partials) removes it
-    if (!make_dirs(part) || !fab_write_record(part, rec)) {
+    if (!make_dirs(part) || !dir_claim(part) || !fab_write_record(part, rec)) {   // dir_claim: COGBox's own (audit F1)
         mods_remove_tree(widen(part));
         return "Couldn't write the mod's record (is the disk full?).";
     }
@@ -193,7 +193,7 @@ void fab_sweep_partials(int g)
     for (const std::string &n : mods_entries(g)) {
         if (n.size() <= 8 || lower_s(n.substr(n.size() - 8)) != ".partial") continue;
         const std::string p = join(mods_dir(g), n);
-        if (plain_dir(attrs_of(p)) && fab_read_record(p)) mods_remove_tree(widen(p));
+        if (plain_dir(attrs_of(p)) && dir_owned(p)) mods_remove_tree(widen(p));   // only COGBox's own (audit F1)
     }
 }
 

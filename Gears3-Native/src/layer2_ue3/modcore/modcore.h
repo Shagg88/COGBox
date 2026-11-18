@@ -372,6 +372,7 @@ namespace modcore
         for (const auto& e : std::filesystem::directory_iterator(m.dir / "config", ec))
             if (e.is_regular_file(ec) && Lower(U8(e.path().extension())) == ".ini") out.push_back(e.path());
         std::sort(out.begin(), out.end());
+        if (out.size() > 64) out.resize(64);   // review r369 audit F3: a mod has a handful; never an unbounded merge
         return out;
     }
 
