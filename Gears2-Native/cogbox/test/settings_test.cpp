@@ -239,6 +239,43 @@ std::string random_case(std::mt19937& r) {
 
 int summary() {
     int fails = 0;
+    // Judgment and Gears 1 HDR must opt into native scene grading as well as HDR presentation.
+    // Cover older ports, HDR off, other games and both native / DLSS selections.
+    {
+        for (int g = 0; g < kGameCount; ++g) for (bool hdr : { false, true })
+        for (bool native : { false, true }) for (bool other_native : { false, true })
+        for (bool ui : { false, true }) for (int aa : { 0, 3 }) {
+            Environment e;
+            const std::string native_flag = g == static_cast<int>(Game::Gears1) ? "gow1_hdr_native" : "gowj_hdr_native";
+            const std::string other_flag = native_flag == "gow1_hdr_native" ? "gowj_hdr_native" : "gow1_hdr_native";
+            e.cap.exe_has = [native, other_native, ui, native_flag, other_flag](const std::string& n) {
+                return (native && n == native_flag) || (other_native && n == other_flag) || (ui && n == "gow2_hdr_ui_automatic") ||
+                       n == "gow2_upscale_mode";
+            };
+            e.cap.file_next_to_exe = [](const std::string& n) { return n == "nvngx_dlss.dll"; };
+            e.gpus = { "NVIDIA GeForce RTX 4090" };
+            const Game game = static_cast<Game>(g);
+            Store st; Settings s = st.view(game, e);
+            s.set("HDR", hdr ? 1 : 0); s.set("AAMode", aa);
+            std::vector<std::string> notes;
+            const auto args = build_args(game, effective_version(game, s, e), s, e, &notes);
+            auto has = [&](const std::string& arg) {
+                return std::find(args.begin(), args.end(), arg) != args.end();
+            };
+            const bool supported_game = game == Game::Judgment || game == Game::Gears1;
+            const bool expected = supported_game && hdr && native;
+            bool warned = false;
+            for (const auto& note : notes) if (note.find("native HDR needs a game build") != std::string::npos) warned = true;
+            if (has("--" + native_flag + "=true") != expected || has("--" + other_flag + "=true") ||
+                has("--gow2_hdr_ui_automatic=true") != (expected && ui) ||
+                has("--present_hdr=true") != hdr || has("--gow2_upscaler=dlss") != (aa == 3) ||
+                warned != (supported_game && hdr && !native) ||
+                has("--gowj_hdr_single_pass=true") || has("--gow2_hdr_compact_targets=true")) {
+                std::cout << "FAIL native HDR launch: game=" << g << " hdr=" << hdr << " native=" << native << " other_native=" << other_native
+                          << " ui=" << ui << " aa=" << aa << "\n"; ++fails;
+            }
+        }
+    }
     const char* gn[3] = { "Gears 2", "Gears 3", "Judgment" };
     for (int g = 0; g < 3; ++g) {
         std::map<std::string, int> per;
