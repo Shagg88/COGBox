@@ -1153,6 +1153,11 @@ REXCVAR_DEFINE_INT32(gow2_ao_debug, 0, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_upscale_jitter_sign, 1, "Gears2",
                      "Diagnostic: 1 or -1 - the sign of the jitter handed to the upscaler (the image shift itself is "
                      "unchanged), for checking against the DLSS SDK's jitter overlay");
+REXCVAR_DEFINE_BOOL(gow2_upscale_depth_last_copy, false, "Gears2",
+                    "With --gow2_upscale_depth_at_resolve: the upscaler keeps the frame's LAST scene-depth copy, not the "
+                    "first. Gears 3 and Judgment copy their scene depth out twice in some frames, and the first copy holds "
+                    "only part of the scene (as XeGTAO found, PR #336). Off: the first copy, as before (Gears 2); Judgment and "
+                    "Gears 3 turn it on");
 REXCVAR_DEFINE_BOOL(gow2_upscale_capture_key, false, "Gears2",
                     "Developer (job 724): F9 saves 6 frames of upscaler input / output / motion / depth next to the log. "
                     "Off in releases (Shagg: developer tools never ship)");
@@ -6714,16 +6719,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->Dispatch(up_depth_pipe_, b, (up_w_ + 7) / 8, (up_h_ + 7) / 8, 1);
   }
   void UpscaleSaveDepth(const rr::RenderTarget& depth) {
+    // A scene-depth copy after this frame's scene colour copy (the upscaler has run) belongs to no upscale: skipped. And
+    // with --gow2_upscale_depth_last_copy every later eligible copy before it replaces the saved one: the last is the
+    // complete scene (Gears 3 / Judgment copy their depth out twice; the first holds part of it).
+    if (up_scene_done_) return;
+    ++up_depth_copies_frame_;
+    static const bool last_copy = REXCVAR_GET(gow2_upscale_depth_last_copy);
+    if (up_depth_saved_ && !last_copy) return;
     if (depth.key.msaa != 0 && !up_msaa_depth_skips_++)
       REXLOG_WARN("gow2_upscaler: frame {}: the scene depth is multisampled (base {} pitch {}, msaa {}) - not copied for "
                   "the upscaler (notes/80 s.10)", frame_ + 1, depth.key.base_tiles, depth.key.pitch_pixels, depth.key.msaa);
-    if (up_depth_saved_ || !up_depth_ || !up_depth_pipe_ || !depth.texture || depth.key.msaa != 0 ||
+    if (!up_depth_ || !up_depth_pipe_ || !depth.texture || depth.key.msaa != 0 ||
         depth.scale != up_scene_scale_ ||
         depth.width < up_w_ || depth.height < up_h_)
       return;  // the first frame (no texture yet) or a scale change: read at the colour resolve as before
     CopyUpscaleDepth(depth);
     up_depth_saved_ = true;
   }
+  // Diagnostic: scene-depth copies offered per frame before its scene colour copy (candidates, eligible or not).
+  uint32_t up_depth_copies_frame_ = 0;
+  uint64_t up_depth_copies_hist_[4] = {};
 
   // ---- Notes/80 s.7: SMAA T2x (smaa/smaa_passes.h) ----
   // The "upscaler" the renderer drives like DLSS: Evaluate gets the scene colour, motion and jitter of the frame.
@@ -9330,6 +9345,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (up_scene_done_) ++hl_st_.scene_frames;
       if (hl_st_.frames == 60 || hl_st_.frames % 600 == 0) HlStagesLog();
     }
+    if (up_depth_at_resolve_) ++up_depth_copies_hist_[std::min<uint32_t>(up_depth_copies_frame_, 3u)];
+    up_depth_copies_frame_ = 0;
     up_scene_done_ = false;
     hl_frame_logged_ = hl_frame_takes_ = 0;
     hl_armed_ = hl_taken_ = false;  // patch 0148 (hl_sources_ is cleared by RequestDisplay, which runs after this)
@@ -9369,6 +9386,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   up_inputs_only_ ? "no upscaler" : "with the upscaler");
       if (up_dc_pipe_) REXLOG_INFO("gow2_fg_motion_depth_check: depth check on {} frames", up_dc_frames_);
       fg_made_ = fg_resets_ = up_dc_frames_ = 0;
+    }
+    if (frame_ % uint64_t(log_every_) == 0 && up_depth_at_resolve_) {
+      static const bool last_copy = REXCVAR_GET(gow2_upscale_depth_last_copy);
+      REXLOG_INFO("gow2_upscaler: frames {}-{}: scene-depth copies offered before the scene copy - none {}, one {}, two {}, "
+                  "more {}; the upscaler keeps the {} eligible one", frame_ - uint64_t(log_every_) + 1, frame_, up_depth_copies_hist_[0],
+                  up_depth_copies_hist_[1], up_depth_copies_hist_[2], up_depth_copies_hist_[3], last_copy ? "last" : "first");
+      for (uint64_t& n : up_depth_copies_hist_) n = 0;
     }
     if (frame_ % uint64_t(log_every_) == 0) {
       REXLOG_INFO("gow2_upscaler: frames {}-{}: {}; upscaled {} (failed {}), jittered draws {:.0f}/frame, camera found "
