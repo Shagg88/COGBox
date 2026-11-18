@@ -849,6 +849,10 @@ class VulkanBackend final : public Backend {
     return pipelines_[handle]->failed.load() ? 0 : handle;
   }
   uint64_t PipelineMisses() const override { return pipeline_misses_; }
+  uint64_t PipelineFillsLeft() override {  // 0.6.5
+    std::lock_guard<std::mutex> lock(job_mutex_);
+    return fills_left_;
+  }
   uint64_t PipelineJobsLeft() override {
     std::lock_guard<std::mutex> lock(job_mutex_);
     // 0.6.5: background whole builds for the pipeline cache are not counted (no draw or load hold waits for them).

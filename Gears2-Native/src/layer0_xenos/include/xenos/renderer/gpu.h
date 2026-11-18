@@ -544,6 +544,8 @@ class Backend {
   // Patch 0061 ("Preparing shaders"): asynchronous pipeline jobs not finished yet (queued + being built), and a save of
   // the saved-pipeline library now (on this thread) if it has new entries.
   virtual uint64_t PipelineJobsLeft() { return 0; }
+  // 0.6.5 (Vulkan pipeline libraries): optimised whole builds still queued or running, for the pipeline cache.
+  virtual uint64_t PipelineFillsLeft() { return 0; }
   // Patch 0063: true while the asynchronous pipeline for this description is still being built (a waiting start-up
   // backlog job is moved to the front, as for a draw); false when ready, failed or never asked for.
   virtual bool PipelinePending(const GraphicsPipelineDesc& d) { (void)d; return false; }

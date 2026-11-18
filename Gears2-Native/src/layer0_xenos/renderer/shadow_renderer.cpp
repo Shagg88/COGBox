@@ -12614,6 +12614,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (!left) break;
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
+    // 0.6.5: with Vulkan pipeline libraries, the pipelines above were linked; their optimised whole builds go into the
+    // pipeline cache in the background - prepared means those too, so the next start takes them from the cache.
+    if (const uint64_t fills = backend_->PipelineFillsLeft()) {
+      REXLOG_INFO("gow2_renderer: preparing shaders: {} optimised pipeline builds for the cache still to go", fills);
+      write(queued, "optimising");
+      while (backend_->PipelineFillsLeft()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
     write(queued, "saving");
     backend_->SavePipelinesNow();
     const gpu::BackendStats& bs = backend_->Stats();
