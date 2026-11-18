@@ -12960,7 +12960,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           }
           blocked = want_pending >= want_cap;
         } else if (shaders_ready) {
-          blocked = (hot ? backend_->LiveJobsLeft() : backend_->PipelineJobsLeft()) >= cap;
+          // (review) In play half the cap, so the draws' own live requests wait behind few hot jobs.
+          blocked = hot ? backend_->LiveJobsLeft() >= (loading ? cap : (cap + 1) / 2)
+                        : backend_->PipelineJobsLeft() >= cap;
         }
         if (!shaders_ready || blocked) {
           // 0.6.1 (job 1752: with background conversion the wanted records' shaders sat behind the whole backlog and

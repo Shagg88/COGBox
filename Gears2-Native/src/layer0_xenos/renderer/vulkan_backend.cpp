@@ -859,9 +859,9 @@ class VulkanBackend final : public Backend {
     const uint64_t all = jobs_.size() + backlog_jobs_.size() + fill_jobs_.size() + jobs_busy_;  // (review r5555)
     return all > fills_left_ ? all - fills_left_ : 0;
   }
-  uint64_t LiveJobsLeft() override {  // 0.6.5: live jobs still queued (busy workers are not split by queue here)
+  uint64_t LiveJobsLeft() override {  // 0.6.5 (backlog_busy_ also counts fill jobs - fine here)
     std::lock_guard<std::mutex> lock(job_mutex_);
-    return jobs_.size();
+    return jobs_.size() + (jobs_busy_ > backlog_busy_ ? jobs_busy_ - backlog_busy_ : 0);
   }
   void SetPipelineBacklog(bool on) override { pipeline_backlog_ = on; }  // patch 0076
   // A queued (not started) job for this pipeline, removed from its queue.
