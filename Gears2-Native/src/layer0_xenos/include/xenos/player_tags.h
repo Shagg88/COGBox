@@ -113,6 +113,16 @@ class Met {
   std::unordered_map<uint64_t, int64_t> due_;   // when due (>= 0), or -(when due again) once reported and not seen since
 };
 
+// The kill feed (every game's HUD draws its names as plain text): a name with the tag's markup taken out - every `before`
+// and `after` (the tag itself stays). Empty markup: the name as it is.
+inline std::string StripMarkup(std::string name, const std::string& before, const std::string& after) {
+  for (const std::string* m : {&before, &after}) {
+    if (m->empty()) continue;
+    for (size_t at; (at = name.find(*m)) != std::string::npos;) name.erase(at, m->size());
+  }
+  return name;
+}
+
 }  // namespace xenos::tags
 
 // The game's shared cache: the tag for this XUID if known, else asked in the background (never blocks). Empty when the

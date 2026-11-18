@@ -1112,3 +1112,25 @@ void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
     REXLOG_INFO("gow3_aspect: present at the front buffer's own shape {}", set);
   }
 }
+
+// GitHub #353, the kill feed: the HUD keeps copies of the names in its DeathData entries and draws them through
+// Canvas's text calls, which draw the text as it is - so the tag's grey markup (rendered by the Flash scenes: lobby,
+// scoreboard) would show as text, for the one frame before name_tags.cpp takes it out of the stored copy. These are the
+// engine's text routines under Canvas.DrawText / TextSize / StrLen (exec functions 82749400, 82749AE8, 82749850 call them with the
+// script's copy of the text): the markup comes out of any argument holding it - the text itself, or an FString whose
+// data it is - before the original runs.
+namespace {
+void StripTextArgs(PPCContext& ctx, uint8_t* base) {
+  for (const PPCRegister* r : {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10}) {
+    Ue3NameTagsStripText(base, r->u32);
+    if (r->u32 >= 0x40000000 && r->u32 < 0x80000000 && ue3::obj::Readable(r->u32, 4))
+      Ue3NameTagsStripText(base, ue3::obj::Read32(r->u32));   // an FString: {data, count, max}
+  }
+}
+}  // namespace
+#define TEXT_HOOK(addr)                                                                extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);      extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {              StripTextArgs(ctx, base);                                                            __imp__sub_##addr(ctx, base);                                                      }
+TEXT_HOOK(82746EE0)  // DrawText's
+TEXT_HOOK(82748790)  // DrawText's
+TEXT_HOOK(82747930)  // TextSize's
+TEXT_HOOK(827486C0)  // StrLen's
+#undef TEXT_HOOK

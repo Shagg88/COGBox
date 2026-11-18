@@ -88,3 +88,28 @@ extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
   Ue3ConsoleRunQueued(ctx, base);
   Gow1AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
 }
+
+// GitHub #353, the kill feed: Gears 1's HUD draws each kill-feed line from the players' live names (DeathData holds the
+// killer and victim, not their text) through Canvas's text calls, which draw the text as it is - so the tag's grey markup
+// (rendered by the UI scenes: lobby, scoreboard) would show as text there. These are the engine's text routines under
+// Canvas.DrawText / DrawTextClipped / TextSize / StrLen (their exec functions 8233BE60, 8233C058, 8233C4D0, 8233C210 call
+// them with the script's copy of the text): the markup comes out of any argument holding it before the original runs.
+namespace {
+void StripTextArgs(PPCContext& ctx, uint8_t* base) {
+  for (const PPCRegister* r : {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10})
+    Ue3NameTagsStripText(base, r->u32);
+}
+}  // namespace
+#define GOW1_TEXT_HOOK(addr)                                                         \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);    \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {          \
+    StripTextArgs(ctx, base);                                                        \
+    __imp__sub_##addr(ctx, base);                                                    \
+  }
+GOW1_TEXT_HOOK(8233B5D0)  // DrawText's
+GOW1_TEXT_HOOK(8233AD88)  // DrawText's and DrawTextClipped's
+GOW1_TEXT_HOOK(823A38F0)  // DrawText's and DrawTextClipped's
+GOW1_TEXT_HOOK(8233CD68)  // DrawTextClipped's and TextSize's
+GOW1_TEXT_HOOK(82398848)  // TextSize's
+GOW1_TEXT_HOOK(8233B538)  // StrLen's
+#undef GOW1_TEXT_HOOK

@@ -10,6 +10,8 @@
 // Bots (XUID 0) and offline play are left alone. Our code (MIT).
 #pragma once
 
+#include <cstdint>
+
 struct Ue3NameTagStyle {
   const char* before = "";  // markup before "#1234", e.g. Gears 3's "<font color='#808080'>" (its Flash text fields)
   const char* after = "";   // ... and after it
@@ -26,3 +28,8 @@ struct Ue3NameTagStyle {
 // Once per engine tick (it paces itself); the game thread, before Ue3ConsoleRunQueued, when class_set. `objects_ready`: true once ue3::obj is open (the
 // game's layer 3 opens it). Off with --cogbox_name_tags=false.
 void Ue3NameTagsTick(bool (*objects_ready)(), const Ue3NameTagStyle& style);
+
+// The kill feed, where a game's HUD draws a player's live name through the engine's text calls (Gears 1): the tag's
+// markup taken out of the guest text at `text` (big-endian UTF-16, 0-terminated - the call's own copy), in place.
+// Nothing when it holds no markup. Called by the game's hooks on those text calls (layer 3).
+void Ue3NameTagsStripText(uint8_t* base, uint32_t text);

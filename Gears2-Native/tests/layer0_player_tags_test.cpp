@@ -69,3 +69,14 @@ TEST_CASE("players met: a failed report is sent again; one report holds at most 
   CHECK(m.TakeReport(0).empty());                            // the failed ones wait
   CHECK(m.TakeReport(Cache::kFailedRetryMs).size() == Met::kBatch);
 }
+
+// Kill feed: the tag's markup comes out of a kill-feed name (the HUD draws text as it is); the tag itself stays.
+TEST_CASE("kill feed: the tag's markup is removed, the tag kept", "[tags]") {
+  using xenos::tags::StripMarkup;
+  CHECK(StripMarkup("Flapper<font color='#808080'>#5531</font>", "<font color='#808080'>", "</font>") == "Flapper#5531");
+  CHECK(StripMarkup("Flapper<Color:R=0.5,G=0.5,B=0.5,A=1.0>#5531<Color:/>", "<Color:R=0.5,G=0.5,B=0.5,A=1.0>", "<Color:/>") ==
+        "Flapper#5531");
+  CHECK(StripMarkup("Flapper#5531", "<font color='#808080'>", "</font>") == "Flapper#5531");  // nothing to take out
+  CHECK(StripMarkup("Dom", "", "") == "Dom");                                                // no markup in use
+  CHECK(StripMarkup("A<b>#1</b> killed C<b>#2</b>", "<b>", "</b>") == "A#1 killed C#2");      // every one
+}
