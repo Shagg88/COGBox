@@ -652,7 +652,8 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
           listed.insert(k);
           auto it = files.find(k);
           if (it != files.end()) {
-            line = std::to_string(fs::file_size(it->second, ec)) + " 0 " + (tok.size() == 5 ? tok[2] + " " : std::string()) + path + " " +
+            line = std::to_string(fs::file_size(it->second, ec)) + " " + std::to_string(ue3::WholeCompressedSize(it->second)) + " " +  // 0.6.5 (#367): its own uncompressed size
+                   (tok.size() == 5 ? tok[2] + " " : std::string()) + path + " " +
                    Md5Hex(it->second);
             ++changed;
           }
@@ -668,7 +669,8 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
         std::string rel = rex::path_to_utf8(host.filename());
         std::string guest = "..\\" + rex::path_to_utf8(topdir.filename()) + "\\" + k.substr(top.size() + 1);
         guest = guest.substr(0, guest.size() - rel.size()) + rel;   // keep the mod file's own name casing
-        added += std::to_string(fs::file_size(host, ec)) + (fields_seen == 5 ? " 0 0 " : " 0 ") + guest + " " + Md5Hex(host) + "\r\n";
+        added += std::to_string(fs::file_size(host, ec)) + " " + std::to_string(ue3::WholeCompressedSize(host)) +  // 0.6.5 (#367)
+                 (fields_seen == 5 ? " 0 " : " ") + guest + " " + Md5Hex(host) + "\r\n";
         ++changed;
       }
       outText = added + outText;

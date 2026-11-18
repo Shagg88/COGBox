@@ -33,5 +33,10 @@ bool ReadPackageExportPaths(const std::filesystem::path& file, std::set<std::str
 // Shagg's to-do 2: "version N licensee L" (or "compressed as a whole, version N ...") of a package's summary, for the
 // voice-language log when a table can't be read.
 std::string DescribePackageSummary(const std::filesystem::path& file);
+// 0.6.5 (GitHub #367, review r367): a package compressed as a whole (chunks from byte 0: tag, block size 0x20000) - the
+// total of its chunks' uncompressed sizes, which is the second field of its line in the game's table of contents
+// (Xbox360TOC*.txt: <size> <uncompressed size> ...; 0 for every other file). 0 when the file is not one, or a chunk header
+// does not add up.
+uint64_t WholeCompressedSize(const std::filesystem::path& file);
 
 }  // namespace ue3

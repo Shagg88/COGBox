@@ -270,6 +270,45 @@ std::string DescribePackageSummary(const std::filesystem::path& file) {
   return "version " + std::to_string(Be32(h + 4) & 0xFFFF) + " licensee " + std::to_string(Be32(h + 4) >> 16);
 }
 
+uint64_t WholeCompressedSize(const std::filesystem::path& file) {
+  std::ifstream in(file, std::ios::binary);
+  if (!in) return 0;
+  in.seekg(0, std::ios::end);
+  const std::streamoff size_s = in.tellg();
+  if (size_s < 16) return 0;
+  const uint64_t size = uint64_t(size_s);
+  auto read16 = [&](uint64_t offset, uint8_t* dst) {
+    in.clear();
+    in.seekg(std::streamoff(offset));
+    return bool(in.read(reinterpret_cast<char*>(dst), 16));
+  };
+  uint8_t h[16];
+  if (!read16(0, h) || Be32(h) != kTag || Be32(h + 4) != 0x20000u) return 0;
+  // Chunk headers only (nothing is decoded): {tag, block size, compressed total, uncompressed total}, then one
+  // {compressed, uncompressed} pair per block, then the blocks; the chunks follow each other to the end of the file.
+  uint64_t total = 0, at = 0;
+  while (at < size) {
+    if (size - at < 16 || !read16(at, h) || Be32(h) != kTag) {
+      // Xbox files are padded to whole sectors: zeros after the last chunk end the file (checked on Judgment's
+      // GearGame_LOC_INT: 163,840 bytes, 228,942 uncompressed as its table of contents says); anything else is not one.
+      if (!total) return 0;
+      in.clear();
+      in.seekg(std::streamoff(at));
+      for (char c; at < size && in.get(c); ++at)
+        if (c != 0) return 0;
+      return at == size ? total : 0;
+    }
+    const uint32_t block_size = Be32(h + 4), ctot = Be32(h + 8), utot = Be32(h + 12);
+    if (block_size == 0 || block_size > (1u << 20) || utot == 0 || ctot == 0) return 0;
+    const uint64_t blocks = (uint64_t(utot) + block_size - 1) / block_size;
+    const uint64_t next = at + 16 + blocks * 8 + ctot;
+    if (next > size) return 0;
+    total += utot;
+    at = next;
+  }
+  return total;
+}
+
 bool ReadPackageExportPaths(const std::filesystem::path& file, std::set<std::string>* out) {
   std::ifstream in(file, std::ios::binary);
   if (!in) return false;
