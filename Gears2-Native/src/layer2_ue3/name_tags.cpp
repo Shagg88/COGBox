@@ -381,6 +381,16 @@ void Ue3NameTagsTextHookChecks(const Ue3TextHookCheck* checks, size_t count) {
   g_check_count = count;
 }
 
+namespace {
+// Once per run, the first time a draw call's text is cleaned: proof in the log that the kill feed's names reach the
+// hooks through the Canvas natives (review r368b).
+uint32_t NoteCleaned(uint32_t copy) {
+  static std::atomic<bool> noted{false};
+  if (!noted.exchange(true, std::memory_order_relaxed)) REXLOG_INFO("name tags: a tagged name cleaned in a Canvas draw call (the kill feed's path; first time this run)");
+  return copy;
+}
+}  // namespace
+
 Ue3CanvasTextCall::Ue3CanvasTextCall() { ++t_canvas_calls; }
 Ue3CanvasTextCall::~Ue3CanvasTextCall() { --t_canvas_calls; }
 
@@ -388,7 +398,7 @@ uint32_t Ue3NameTagsTextArg(uint32_t arg) {
   if (t_canvas_calls <= 0 || !g_text_ok.load(std::memory_order_acquire)) return arg;   // only the script's draw calls
   if (Mk().before.empty() && Mk().after.empty()) return arg;   // tags without markup: nothing to take out
   uint32_t count = 0, len = 0;
-  if (const uint32_t c = CleanCopy(arg, &count, &len)) return c;   // the text itself
+  if (const uint32_t c = CleanCopy(arg, &count, &len)) return NoteCleaned(c);   // the text itself
   // an FString {data, count, max} - only when its count is its text's length + 1 and max at least that, so another
   // struct whose first word points at a name is never taken for one: a scratch FString of the clean copy
   if (arg < 0x40000000 || arg >= 0x80000000 || (arg & 3) || !obj::Readable(arg, 12)) return arg;
@@ -398,5 +408,5 @@ uint32_t Ue3NameTagsTextArg(uint32_t arg) {
   if (!c || len + 1 != num) return arg;
   const uint32_t f = c + kSlotFString;
   if (!obj::Write32(f, c) || !obj::Write32(f + 4, count) || !obj::Write32(f + 8, count)) return arg;
-  return f;
+  return NoteCleaned(f);
 }
