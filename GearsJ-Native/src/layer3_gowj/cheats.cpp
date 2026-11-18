@@ -33,6 +33,7 @@
 
 #include <ue3/console.h>
 #include <ue3/name_tags.h>
+#include <iterator>   // std::size
 #include <ue3/objects.h>  // GitHub #353
 #include <ue3/match_guard.h>
 
@@ -120,18 +121,25 @@ extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
 // Canvas's text calls, which draw the text as it is - so the tag's grey markup (rendered by the Flash scenes: lobby,
 // scoreboard) would show as text, for the one frame before name_tags.cpp takes it out of the stored copy. These are the
 // engine's text routines under Canvas.DrawText / TextSize / StrLen (exec functions 8275ED00, 8275F540, 8275F2A8 call them with the
-// script's copy of the text): the markup comes out of any argument holding it - the text itself, or an FString whose
+// script's copy of the text): the original gets a copy, without the markup, of any argument holding it - the text itself, or an FString whose
 // data it is - before the original runs.
 namespace {
-void StripTextArgs(PPCContext& ctx, uint8_t* base) {
-  for (const PPCRegister* r : {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10}) {
-    Ue3NameTagsStripText(base, r->u32);
-    if (r->u32 >= 0x40000000 && r->u32 < 0x80000000 && ue3::obj::Readable(r->u32, 4))
-      Ue3NameTagsStripText(base, ue3::obj::Read32(r->u32));   // an FString: {data, count, max}
-  }
+// Each text argument through Ue3NameTagsTextArg: a scratch copy without the tag's markup in place of text holding it
+// (the caller's text is never changed); a register is rewritten only when its value is replaced.
+void CleanTextArgs(PPCContext& ctx) {
+  for (PPCRegister* r : {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10})
+    if (const uint32_t v = Ue3NameTagsTextArg(r->u32); v != r->u32) r->u64 = v;
 }
+// The hooks act only once these Canvas natives are found at these addresses (this build's; checked at start-up).
+constexpr Ue3TextHookCheck kTextHookChecks[] = {{"DrawText", 0x8275ED00}, {"TextSize", 0x8275F540}, {"StrLen", 0x8275F2A8}};
+const bool kTextHookChecksSet = (Ue3NameTagsTextHookChecks(kTextHookChecks, std::size(kTextHookChecks)), true);
 }  // namespace
-#define TEXT_HOOK(addr)                                                                extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);      extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {              StripTextArgs(ctx, base);                                                            __imp__sub_##addr(ctx, base);                                                      }
+#define TEXT_HOOK(addr)                                                             \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);     \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {           \
+    CleanTextArgs(ctx);                                                             \
+    __imp__sub_##addr(ctx, base);                                                   \
+  }
 TEXT_HOOK(8275C490)  // DrawText's
 TEXT_HOOK(8275DFF8)  // DrawText's
 TEXT_HOOK(8275DE88)  // TextSize's

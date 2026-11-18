@@ -25,7 +25,8 @@
 #include <rex/ppc/context.h>
 
 #include <ue3/console.h>
-#include <ue3/name_tags.h>  // GitHub #353
+#include <ue3/name_tags.h>
+#include <iterator>   // std::size  // GitHub #353
 #include <ue3/match_guard.h>
 
 REXCVAR_DEFINE_BOOL(gow1_cheats, false, "Gears1",
@@ -93,17 +94,22 @@ extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
 // killer and victim, not their text) through Canvas's text calls, which draw the text as it is - so the tag's grey markup
 // (rendered by the UI scenes: lobby, scoreboard) would show as text there. These are the engine's text routines under
 // Canvas.DrawText / DrawTextClipped / TextSize / StrLen (their exec functions 8233BE60, 8233C058, 8233C4D0, 8233C210 call
-// them with the script's copy of the text): the markup comes out of any argument holding it before the original runs.
+// them with the script's copy of the text): the original gets a copy of any text argument without the markup.
 namespace {
-void StripTextArgs(PPCContext& ctx, uint8_t* base) {
-  for (const PPCRegister* r : {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10})
-    Ue3NameTagsStripText(base, r->u32);
+// Each text argument through Ue3NameTagsTextArg: a scratch copy without the tag's markup in place of text holding it
+// (the caller's text is never changed); a register is rewritten only when its value is replaced.
+void CleanTextArgs(PPCContext& ctx) {
+  for (PPCRegister* r : {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10})
+    if (const uint32_t v = Ue3NameTagsTextArg(r->u32); v != r->u32) r->u64 = v;
 }
+// The hooks act only once these Canvas natives are found at these addresses (this build's; checked at start-up).
+constexpr Ue3TextHookCheck kTextHookChecks[] = {{"DrawText", 0x8233BE60}, {"DrawTextClipped", 0x8233C058}, {"TextSize", 0x8233C4D0}, {"StrLen", 0x8233C210}};
+const bool kTextHookChecksSet = (Ue3NameTagsTextHookChecks(kTextHookChecks, std::size(kTextHookChecks)), true);
 }  // namespace
 #define GOW1_TEXT_HOOK(addr)                                                         \
   extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);    \
   extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {          \
-    StripTextArgs(ctx, base);                                                        \
+    CleanTextArgs(ctx);                                                              \
     __imp__sub_##addr(ctx, base);                                                    \
   }
 GOW1_TEXT_HOOK(8233B5D0)  // DrawText's

@@ -10,6 +10,7 @@
 // Bots (XUID 0) and offline play are left alone. Our code (MIT).
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 struct Ue3NameTagStyle {
@@ -29,7 +30,14 @@ struct Ue3NameTagStyle {
 // game's layer 3 opens it). Off with --cogbox_name_tags=false.
 void Ue3NameTagsTick(bool (*objects_ready)(), const Ue3NameTagStyle& style);
 
-// The kill feed, where a game's HUD draws a player's live name through the engine's text calls (Gears 1): the tag's
-// markup taken out of the guest text at `text` (big-endian UTF-16, 0-terminated - the call's own copy), in place.
-// Nothing when it holds no markup. Called by the game's hooks on those text calls (layer 3).
-void Ue3NameTagsStripText(uint8_t* base, uint32_t text);
+// The kill feed's draw-time half: a game's layer 3 hooks the engine's text routines (under Canvas.DrawText / TextSize /
+// StrLen) and passes each text argument through Ue3NameTagsTextArg - the argument itself, or (when it is text, or an
+// FString whose text holds the tag's markup) a scratch copy without the markup, in guest memory of our own. The caller's
+// text is never changed. Nothing happens until the worker has checked that the game's Canvas natives are the ones the
+// hooks were written for (Ue3NameTagsTextHookChecks, from a static initializer of the game file that has the hooks).
+struct Ue3TextHookCheck {
+  const char* function;   // a Canvas function, e.g. "DrawText"
+  uint32_t exec;          // its native's code address in this build
+};
+void Ue3NameTagsTextHookChecks(const Ue3TextHookCheck* checks, size_t count);
+uint32_t Ue3NameTagsTextArg(uint32_t arg);
