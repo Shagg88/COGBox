@@ -58,10 +58,52 @@ static std::string fold_case(const std::string &s)
     return k;
 }
 // ---- folder names ----
+// An accented Latin letter as plain ASCII (U+00C0-U+017F: Latin-1 and Latin Extended-A), "" for anything else
+// (x and / signs, letters of other scripts).
+static const char *latin_ascii(unsigned cp)
+{
+    static const char *const k00C0[64] = {
+        "A", "A", "A", "A", "A", "A", "AE", "C", "E", "E", "E", "E", "I", "I", "I", "I",
+        "D", "N", "O", "O", "O", "O", "O", "", "O", "U", "U", "U", "U", "Y", "Th", "ss",
+        "a", "a", "a", "a", "a", "a", "ae", "c", "e", "e", "e", "e", "i", "i", "i", "i",
+        "d", "n", "o", "o", "o", "o", "o", "", "o", "u", "u", "u", "u", "y", "th", "y" };
+    static const char *const k0100[128] = {
+        "A", "a", "A", "a", "A", "a", "C", "c", "C", "c", "C", "c", "C", "c", "D", "d",
+        "D", "d", "E", "e", "E", "e", "E", "e", "E", "e", "E", "e", "G", "g", "G", "g",
+        "G", "g", "G", "g", "H", "h", "H", "h", "I", "i", "I", "i", "I", "i", "I", "i",
+        "I", "i", "IJ", "ij", "J", "j", "K", "k", "k", "L", "l", "L", "l", "L", "l", "L",
+        "l", "L", "l", "N", "n", "N", "n", "N", "n", "n", "N", "n", "O", "o", "O", "o",
+        "O", "o", "OE", "oe", "R", "r", "R", "r", "R", "r", "S", "s", "S", "s", "S", "s",
+        "S", "s", "T", "t", "T", "t", "T", "t", "U", "u", "U", "u", "U", "u", "U", "u",
+        "U", "u", "U", "u", "W", "w", "Y", "y", "Y", "Z", "z", "Z", "z", "Z", "z", "s" };
+    if (cp >= 0xC0 && cp < 0x100) return k00C0[cp - 0xC0];
+    if (cp >= 0x100 && cp < 0x180) return k0100[cp - 0x100];
+    return "";
+}
+
 std::string mod_folder_chars(const std::string &base)
 {
+    // accented Latin letters folded to ASCII first ("ÃœnÃ¯code MÃ¶d" -> "Unicode Mod"); other non-ASCII text is dropped
+    std::string folded;
+    for (size_t i = 0; i < base.size();) {
+        const unsigned char c = (unsigned char)base[i];
+        if (c < 0x80) { folded += (char)c; i++; continue; }
+        const size_t len = (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 1;
+        unsigned cp = 0;
+        bool ok = i + len <= base.size() && len > 1;
+        if (ok) {
+            cp = c & (len == 2 ? 0x1F : len == 3 ? 0x0F : 0x07);
+            for (size_t k = 1; k < len; k++) {
+                const unsigned char d = (unsigned char)base[i + k];
+                if ((d & 0xC0) != 0x80) { ok = false; break; }
+                cp = (cp << 6) | (d & 0x3F);
+            }
+        }
+        if (ok) folded += latin_ascii(cp);
+        i += ok ? len : 1;
+    }
     std::string name;
-    for (char c : base) if (isalnum((unsigned char)c) || c == ' ' || c == '_' || c == '-' || c == '.' || c == '(' || c == ')') name += c;
+    for (char c : folded) if (isalnum((unsigned char)c) || c == ' ' || c == '_' || c == '-' || c == '.' || c == '(' || c == ')') name += c;
     while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();
     return name;
 }

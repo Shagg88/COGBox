@@ -143,8 +143,8 @@ void run_add(const std::shared_ptr<FabJob> &j)
     if (j->from_folder) {
         if (!make_dirs(j->work_dir)) { j->problems = { "couldn't make the Fabricator's work folder (is the disk full?)" }; j->phase = FabJob::Failed; return; }
         j->zip = join(j->work_dir, base_name(j->source) + ".zip");   // its name is the mod's name when mod.ini has none
-        const std::string e = fab_pack_folder(j->source, j->zip, j->progress);
-        if (e == "cancelled") { drop_temp(*j); j->phase = FabJob::Cancelled; return; }
+        const std::string e = fab_pack_folder(j->source, j->zip, j->progress, &j->pack_left_out);
+        if (e == "cancelled" || (e.empty() && j->progress.cancel)) { drop_temp(*j); j->phase = FabJob::Cancelled; return; }
         if (!e.empty()) { drop_temp(*j); j->problems = { e }; j->phase = FabJob::Failed; return; }
         j->phase = FabJob::Checking;
     }
@@ -179,6 +179,11 @@ void run_pack(const std::shared_ptr<FabJob> &j)
     int q = FabJob::Queued;
     if (!j->phase.compare_exchange_strong(q, FabJob::Packing)) return;
     const std::string e = fab_pack_folder(j->source, j->zip, j->progress);
+    if (e.empty() && j->progress.cancel) {   // cancelled as it finished: no zip is left, as the screen says
+        DeleteFileW(widen(j->zip).c_str());
+        j->phase = FabJob::Cancelled;
+        return;
+    }
     if (e == "cancelled") { j->phase = FabJob::Cancelled; return; }
     if (!e.empty()) { j->problems = { e }; j->phase = FabJob::Failed; return; }
     j->phase = FabJob::Done;
@@ -408,12 +413,34 @@ bool fab_answer(App &a, const Modal &m)
 }
 
 // ---- once a frame -------------------------------------------------------------------------------------------------------
+// <mods>\<name>.partial folders with COGBox's record: Fabricator installs a closed (or crashed) COGBox never finished.
+// (The Mods tab's own .partial unpackings have no record and are left to it.)
+static void sweep_partials()
+{
+    for (int g = 0; g < G_COUNT; g++) {
+        const std::string dir = mods_dir(g);
+        WIN32_FIND_DATAW fd;
+        HANDLE f = FindFirstFileW((widen(dir) + L"\\*").c_str(), &fd);
+        if (f == INVALID_HANDLE_VALUE) continue;
+        std::vector<std::string> found;
+        do {
+            const std::string n = narrow(fd.cFileName);
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
+            if (n.size() > 8 && lower_s(n.substr(n.size() - 8)) == ".partial") found.push_back(join(dir, n));
+        } while (FindNextFileW(f, &fd));
+        FindClose(f);
+        for (const std::string &p : found)
+            if (fab_read_record(p)) mods_remove_tree(widen(p));
+    }
+}
+
 void fab_state_poll(App &a)
 {
     static bool swept = false;
-    if (!swept) {   // temporary zips a closed (or crashed) COGBox left; no job exists yet
+    if (!swept) {   // what a closed (or crashed) COGBox left: temporary zips, unfinished installs; no job exists yet
         swept = true;
         mods_remove_tree(widen(work_root()));
+        sweep_partials();
     }
     bool installing = false;
     for (auto &j : g_jobs)
@@ -427,7 +454,12 @@ void fab_state_poll(App &a)
         }
         if (j->kind != FabJob::Add) continue;
         const int ph = j->phase;
+        if (ph == FabJob::Asking && !(a.modal.open && a.modal.tag == "fabupdate" && a.modal.data == std::to_string(j->id))) {
+            j->phase = FabJob::Checked;   // its question was replaced by another one: asked again
+            continue;
+        }
         if (ph == FabJob::Checked) {
+            if (a.modal.open) continue;   // (decided once the open question is answered; no disk scan meanwhile)
             // the game it goes to: the LIBRARY's, or the one its mod.ini names
             int g = j->want_game;
             if (j->other_game) {
@@ -455,7 +487,6 @@ void fab_state_poll(App &a)
                 continue;
             }
             if (match.empty()) { j->phase = FabJob::Waiting; continue; }
-            if (a.modal.open) continue;   // asked once the open question is answered
             const std::string from = j->old_version.empty() ? "" : " " + j->old_version, to = j->info.version.empty() ? "" : " to " + j->info.version;
             // "Update Horde Bank 1.0 to 1.1?" - the name and versions as the mod gives them (not translated)
             ask(a, "fabupdate", g, "Update a mod", tr("Update") + std::string(" ") + j->name + from + to + "?\n\n" +
@@ -493,10 +524,12 @@ void fab_state_poll(App &a)
             std::string msg = j->plan.update ? trf("{1} is updated.", { j->name })
                             : j->game != j->want_game ? trf("{1} is added to {2} (its mod.ini is for it) and on.", { j->name, game_def(j->game).shortName })
                                                       : trf("{1} is added and on.", { j->name });
-            if (!j->left_out.empty()) {   // the program files not unpacked: the first 5 names, then how many more
+            std::vector<std::string> left = j->pack_left_out;   // a folder's (left out by the pack) and a zip's (by the unpack)
+            left.insert(left.end(), j->left_out.begin(), j->left_out.end());
+            if (!left.empty()) {   // the program files not added: the first 5 names, then how many more
                 std::string names;
-                for (size_t i = 0; i < j->left_out.size() && i < 5; i++) names += (i ? ", " : "") + base_name(j->left_out[i]);
-                if (j->left_out.size() > 5) names += " +" + std::to_string(j->left_out.size() - 5);
+                for (size_t i = 0; i < left.size() && i < 5; i++) names += (i ? ", " : "") + base_name(left[i]);
+                if (left.size() > 5) names += " +" + std::to_string(left.size() - 5);
                 msg += " " + trf("Left out (program files): {1}", { names });
             }
             set_message(a, msg, false);
@@ -517,7 +550,7 @@ void fab_state_shutdown()
     for (auto &j : g_jobs) j->progress.cancel = true;
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     while (std::chrono::steady_clock::now() < until && !worker().idle()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    if (!worker().idle()) return;   // still unpacking: its .partial is hidden from the game, and removed by the next try
+    if (!worker().idle()) return;   // still unpacking: its .partial is hidden from the game; the next start's sweep removes it
     for (auto &j : g_jobs) {
         if (j->kind != FabJob::Add) continue;
         if (j->phase == FabJob::Unpacked) fab_install_abandon(j->plan);

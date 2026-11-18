@@ -51,6 +51,7 @@ struct FabJob {
     std::string old_version;     // (UI) an update: the installed version
     FabInstallPlan plan;         // (UI) written before Unpacking, read by the worker
     std::vector<std::string> left_out;   // (worker) program files the unpack left out
+    std::vector<std::string> pack_left_out;   // (worker) a folder's program files the pack left out
     bool told_close = false;     // "Close the game first." said for this job
     bool said = false;           // (UI) its failure was said (a failed job leaves the list once it is)
 
@@ -92,5 +93,6 @@ void fab_uninstall_ask(App &a, int g, const ModItem &m);
 
 // Once a frame on the UI thread (main.cpp): jobs moved on, messages said.
 void fab_state_poll(App &a);
-// At exit: packs cancelled, the worker given a moment, unfinished installs' .partial folders and temporary zips removed.
+// At exit: packs cancelled, the worker given a moment, unfinished installs' .partial folders and temporary zips removed
+// (an unpack still running leaves its .partial: the next start's sweep removes it).
 void fab_state_shutdown();

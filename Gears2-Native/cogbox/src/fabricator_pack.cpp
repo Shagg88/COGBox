@@ -138,13 +138,15 @@ std::string zip_files(const std::string &dir, const std::vector<PackFile> &files
 
 }  // namespace
 
-std::string fab_pack_folder(const std::string &folder, const std::string &zip_path, FabProgress &p)
+std::string fab_pack_folder(const std::string &folder, const std::string &zip_path, FabProgress &p, std::vector<std::string> *left_out)
 {
-    return fab_pack_folder_limit(folder, zip_path, p, kFabMaxFiles);
+    return fab_pack_folder_limit(folder, zip_path, p, kFabMaxFiles, left_out);
 }
 
-std::string fab_pack_folder_limit(const std::string &folder, const std::string &zip_path, FabProgress &p, size_t max_files)
+std::string fab_pack_folder_limit(const std::string &folder, const std::string &zip_path, FabProgress &p, size_t max_files,
+                                  std::vector<std::string> *left_out)
 {
+    if (left_out) left_out->clear();
     p.done = 0;
     p.total = 0;
     Listing L;
@@ -156,7 +158,11 @@ std::string fab_pack_folder_limit(const std::string &folder, const std::string &
     std::vector<PackFile> files;
     uint64_t total = 0;
     for (const PackFile &e : L.entries) {
-        if (e.dir || mod_file_is_program(e.rel)) continue;   // (programs and nested archives never go in a package)
+        if (e.dir) continue;
+        if (mod_file_is_program(e.rel)) {   // (programs and nested archives never go in a package)
+            if (left_out) left_out->push_back(e.rel);
+            continue;
+        }
         files.push_back(e);
         total += e.size;
     }

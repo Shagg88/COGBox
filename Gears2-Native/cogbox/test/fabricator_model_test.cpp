@@ -80,6 +80,13 @@ int main()
     {
         auto none = [](const std::string &) { return false; };
         CHECK(fab_folder_name("Horde: Bank?", {}, none) == "Horde Bank");
+        // accented Latin letters are folded to ASCII; other scripts are dropped (the fallback when nothing is left)
+        CHECK(mod_folder_chars("\xC3\x9Cn\xC3\xAF" "code M\xC3\xB6" "d") == "Unicode Mod");              // U+00DC n U+00EF code M U+00F6 d
+        CHECK(mod_folder_chars("\xC5\x81\xC3\xB3" "d\xC5\xBA Pack") == "Lodz Pack");                      // L-stroke o-acute d z-acute
+        CHECK(mod_folder_chars("Stra\xC3\x9F" "e \xC3\x86on \xC5\x92uvre \xC3\x9Eorn 2\xC3\x97" "3") == "Strasse AEon OEuvre Thorn 23");
+        CHECK(mod_folder_chars("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E").empty());                          // all CJK
+        CHECK(fab_folder_name("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", {}, none) == "mod");
+        CHECK(mod_folder_chars("Bad\xC3") == "Bad");                                                       // a cut character
         CHECK(fab_folder_name("CON", {}, none) == "CON mod");
         CHECK(fab_folder_name("CON.txt", {}, none) == "CON mod.txt");
         CHECK(fab_folder_name("nul.x", {}, none) == "nul mod.x");

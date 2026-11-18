@@ -18,8 +18,10 @@ struct FabProgress {
 // '.'-named entries (.git, .fabricator-backup, ...), unfinished ".partial" folders, program files and nested archives
 // (mod_file_rules.h). Links (junctions / symlinks) are refused. Limits: 50 000 files, 8 GiB unpacked, 4 GiB packed.
 // "" when the zip is written; "cancelled"; else what went wrong, naming only paths inside the mod. A failed or cancelled
-// pack leaves no zip_path of its own (an older file there stays).
-std::string fab_pack_folder(const std::string &folder, const std::string &zip_path, FabProgress &p);
+// pack leaves no zip_path of its own (an older file there stays). left_out (may be null) gets the paths in the folder
+// ('\' separated) of the program files and nested archives left out (only those, not fabricator.json or '.'-names).
+std::string fab_pack_folder(const std::string &folder, const std::string &zip_path, FabProgress &p,
+                            std::vector<std::string> *left_out = nullptr);
 
 // What a clean package must not have, for a mod made for game ("gears1".."judgment"); empty = clean. Program files and
 // nested archives (by name), unsafe or Windows-device names, names that differ only in case, links, no mod.ini or one
@@ -30,5 +32,6 @@ std::vector<std::string> fab_check_folder(const std::string &folder, const std::
 std::string fab_package_name(const ModIniFields &f);
 
 // The same with the file-count limit given (a test hook: the real limit is kFabMaxFiles).
-std::string fab_pack_folder_limit(const std::string &folder, const std::string &zip_path, FabProgress &p, size_t max_files);
+std::string fab_pack_folder_limit(const std::string &folder, const std::string &zip_path, FabProgress &p, size_t max_files,
+                                  std::vector<std::string> *left_out = nullptr);
 std::vector<std::string> fab_check_folder_limit(const std::string &folder, const std::string &game, size_t max_files);

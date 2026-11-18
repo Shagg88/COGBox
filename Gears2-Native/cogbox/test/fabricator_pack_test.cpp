@@ -134,7 +134,11 @@ int main()
         put(join(dir, "inner.zip"), "PK");
         const std::string zip = join(tmp, "out\\P.zip");
         FabProgress p;
-        CHECK(fab_pack_folder(dir, zip, p).empty());
+        std::vector<std::string> left = { "stale" };
+        CHECK(fab_pack_folder(dir, zip, p, &left).empty());
+        // only the program files and nested archives are named (not fabricator.json, .git or the .partial)
+        std::sort(left.begin(), left.end());
+        CHECK((left == std::vector<std::string>{ "inner.zip", "run.exe" }));
         const std::set<std::string> names = zip_names(zip);
         CHECK((names == std::set<std::string>{ "mod.ini", "GearGame/a.xxx" }));
         CHECK(p.total == 4 + (int64_t)slurp(join(dir, "mod.ini")).size() && p.done == p.total);

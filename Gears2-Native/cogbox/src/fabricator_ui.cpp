@@ -105,10 +105,20 @@ bool input(const char *id, std::string &s, const char *hint, float w)
     if (s.capacity() < 16) s.reserve(16);
     return ImGui::InputTextWithHint(id, tr(hint), &s[0], s.capacity() + 1, ImGuiInputTextFlags_CallbackResize, str_cb, &s);
 }
+// mod.ini keeps a value on one line: the box wraps long text, Enter and pasted line breaks never go in
+int one_line_cb(ImGuiInputTextCallbackData *d)
+{
+    if (d->EventFlag == ImGuiInputTextFlags_CallbackCharFilter) return d->EventChar == '\n' || d->EventChar == '\r';
+    return str_cb(d);
+}
 bool input_multi(const char *id, std::string &s, ImVec2 size)
 {
     if (s.capacity() < 16) s.reserve(16);
-    return ImGui::InputTextMultiline(id, &s[0], s.capacity() + 1, size, ImGuiInputTextFlags_CallbackResize, str_cb, &s);
+    const bool changed = ImGui::InputTextMultiline(id, &s[0], s.capacity() + 1, size,
+                                                   ImGuiInputTextFlags_CallbackResize | ImGuiInputTextFlags_CallbackCharFilter | ImGuiInputTextFlags_WordWrap,
+                                                   one_line_cb, &s);
+    for (char &c : s) if (c == '\n' || c == '\r') c = ' ';   // (whatever got past the filter)
+    return changed;
 }
 // a form row: the label, then the control at the column's label width (as page.cpp's option rows)
 void form_label(const char *label_en)
