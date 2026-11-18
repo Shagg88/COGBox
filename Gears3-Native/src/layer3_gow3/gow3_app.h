@@ -128,6 +128,10 @@ class Gow3App : public rex::ReXApp {
     game_default("gow2_upscale_depth_last_copy", "true");   // the last of its two scene-depth copies
     // Chapter 1's planar reflection (a mirrored camera, determinant < 0) is never the camera; the real one is > 0.
     game_default("gow2_upscale_camera_handedness", "1");
+    // Objects are paired with last frame's by their own rows (rotation + translation), not the nearest origin: on
+    // chapter 12's airship the mountains and deck travel with the camera and "danced" under DLSS with real depth
+    // (tested 7 and 18 Nov with --gow2_upscale_depth_at_resolve).
+    game_default("gow2_upscale_object_motion_match", "256");
     //  - XeGTAO (Gears 2 notes/80 s.9, with --gow2_ao=gtao): some Gears 3 levels draw Gears 2's real-time AO chain
     //    (half-res 16_16_FLOAT, ch12) - XeGTAO replaces it at Gears 2's strength; most bake their AO into the lightmaps
     //    and draw none (ch8) - there XeGTAO is added just before the fog pass (this pixel shader, the anchor of
