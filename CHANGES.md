@@ -3,10 +3,11 @@
 ## 0.6.5
 
 - **Much faster start-up** - compared with 0.6.4 (Gears 3, RTX 3080 Ti PC):
+  - **Shader warm-up on DirectX 12 (the default): 88% less time** (8.5 s -> 1.0 s).
   - **Shader warm-up on Vulkan: 93% less time** (29.7 s -> 2.1 s); **88% less** in async shader mode (8.4 s -> 1.0 s).
-  - **The shader translator does 86-90% less CPU work** at every start (124-133 s across its threads -> 13.6-17.8 s),
-    with **95% fewer** memory page faults - and exactly the same shaders out (checked on all 9,296 Gears 3 shaders).
-    DirectX 12 uses the same translator.
+  - **The shader translator does about 88% less CPU work** at every start (DirectX 12: 118 s across its threads ->
+    14 s), with **95% fewer** memory page faults and **98% less** time spent in Windows itself - and exactly the same
+    shaders out (checked on all 9,296 Gears 3 shaders).
   - **A first-ever start** (empty shader cache, DirectX 12): shaders translated **56% faster** while you play
     (15.8 s -> 7.0 s), **12% more frames** in the first minute, **67% fewer** stutters over 50 ms, and the worst frame
     times (p99) **16% lower**. Most of a first start is now the graphics driver building its own shaders.
