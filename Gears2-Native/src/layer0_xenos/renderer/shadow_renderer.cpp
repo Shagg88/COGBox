@@ -523,6 +523,10 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_optimise, false, "Gears2",
 // 0.6.5 (Shagg 16 Nov, "5"): on by default. Jobs 1957b / 1958: Gears 3 on Vulkan converted every recorded shader again at
 // EVERY start (18 s for 5,698, 48 s for 8,978) - the store had been switched off together with the optimiser after the
 // 0.6.1 candidate's slow first start (the optimiser's cost; the optimiser stays off).
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_store, true, "Gears2",
+                    "0.6.5: translated shaders (DXBC) are kept in <shader cache dir>\\dxbc-store.bin, so each recorded "
+                    "shader is translated once per COGBox version and not at every start (Gears 3: 9,296 shaders, 14 s "
+                    "of CPU). false = translate at every start, as 0.6.4");
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_store, true, "Gears2",
                     "0.6.1 (Vulkan): converted shaders are kept in <shader cache dir>\\spirv-store.bin, so each shader is "
                     "converted to SPIR-V (and optimised) once and not at every start (Gears 3: half a minute before the "
@@ -1712,6 +1716,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
                           (REXCVAR_GET(gow2_renderer_vulkan_float_controls) ? 4u : 0u);
       const bool vk = backend_ && backend_->GetShaderIL() == gpu::ShaderIL::kSpirv;
       xenos::renderer::ShaderCache::SetSpirvStore(vk && REXCVAR_GET(gow2_renderer_vulkan_spirv_store) ? cache_->Dir() : std::filesystem::path(), sw);
+      xenos::renderer::ShaderCache::SetDxbcStore(REXCVAR_GET(gow2_renderer_dxbc_store) ? cache_->Dir() : std::filesystem::path());  // 0.6.5
       // (not in the old "prepare only" mode: it counts the start-up backlog once, right after the warm-up)
       const bool async = vk && REXCVAR_GET(gow2_renderer_vulkan_async_shaders) && !REXCVAR_GET(gow2_renderer_prepare_only);
       xenos::renderer::ShaderCache::SetSpirvAsync(async);

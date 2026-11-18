@@ -340,7 +340,7 @@ ShaderCache::ShaderCache(gpu::Backend& backend, const ShaderCompilerFactory& fac
   tag_ = sync_compiler_ ? sync_compiler_->CacheTag(backend_.GetShaderIL()) : std::string("no-compiler");
   if (!sync_compiler_ || !factory) return;
   if (!threads) {
-    const uint32_t hw = std::thread::hardware_concurrency();
+    const uint32_t hw = XenosUsableProcessors();  // 0.6.5: the processors this process may use (affinity)
     threads = hw > 3 ? hw - 2 : 1;
   }
   for (uint32_t i = 0; i < threads; ++i) {
@@ -1044,6 +1044,299 @@ void ShaderCache::SetSpirvStore(const std::filesystem::path& dir, uint32_t switc
   g_spv_store.path = p;
   REXLOG_INFO("gow2_renderer: SPIR-V store {}: {} modules, {:.1f} MB", p.string(), g_spv_store.index.size(), double(good) / 1048576.0);
 }
+// 0.6.5: the DXBC store. The warm-up translated every recorded shader at every start (Gears 3: 9,296 shaders, 14 s of
+// CPU on 14 threads, ~1.0 s before the first frame - job 2006). Each translation is a pure function of the ucode, the
+// decode options, the translation options and this build's translator, so it is kept in <dir>\dxbc-store.bin and read
+// back at the next start. One append-only file: "GNDXBST1", u64 this executable's identity (its size and write time;
+// another executable - an update, a rebuild - starts the file again, so a changed translator never meets an old record
+// and the file never holds more than one build's), then records { u64 key, u32 bytes, u32 0, u64 sum } + the
+// payload (the bytecode and the metadata the renderer reads, DxbcPayload). Key: DxbcStoreKey - the ucode words, the
+// stage, every decode and translation option (and the executable's identity again). Only an index is held in memory; a torn tail is cut off
+// at open; a record whose sum is wrong is not used (and is translated again).
+namespace {
+struct DxbcStore {
+  std::mutex mutex;
+  fs::path path;
+  uint64_t build = 0;  // this executable's identity (size, write time), part of every key
+  std::unordered_map<uint64_t, std::pair<uint64_t, uint32_t>> index;  // key -> (offset of the payload, bytes)
+  uint64_t end = 0;
+  std::atomic<uint64_t> hits{0}, misses{0}, stored{0};
+  std::ofstream out;
+  std::atomic<uint32_t> generation{0};
+};
+DxbcStore g_dxbc_store;
+constexpr char kDxbcMagic[8] = {'G', 'N', 'D', 'X', 'B', 'S', 'T', '1'};
+constexpr uint32_t kDxbcRecordHeader = 24;  // u64 key, u32 bytes, u32 0, u64 sum
+uint64_t DxbcSum(const uint8_t* p, size_t n) {
+  uint64_t h = 0x9E3779B97F4A7C15ull ^ n;
+  size_t i = 0;
+  for (; i + 8 <= n; i += 8) {
+    uint64_t w;
+    std::memcpy(&w, p + i, 8);
+    h = (h ^ w) * 0x100000001B3ull;
+    h ^= h >> 29;
+  }
+  for (; i < n; ++i) h = (h ^ p[i]) * 0x100000001B3ull;
+  return h ^ (h >> 32);
+}
+struct KeyMix {
+  uint64_t h = 1469598103934665603ull;
+  void u8(uint8_t b) { h = (h ^ b) * 1099511628211ull; }
+  void u32(uint32_t v) { for (int i = 0; i < 4; ++i) u8(uint8_t(v >> (8 * i))); }
+  void u64(uint64_t v) { u32(uint32_t(v)); u32(uint32_t(v >> 32)); }
+  void b(bool v) { u8(v ? 1 : 0); }
+  void str(const std::string& s) { u32(uint32_t(s.size())); for (char c : s) u8(uint8_t(c)); }
+};
+// The payload: what the renderer reads from a DxbcTranslation (AdoptDxbc / ApplyMeta), little-endian.
+struct Writer {
+  std::vector<uint8_t> b;
+  void u8(uint8_t v) { b.push_back(v); }
+  void u32(uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(v >> (8 * i))); }
+  void u64(uint64_t v) { u32(uint32_t(v)); u32(uint32_t(v >> 32)); }
+  void words(const std::vector<uint32_t>& w) { u32(uint32_t(w.size())); for (uint32_t x : w) u32(x); }
+};
+struct Reader {
+  const uint8_t* p;
+  size_t n, at = 0;
+  bool ok = true;
+  bool need(size_t k) { if (!ok || n - at < k) ok = false; return ok; }
+  uint8_t u8() { return need(1) ? p[at++] : 0; }
+  uint32_t u32() { uint32_t v = 0; if (need(4)) { for (int i = 0; i < 4; ++i) v |= uint32_t(p[at + i]) << (8 * i); at += 4; } return v; }
+  uint64_t u64() { const uint64_t lo = u32(); return lo | (uint64_t(u32()) << 32); }
+  bool words(std::vector<uint32_t>& w) {
+    const uint32_t c = u32();
+    if (!need(size_t(c) * 4)) return false;
+    w.resize(c);
+    for (uint32_t& x : w) x = u32();
+    return ok;
+  }
+};
+std::vector<uint8_t> DxbcPayload(const dxbc_gen::DxbcTranslation& dt) {
+  Writer w;
+  const hlsl::Translation& m = dt.meta;
+  w.u8(dt.writes_depth ? 1 : 0);
+  w.u8(m.uses_pc_loop ? 1 : 0);
+  w.u8(m.uses_shared_memory ? 1 : 0);
+  w.u8(m.float_constants_relative ? 1 : 0);
+  w.u8(m.memexport ? 1 : 0);
+  w.u32(m.texture_slots_2d);
+  w.u32(m.texture_slots_3d);
+  w.u32(m.texture_slots_cube);
+  w.u32(m.float_constants);
+  w.u32(m.float_constants_low);
+  w.u32(m.float_constants_high);
+  for (uint64_t r : m.float_constants_read) w.u64(r);
+  w.words(m.memexport_stream_constants);
+  w.u32(uint32_t(m.simplifications.size()));  // only the count is used (GuestShader::simplifications)
+  w.words(dt.srv_registers);
+  w.words(dt.sampler_registers);
+  w.u32(uint32_t(dt.bytecode.size()));
+  w.b.insert(w.b.end(), dt.bytecode.begin(), dt.bytecode.end());
+  return std::move(w.b);
+}
+bool DxbcFromPayload(const uint8_t* p, size_t n, dxbc_gen::DxbcTranslation& dt) {
+  Reader r{p, n};
+  hlsl::Translation& m = dt.meta;
+  dt.writes_depth = r.u8() != 0;
+  m.uses_pc_loop = r.u8() != 0;
+  m.uses_shared_memory = r.u8() != 0;
+  m.float_constants_relative = r.u8() != 0;
+  m.memexport = r.u8() != 0;
+  m.texture_slots_2d = r.u32();
+  m.texture_slots_3d = r.u32();
+  m.texture_slots_cube = r.u32();
+  m.float_constants = r.u32();
+  m.float_constants_low = r.u32();
+  m.float_constants_high = r.u32();
+  for (uint64_t& x : m.float_constants_read) x = r.u64();
+  if (!r.words(m.memexport_stream_constants)) return false;
+  const uint32_t simplifications = r.u32();
+  if (!r.ok || simplifications > 4096) return false;
+  m.simplifications.assign(simplifications, hlsl::Simplification{"stored", ""});
+  if (!r.words(dt.srv_registers) || !r.words(dt.sampler_registers)) return false;
+  const uint32_t bytes = r.u32();
+  if (!r.need(bytes) || bytes < 32) return false;
+  dt.bytecode.assign(p + r.at, p + r.at + bytes);
+  r.at += bytes;
+  if (r.at != n) return false;  // the whole payload, nothing left over
+  dt.ok = true;
+  return true;
+}
+bool DxbcStoreGet(uint64_t key, dxbc_gen::DxbcTranslation& dt) {
+  std::pair<uint64_t, uint32_t> at;
+  fs::path path;
+  {
+    std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
+    if (g_dxbc_store.path.empty()) return false;
+    path = g_dxbc_store.path;
+    auto it = g_dxbc_store.index.find(key);
+    if (it == g_dxbc_store.index.end()) {
+      ++g_dxbc_store.misses;
+      return false;
+    }
+    at = it->second;
+  }
+  thread_local struct StoreReader { std::ifstream f; fs::path path; uint32_t generation = ~0u; std::vector<uint8_t> buf; } reader;
+  const uint32_t gen = g_dxbc_store.generation.load(std::memory_order_acquire);
+  if (!reader.f.is_open() || reader.generation != gen || reader.path != path) {
+    reader.f.close();
+    reader.f.clear();
+    reader.f.open(path, std::ios::binary);
+    reader.path = path;
+    reader.generation = gen;
+  }
+  std::ifstream& f = reader.f;
+  f.clear();
+  uint64_t sum = 0;
+  reader.buf.resize(at.second);
+  if (!f || !f.seekg(std::streamoff(at.first - 8)) || !f.read(reinterpret_cast<char*>(&sum), 8) ||
+      !f.read(reinterpret_cast<char*>(reader.buf.data()), std::streamsize(at.second)) ||
+      DxbcSum(reader.buf.data(), reader.buf.size()) != sum ||
+      !DxbcFromPayload(reader.buf.data(), reader.buf.size(), dt)) {
+    reader.f.close();
+    std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
+    auto it = g_dxbc_store.index.find(key);
+    if (it != g_dxbc_store.index.end() && it->second == at) g_dxbc_store.index.erase(it);
+    ++g_dxbc_store.misses;
+    dt = dxbc_gen::DxbcTranslation{};
+    return false;
+  }
+  ++g_dxbc_store.hits;
+  return true;
+}
+void DxbcStorePut(uint64_t key, const dxbc_gen::DxbcTranslation& dt) {
+  if (!dt.ok || dt.bytecode.empty()) return;  // only good translations (a failure takes the HLSL path each time)
+  {
+    std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
+    if (g_dxbc_store.path.empty() || g_dxbc_store.index.count(key)) return;
+  }
+  const std::vector<uint8_t> payload = DxbcPayload(dt);  // built outside the lock
+  const uint64_t sum = DxbcSum(payload.data(), payload.size());
+  const uint32_t bytes = uint32_t(payload.size()), zero = 0;
+  std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
+  if (g_dxbc_store.path.empty() || g_dxbc_store.index.count(key)) return;
+  std::ofstream& f = g_dxbc_store.out;
+  if (!f.is_open() || !f.write(reinterpret_cast<const char*>(&key), 8) || !f.write(reinterpret_cast<const char*>(&bytes), 4) ||
+      !f.write(reinterpret_cast<const char*>(&zero), 4) || !f.write(reinterpret_cast<const char*>(&sum), 8) ||
+      !f.write(reinterpret_cast<const char*>(payload.data()), std::streamsize(bytes)) || !f.flush()) {
+    g_dxbc_store.path.clear();  // disk full or not writable: no store for the rest of this run
+    f.close();
+    return;
+  }
+  g_dxbc_store.index[key] = {g_dxbc_store.end + kDxbcRecordHeader, bytes};
+  g_dxbc_store.end += kDxbcRecordHeader + bytes;
+  ++g_dxbc_store.stored;
+}
+// This executable's size and last write time: a rebuilt (or updated) game gets new keys.
+uint64_t ExecutableIdentity() {
+  KeyMix k;
+#ifdef _WIN32
+  wchar_t name[32768];
+  const DWORD n = GetModuleFileNameW(nullptr, name, DWORD(std::size(name)));
+  if (n == 0 || n >= std::size(name)) return 0;
+  std::error_code ec;
+  const fs::path exe(std::wstring(name, n));
+  const uint64_t size = uint64_t(fs::file_size(exe, ec));
+  if (ec) return 0;
+  const auto when = fs::last_write_time(exe, ec);
+  if (ec) return 0;
+  k.u64(size);
+  k.u64(uint64_t(when.time_since_epoch().count()));
+  k.str(exe.filename().string());
+  return k.h | 1;  // never 0 (0 = unknown: no store)
+#else
+  return 0;
+#endif
+}
+}  // namespace
+void ShaderCache::SetDxbcStore(const std::filesystem::path& dir) {
+  std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
+  g_dxbc_store.index.clear();
+  g_dxbc_store.path.clear();
+  g_dxbc_store.out.close();
+  g_dxbc_store.out.clear();
+  g_dxbc_store.generation.fetch_add(1, std::memory_order_release);
+  if (dir.empty()) return;
+  g_dxbc_store.build = ExecutableIdentity();
+  if (!g_dxbc_store.build) {
+    REXLOG_WARN("gow2_renderer: DXBC store off (this executable's size / time could not be read)");
+    return;
+  }
+  const fs::path p = dir / "dxbc-store.bin";
+  std::error_code ec;
+  uint64_t size = fs::exists(p, ec) ? uint64_t(fs::file_size(p, ec)) : 0;
+  uint64_t good = 0;
+  bool other_build = false;
+  if (size >= 16) {
+    std::ifstream f(p, std::ios::binary);
+    char magic[8] = {};
+    uint64_t build = 0;
+    if (f.read(magic, 8) && std::memcmp(magic, kDxbcMagic, 8) == 0 && f.read(reinterpret_cast<char*>(&build), 8) &&
+        build != g_dxbc_store.build) {
+      other_build = true;  // an earlier version's translations: none of them can be asked for
+    } else if (f && std::memcmp(magic, kDxbcMagic, 8) == 0) {
+      good = 16;
+      for (;;) {
+        uint64_t key = 0, sum = 0;
+        uint32_t bytes = 0, zero = 0;
+        if (!f.read(reinterpret_cast<char*>(&key), 8) || !f.read(reinterpret_cast<char*>(&bytes), 4) ||
+            !f.read(reinterpret_cast<char*>(&zero), 4) || !f.read(reinterpret_cast<char*>(&sum), 8))
+          break;
+        const uint64_t next = good + kDxbcRecordHeader + bytes;
+        if (zero != 0 || bytes < 64 || bytes > (64u << 20) || next > size) break;
+        g_dxbc_store.index[key] = {good + kDxbcRecordHeader, bytes};
+        good = next;
+        if (!f.seekg(std::streamoff(good))) break;
+      }
+    }
+  }
+  if (good == 0) {  // new, another build's, or not ours (an unreadable one is kept beside it)
+    if (size && !other_build) fs::rename(p, dir / "dxbc-store.unreadable.bin", ec);
+    g_dxbc_store.index.clear();
+    std::ofstream f(p, std::ios::binary | std::ios::trunc);
+    if (!f.write(kDxbcMagic, 8) || !f.write(reinterpret_cast<const char*>(&g_dxbc_store.build), 8)) return;
+    good = 16;
+  } else if (good < size) {
+    fs::resize_file(p, good, ec);  // a torn last record
+    if (ec) return;
+  }
+  g_dxbc_store.out.open(p, std::ios::binary | std::ios::app);
+  if (!g_dxbc_store.out.is_open()) return;
+  g_dxbc_store.end = good;
+  g_dxbc_store.path = p;
+  REXLOG_INFO("gow2_renderer: DXBC store {}: {} records, {:.1f} MB{}", rex::path_to_utf8(p), g_dxbc_store.index.size(),
+              double(good) / 1048576.0, other_build ? " (started again: the last one was another build's)" : "");
+}
+uint64_t ShaderCache::DxbcStoreKey(const uint32_t* dwords, size_t dword_count, bool is_vertex,
+                                   const ucode::DecodeOptions& d, const hlsl::HlslOptions& o) {
+  if (!dwords || !dword_count || !g_dxbc_store.build) return 0;
+  KeyMix k;
+  k.u32(1);  // the key's own layout (bump when the list below changes)
+  k.u64(g_dxbc_store.build);
+  k.b(is_vertex);
+  k.b(d.canary_tfetch1d_two_components);
+  k.b(d.canary_scalar_operand_z);
+  // every HlslOptions field (hlsl.h: a new field must be added here too)
+  k.u32(uint32_t(sizeof(hlsl::HlslOptions)));
+  k.b(o.dxbc_loop_only_if_needed); k.b(o.dxbc_canary_minmax); k.u32(o.dxbc_salt); k.b(o.dxbc_direct_operands);
+  k.b(o.dxbc_slim_prologue); k.b(o.kill_as_demote); k.str(o.entry); k.u32(o.tess_quad_segments);
+  k.b(o.compact_float_constants); k.b(o.tex_sign_by_swizzle); k.b(o.canary_r21); k.b(o.tex_num_format);
+  k.b(o.vertex_index_clamp); k.b(o.canary_tfetch1d_xy); k.b(o.mulsc_round_toward_zero); k.b(o.memexport_f16_nan_zero);
+  k.b(o.spirv_precise); k.b(o.ps_refactoring_allowed); k.b(o.tex_post_constants); k.b(o.tex_post_affine);
+  k.b(o.dxbc_mul_min_abs); k.b(o.dxbc_structured_jumps); k.b(o.dxbc_mul_movc); k.b(o.dxbc_short_r21);
+  k.b(o.dxbc_short_swap); k.b(o.dxbc_short_degamma); k.b(o.dxbc_coalesce_moves); k.b(o.dxbc_dead_stores);
+  k.b(o.dxbc_vertex_words_vector); k.b(o.dxbc_fold_modifiers); k.b(o.dxbc_merge_movs); k.b(o.clamp_ui_output);
+  k.b(o.native_hdr_linear); k.b(o.native_hdr_ui); k.b(o.native_hdr_modulation); k.b(o.native_hdr_modulation_x2);
+  k.b(o.native_hdr_premultiplied); k.b(o.native_hdr_filter);
+  k.u64(uint64_t(dword_count));
+  for (size_t i = 0; i < dword_count; ++i) k.u32(dwords[i]);
+  return k.h | 1;  // never 0 (0 = not stored)
+}
+void ShaderCache::DxbcStoreCounts(uint64_t* hits, uint64_t* misses, uint64_t* stored) {
+  if (hits) *hits = g_dxbc_store.hits.load();
+  if (misses) *misses = g_dxbc_store.misses.load();
+  if (stored) *stored = g_dxbc_store.stored.load();
+}
 static std::atomic<bool> g_spv_async{false};
 void ShaderCache::SetSpirvAsync(bool on) { g_spv_async.store(on); }
 bool ShaderCache::SpirvAsync() { return g_spv_async.load(); }
@@ -1054,9 +1347,10 @@ bool ShaderCache::SpirvAsync() { return g_spv_async.load(); }
 struct WarmSplit {
   std::atomic<uint64_t> decode_ns{0}, dxbc_ns{0}, key_ns{0}, get_ns{0}, convert_ns{0}, optimise_ns{0}, put_ns{0}, copy_ns{0};
   std::atomic<uint64_t> dxbc_bytes{0}, spv_bytes{0}, items{0}, hits{0}, converted{0};
+  std::atomic<uint64_t> dxbc_key_ns{0}, dxbc_read_ns{0}, dxbc_put_ns{0}, dxbc_hits{0};  // 0.6.5: the DXBC store
   void Reset() {
     for (auto* a : {&decode_ns, &dxbc_ns, &key_ns, &get_ns, &convert_ns, &optimise_ns, &put_ns, &copy_ns, &dxbc_bytes, &spv_bytes,
-                    &items, &hits, &converted})
+                    &items, &hits, &converted, &dxbc_key_ns, &dxbc_read_ns, &dxbc_put_ns, &dxbc_hits})
       a->store(0);
   }
 };
@@ -1100,12 +1394,25 @@ static thread_local bool t_warm_split = false;   // set by the warm-up's workers
 static uint64_t NsSince(std::chrono::steady_clock::time_point t0) {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
 }
+// dxbc_key != 0 (ShaderCache::DxbcStoreKey): the translation comes from the DXBC store when it holds it, and a new one
+// goes into it (0.6.5).
 static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program, const hlsl::HlslOptions& options,
-                                                  bool spirv, bool* spv_pending = nullptr) {
+                                                  bool spirv, bool* spv_pending = nullptr, uint64_t dxbc_key = 0) {
   const bool split = t_warm_split;
   auto tq = std::chrono::steady_clock::now();
-  dxbc_gen::DxbcTranslation dt = dxbc_gen::TranslateToDxbc(program, options);
-  if (split) g_warm_split.dxbc_ns += NsSince(tq), g_warm_split.dxbc_bytes += dt.bytecode.size();
+  dxbc_gen::DxbcTranslation dt;
+  const bool from_store = dxbc_key && DxbcStoreGet(dxbc_key, dt);
+  if (from_store) {
+    if (split) g_warm_split.dxbc_read_ns += NsSince(tq), ++g_warm_split.dxbc_hits, g_warm_split.dxbc_bytes += dt.bytecode.size();
+  } else {
+    dt = dxbc_gen::TranslateToDxbc(program, options);
+    if (split) g_warm_split.dxbc_ns += NsSince(tq), g_warm_split.dxbc_bytes += dt.bytecode.size();
+    if (dxbc_key && dt.ok) {
+      tq = std::chrono::steady_clock::now();
+      DxbcStorePut(dxbc_key, dt);
+      if (split) g_warm_split.dxbc_put_ns += NsSince(tq);
+    }
+  }
   if (dt.ok && spirv) {
     tq = std::chrono::steady_clock::now();
     const uint64_t store_key = SpvKey(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise, g_spv_store.switches);
@@ -1259,7 +1566,7 @@ void ShaderCache::QueueSpirv(GuestShader& s, const std::vector<uint8_t>& dxbc, b
 }
 void ShaderCache::StartSpvWorkersLocked() {
   if (!spv_workers_.empty()) return;
-  const uint32_t hw = std::thread::hardware_concurrency();
+  const uint32_t hw = XenosUsableProcessors();  // 0.6.5 (affinity)
   const uint32_t n = hw > 3 ? hw - 2 : 1;
   for (uint32_t i = 0; i < n; ++i) spv_workers_.emplace_back([this] { SpvWorker(); });
   REXLOG_INFO("gow2_renderer: SPIR-V conversion on {} background thread(s)", n);
@@ -1380,7 +1687,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
   r.list_ms = MsSince(t0);
   const auto t1 = std::chrono::steady_clock::now();
   {
-    const uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
+    const uint32_t hw = std::max(1u, XenosUsableProcessors());  // 0.6.5 (affinity)
     const uint32_t n = uint32_t(std::min<size_t>(std::min(8u, hw), std::max<size_t>(1, (items.size() - first_file_item) / 64)));
     std::atomic<size_t> next{first_file_item};
     auto reader = [&]() {
@@ -1441,7 +1748,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
   double stream_make_ms = 0.0;
   const auto t2 = std::chrono::steady_clock::now();
   if (dxbc_path) {
-    const uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
+    const uint32_t hw = std::max(1u, XenosUsableProcessors());  // 0.6.5 (affinity)
     const uint32_t n = uint32_t(std::min<size_t>(std::max(1u, hw > 2 ? hw - 2 : 1u), std::max<size_t>(1, items.size() / 32)));
     const ucode::DecodeOptions decode_options = DecodeOptions();
     std::atomic<size_t> next{0};
@@ -1479,8 +1786,11 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
         g_warm_split.decode_ns += NsSince(td);
         ++g_warm_split.items;
         const hlsl::HlslOptions wo = TranslateOptions(it.is_vertex, 0, it.dwords.data(), it.dwords.size());
+        const auto tk = std::chrono::steady_clock::now();
+        const uint64_t dxbc_key = DxbcStoreKey(it.dwords.data(), it.dwords.size(), it.is_vertex, decode_options, wo);
+        g_warm_split.dxbc_key_ns += NsSince(tk);
         bool pending = false;
-        made[i].dt = TranslateDxbcFor(program, wo, spirv, &pending);
+        made[i].dt = TranslateDxbcFor(program, wo, spirv, &pending, dxbc_key);
         made[i].spv_flags = (pending ? 4u : 0u) | (wo.spirv_precise ? 1u : 0u) | 2u;
         made[i].s = std::move(s);
         made[i].ms = MsSince(tm);
@@ -1543,12 +1853,14 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     const auto ms = [](const std::atomic<uint64_t>& a) { return double(a.load()) / 1e6; };
     REXLOG_INFO("gow2_renderer: shader warm-up split ({} threads, {} shaders, thread ms summed): decode+analyse {:.0f}, "
                 "DXBC {:.0f} ({:.1f} MB), store key {:.0f}, store read {:.0f} ({} hits), SPIR-V convert {:.0f} ({}), "
-                "optimise {:.0f}, store write {:.0f}, SPIR-V copy {:.0f}; SPIR-V {:.1f} MB",
+                "optimise {:.0f}, store write {:.0f}, SPIR-V copy {:.0f}; SPIR-V {:.1f} MB | DXBC store: key {:.0f}, "
+                "read {:.0f} ({} hits), write {:.0f}",
                 n, g_warm_split.items.load(), ms(g_warm_split.decode_ns), ms(g_warm_split.dxbc_ns),
                 double(g_warm_split.dxbc_bytes.load()) / 1048576.0, ms(g_warm_split.key_ns), ms(g_warm_split.get_ns),
                 g_warm_split.hits.load(), ms(g_warm_split.convert_ns), g_warm_split.converted.load(),
                 ms(g_warm_split.optimise_ns), ms(g_warm_split.put_ns), ms(g_warm_split.copy_ns),
-                double(g_warm_split.spv_bytes.load()) / 1048576.0);
+                double(g_warm_split.spv_bytes.load()) / 1048576.0, ms(g_warm_split.dxbc_key_ns), ms(g_warm_split.dxbc_read_ns),
+                g_warm_split.dxbc_hits.load(), ms(g_warm_split.dxbc_put_ns));
   }
   r.translate_ms = MsSince(t2);
   const auto t3 = std::chrono::steady_clock::now();
@@ -1870,7 +2182,8 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
   const bool spirv = backend_.GetShaderIL() == gpu::ShaderIL::kSpirv;
   if (dxbc_ && override_hlsl.empty() && !pcss && !hlsl_path && (backend_.GetShaderIL() == gpu::ShaderIL::kDxil || spirv)) {
     bool spv_pending = false;  // 0.6.2: on Vulkan a store miss is converted on a background thread, not here
-    dxbc_gen::DxbcTranslation dt = TranslateDxbcFor(program, options, spirv, &spv_pending);  // patch 0084: shared with the warm-up
+    dxbc_gen::DxbcTranslation dt = TranslateDxbcFor(program, options, spirv, &spv_pending,   // patch 0084: shared with the warm-up
+        DxbcStoreKey(dwords, dword_count, is_vertex, decode_options, options));             // 0.6.5: the DXBC store
     stats_.translate_ms += MsSince(t0);
     ++stats_.translated;
     if (dt.ok) return AdoptDxbc(key, std::move(s), dt.bytecode, dt.meta, spv_pending, options.spirv_precise ? 1u : 0u);

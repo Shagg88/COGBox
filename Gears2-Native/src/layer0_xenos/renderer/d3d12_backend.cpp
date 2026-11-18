@@ -4923,18 +4923,33 @@ class D3D12Backend final : public Backend {
     std::error_code ec;
     const std::filesystem::path path(options_.pipeline_library_path);
     std::filesystem::create_directories(path.parent_path(), ec);
-    {
-      std::ifstream f(path, std::ios::binary);
-      if (f) pipeline_library_blob_.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    const auto t_read = std::chrono::steady_clock::now();
+    {   // 0.6.5: one read of the whole file (it was read a byte at a time: ~500 MB for Gears 3)
+      std::ifstream f(path, std::ios::binary | std::ios::ate);
+      const std::streamoff size = f ? std::streamoff(f.tellg()) : std::streamoff(0);
+      if (size > 0 && f.seekg(0)) {
+        pipeline_library_blob_.resize(size_t(size));
+        if (!f.read(reinterpret_cast<char*>(pipeline_library_blob_.data()), std::streamsize(size))) pipeline_library_blob_.clear();
+      }
     }
+    const double read_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_read).count();
+    const auto t_open = std::chrono::steady_clock::now();
     HRESULT hr = E_FAIL;
     if (!pipeline_library_blob_.empty())
       hr = device1->CreatePipelineLibrary(pipeline_library_blob_.data(), pipeline_library_blob_.size(),
                                           IID_PPV_ARGS(&pipeline_library_));
+    const double open_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_open).count();
     const size_t had = pipeline_library_blob_.size();
     if (FAILED(hr)) {  // no file yet, another driver / GPU (DRIVER_VERSION_MISMATCH, ADAPTER_NOT_FOUND) or damaged
-      if (had) REXLOG_INFO("gow2_renderer: saved pipelines: {} not usable ({:08X}) - starting a new library",
-                           rex::path_to_utf8(path), uint32_t(hr));
+      if (had && hr == D3D12_ERROR_DRIVER_VERSION_MISMATCH)
+        REXLOG_INFO("gow2_renderer: saved pipelines: {} was made by another graphics driver (driver updated) - starting "
+                    "a new library; the game's pipelines are built again as they are drawn",
+                    rex::path_to_utf8(path));
+      else if (had && hr == D3D12_ERROR_ADAPTER_NOT_FOUND)
+        REXLOG_INFO("gow2_renderer: saved pipelines: {} was made on another graphics card - starting a new library",
+                    rex::path_to_utf8(path));
+      else if (had) REXLOG_INFO("gow2_renderer: saved pipelines: {} not usable ({:08X}) - starting a new library",
+                                rex::path_to_utf8(path), uint32_t(hr));
       pipeline_library_blob_.clear();
       hr = device1->CreatePipelineLibrary(nullptr, 0, IID_PPV_ARGS(&pipeline_library_));
     }
@@ -4945,8 +4960,8 @@ class D3D12Backend final : public Backend {
       return;
     }
     pipeline_library_saved_at_ = std::chrono::steady_clock::now();
-    REXLOG_INFO("gow2_renderer: saved pipelines: {} ({} KB loaded)", rex::path_to_utf8(path),
-                pipeline_library_blob_.empty() ? 0 : had / 1024);
+    REXLOG_INFO("gow2_renderer: saved pipelines: {} ({} KB loaded; read {:.0f} ms, opened {:.0f} ms)", rex::path_to_utf8(path),
+                pipeline_library_blob_.empty() ? 0 : had / 1024, read_ms, open_ms);
   }
   std::wstring PipelineLibraryName(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& pd) const {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC fixed = pd;  // value copy; pointer members cleared below (padding stays zero:
@@ -4983,18 +4998,22 @@ class D3D12Backend final : public Backend {
   // the save time to the recording thread and reports success by its result.
   bool SavePipelineLibrary(bool on_recording_thread = true) {
     std::vector<uint8_t> out;
+    double serialize_ms = 0;
     {
       // Only the snapshot is taken under the lock (workers store new pipelines meanwhile); the file is written after.
       std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
       if (on_recording_thread) pipeline_library_saved_at_ = std::chrono::steady_clock::now();
       if (!pipeline_library_ || !pipeline_library_dirty_.exchange(false)) return false;
+      const auto t_ser = std::chrono::steady_clock::now();
       const SIZE_T size = pipeline_library_->GetSerializedSize();
       out.resize(size);
       if (!size || FAILED(pipeline_library_->Serialize(out.data(), size))) {
         REXLOG_WARN("gow2_renderer: saved pipelines: Serialize failed ({} bytes)", size_t(size));
         return false;
       }
+      serialize_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_ser).count();
     }
+    const auto t_write = std::chrono::steady_clock::now();
     const std::filesystem::path path(options_.pipeline_library_path);
     std::filesystem::path tmp = path;
     tmp += L".tmp";
@@ -5010,6 +5029,10 @@ class D3D12Backend final : public Backend {
       return false;
     }
     if (on_recording_thread) ++stats_.pipeline_library_saves;
+    // 0.6.5 (measurement): the workers wait on the library's lock while it is serialised
+    REXLOG_INFO("gow2_renderer: saved pipelines: {} MB saved (serialised under the lock {:.0f} ms, written {:.0f} ms)",
+                out.size() >> 20, serialize_ms,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_write).count());
     return true;
   }
   ID3D12PipelineLibrary1* pipeline_library_ = nullptr;
