@@ -218,13 +218,29 @@ struct ModItem {
     // and what in its mod.ini the game does not understand
     std::string problem, campaign;
     std::vector<std::string> notes;
+    bool fab = false;         // installed by the Fabricator: its folder has COGBox's fabricator.json
+    std::string fab_source;   // ... and the record's source kind ("file", "nexus"); "" when not
     uint32_t textures = 0;   // KiltedKernel: texture pack - the DDS files named by texture hash in its folder
 };
 std::string mods_dir(int game);
 std::vector<ModItem> mods_list(App &a, int game);         // in load order
 void mods_set_enabled(App &a, int game, const std::string &folder, bool on);
 void mods_move(App &a, int game, const std::string &folder, int dir);   // -1 up (earlier), +1 down (later, wins)
-bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err);
+bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err);   // "Close the game first." while it runs
+// Unpacks a mod zip into folder (made if missing): the zip's paths as Windows reads them, never outside folder, the
+// real inflated bytes counted against the limits (8 GiB, 50 000 files); stripTop takes off a single top folder that
+// isn't one of the game's own. Program files (mod_file_rules.h) are left out, their paths in folder added to left_out
+// (may be null); a fabricator.json at any depth is left out too (only COGBox writes one). false + err (no file paths in
+// it) on a problem; files already written stay.
+bool mods_unpack_zip(App &a, int game, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err,
+                     std::vector<std::string> *left_out = nullptr);
+// The same without App, for a worker thread: dataDir is the game's data folder (App::st[game].dataDir, read on the UI
+// thread), which decides whether a single top folder is the game's own.
+bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err,
+                        std::vector<std::string> *left_out = nullptr);
+void mods_store(App &a, int game, const std::vector<ModItem> &v);   // the order and on/off state, as listed
+void mods_turn_on_last(App &a, int game, const std::string &folder);   // a new mod: on, last in the order
+void mods_remove_tree(const std::wstring &dir);   // only a folder COGBox made itself (a .partial unpacking, a backup)
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);
 // play.cpp
