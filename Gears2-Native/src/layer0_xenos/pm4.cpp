@@ -74,7 +74,17 @@ void Processor::WriteMemory(uint32_t physical, uint32_t raw) {  // memory::store
     Release();
     std::memcpy(p, &raw, 4);
   }
+  own_writes_[own_write_next_++ % std::size(own_writes_)] = OwnWrite{physical & 0x1FFFFFFCu, raw};
   ++stats_.memory_writes_done;
+}
+
+bool Processor::OwnWriteMeets(uint32_t poll, uint32_t info, uint32_t ref, uint32_t mask) const {
+  const uint32_t address = poll & 0x1FFFFFFCu;
+  for (uint32_t i = 1; i <= std::size(own_writes_); ++i) {  // newest first: only the stream's last word there counts
+    const OwnWrite& w = own_writes_[(own_write_next_ - i) % std::size(own_writes_)];
+    if (w.address == address) return Compare(info, GpuSwap(w.raw, poll & 3), ref, mask);
+  }
+  return false;
 }
 
 uint32_t Processor::ReadReg(uint32_t index) const {
@@ -312,6 +322,17 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
           ++stats_.release_waits;
           Release();
           continue;
+        }
+        // Judgment's freeze back to the main menu: D3D re-marks an occlusion report pending (MEM_WRITE 0xFFFFFEED) and
+        // waits for the marker. An older query's answer, landing late from our renderer thread, can replace the marker
+        // after it landed, and the wait never ends. On the console the stream's own write had landed in order, so the
+        // wait passes: once our writes have landed (released, or never deferred), the stream's last write there counts.
+        // Judgment only, with the 2 s limit (memory_wait_limit_ms), and only for the query marker; every other wait,
+        // and the other games, wait as before.
+        if ((info & 0x10) && env_.memory_wait_limit_ms && ref == 0xFFFFFEEDu && (released || !env_.defer_write) &&
+            OwnWriteMeets(poll, info, ref, mask)) {
+          ++stats_.waits_met_by_own_write;
+          break;
         }
         ++stats_.wait_spins;
         // 0.6.0 (Judgment only, env_.memory_wait_limit_ms; its freeze back to the main menu): a memory wait whose value never comes - the write it waits

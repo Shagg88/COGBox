@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Judgment: no more one-frame light flashes with XeGTAO, steady blood decals with DLSS, and no freeze back to the main
+  menu** (by Flippage):
+  - With XeGTAO on, large areas (and the player model) lit up for a single frame as the camera moved. On some frames
+    Judgment makes an extra copy of the scene before its fog pass (what is on screen decides), and that copy was taken
+    as the frame's scene, so the AO that goes in at the fog pass was left out of that frame - and DLSS / FSR / XeSS got
+    the scene without its last passes. The scene copy is now one made after the fog pass
+    (`--gow2_upscale_scene_after_fog`, on for Judgment); frames without the fog pass (a pause or menu over the world)
+    go back to the old choice after two frames.
+  - Blood decals and lighting over floors flickered off with DLSS on: Judgment now raises the decal depth offset as
+    Gears 1 does (`--gow2_renderer_decal_min_bias=0.01`) and nudges such overlay draws toward passing
+    (`--gow2_renderer_overlay_depth_nudge=2`, new for Judgment).
+  - Back to the main menu, the game froze for 2 seconds: the GPU waited for a marker it had just written, and an
+    occlusion result landing late had replaced it. In Judgment, a wait for that occlusion marker now passes once the
+    GPU's own write of it has landed, as it would on the console; the 2-second limit stays as the last resort. The other
+    games are unchanged.
+
 - **The FABRICATOR is a local mod manager** (KiltedKernel): the launcher's FABRICATOR screen manages the mods of all four
   games on your PC, offline, with nothing sent anywhere (it is also reached from **More in FABRICATOR** on a game's Mods
   tab).
