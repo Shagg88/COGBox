@@ -251,6 +251,9 @@ struct PipelineJob {
   GraphicsPipelineDesc desc;
   VkShaderModule modules[3] = {};
   uint64_t bytes = 0;  // patch 0079: SPIR-V size of its stages
+  // 0.6.5: a whole build made only so the pipeline cache holds the optimised pipeline for the next start (after this
+  // pipeline was linked from libraries); the result is destroyed, the pipeline in use is not touched.
+  bool cache_fill = false;
 };
 
 struct Buffer {
@@ -847,7 +850,9 @@ class VulkanBackend final : public Backend {
   uint64_t PipelineMisses() const override { return pipeline_misses_; }
   uint64_t PipelineJobsLeft() override {
     std::lock_guard<std::mutex> lock(job_mutex_);
-    return jobs_.size() + backlog_jobs_.size() + jobs_busy_;
+    // 0.6.5: background whole builds for the pipeline cache are not counted (no draw or load hold waits for them).
+    const uint64_t all = jobs_.size() + backlog_jobs_.size() + jobs_busy_;
+    return all > fills_left_ ? all - fills_left_ : 0;
   }
   void SetPipelineBacklog(bool on) override { pipeline_backlog_ = on; }  // patch 0076
   // A queued (not started) job for this pipeline, removed from its queue.
@@ -855,7 +860,7 @@ class VulkanBackend final : public Backend {
     std::lock_guard<std::mutex> lock(job_mutex_);
     for (auto* q : {&jobs_, &backlog_jobs_})
       for (auto it = q->begin(); it != q->end(); ++it)
-        if (it->handle == handle) {
+        if (it->handle == handle && !it->cache_fill) {
           out = *it;
           q->erase(it);
           return true;
@@ -1690,11 +1695,13 @@ class VulkanBackend final : public Backend {
     std::lock_guard<std::mutex> lock(lib_mutex_);
     const uint64_t links = gpl_links_.load();
     return std::format("pipeline libraries: {} built ({} vertex input, {} pre-rasterization, {} fragment, {} output), "
-                       "{:.1f} ms each ({:.0f} ms in all); {} pipelines linked, {:.3f} ms each ({:.0f} ms in all); {} built whole after a failure",
+                       "{:.1f} ms each ({:.0f} ms in all); {} pipelines linked, {:.3f} ms each ({:.0f} ms in all); {} built whole after a failure; "
+                       "{} whole from the pipeline cache, {} built whole for it in the background{}",
                        gpl_libs_, lib_vi_.size(), lib_pr_.size(), lib_fs_.size(), lib_out_.size(),
                        gpl_libs_ ? double(gpl_lib_us_) / 1000.0 / double(gpl_libs_) : 0.0, double(gpl_lib_us_) / 1000.0, links,
                        links ? double(gpl_link_us_.load()) / 1000.0 / double(links) : 0.0, double(gpl_link_us_.load()) / 1000.0,
-                       gpl_fallbacks_.load());
+                       gpl_fallbacks_.load(), gpl_cache_hits_.load(), gpl_fills_.load(),
+                       cache_control_ ? "" : " (no cache-only builds: pipelineCreationCacheControl not enabled)");
   }
 
  private:
@@ -1904,6 +1911,7 @@ class VulkanBackend final : public Backend {
         std::lock_guard<std::mutex> lock(job_mutex_);
         --jobs_busy_;
         if (backlog) --backlog_busy_;
+        if (job.cache_fill && fills_left_) --fills_left_;
       }
       if (backlog) job_cv_.notify_one();  // a backlog slot is free again
     }
@@ -2031,9 +2039,32 @@ class VulkanBackend final : public Backend {
     gi.pDynamicState = &dy;
     gi.layout = layout_;
     if (pipeline_stats_) gi.flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;  // patch 0104
+    if (job.cache_fill) {  // 0.6.5: only for the pipeline cache (the next start finds the optimised pipeline there)
+      VkPipeline whole = VK_NULL_HANDLE;
+      if (vk_.vkCreateGraphicsPipelines(device_, pipeline_cache_vk_, 1, &gi, nullptr, &whole) == VK_SUCCESS && whole) {
+        vk_.vkDestroyPipeline(device_, whole, nullptr);
+        gpl_fills_.fetch_add(1);
+      }
+      return;
+    }
     Pipeline& p = *pipelines_[job.handle];
     // 0.6.2: linked from pipeline libraries where it can be (a pixel shader, no statistics capture).
     if (gpl_ && !pipeline_stats_ && job.modules[0] && job.modules[1]) {
+      // 0.6.5: the whole (optimised) pipeline first, from the pipeline cache only - a start after the first finds it
+      // there; only a pipeline the driver would have to compile is linked from libraries.
+      if (cache_control_) {
+        VkGraphicsPipelineCreateInfo gc = gi;
+        gc.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+        VkPipeline cached = VK_NULL_HANDLE;
+        const VkResult rc = vk_.vkCreateGraphicsPipelines(device_, pipeline_cache_vk_, 1, &gc, nullptr, &cached);
+        if (rc == VK_SUCCESS && cached) {
+          gpl_cache_hits_.fetch_add(1);
+          p.pipeline = cached;
+          p.ready.store(true, std::memory_order_release);
+          return;
+        }
+        if (cached) vk_.vkDestroyPipeline(device_, cached, nullptr);
+      }
       const VkPipeline linked = BuildLinked(job, ia, rs, ms, cb, ri);
       if (linked) {
         p.dyn.cull = rs.cullMode;
@@ -2050,6 +2081,16 @@ class VulkanBackend final : public Backend {
         p.linked = true;
         p.pipeline = linked;
         p.ready.store(true, std::memory_order_release);
+        if (cache_control_ && !workers_.empty()) {  // 0.6.5: the optimised one for the next start, after live work
+          PipelineJob fill = job;
+          fill.cache_fill = true;
+          {
+            std::lock_guard<std::mutex> lock(job_mutex_);
+            backlog_jobs_.push_back(fill);
+            ++fills_left_;
+          }
+          job_cv_.notify_one();
+        }
         return;
       }
       gpl_fallbacks_.fetch_add(1);  // a library or the link failed: built whole, as before
@@ -2144,7 +2185,9 @@ class VulkanBackend final : public Backend {
     if (!vi_lib || !pr_lib) return VK_NULL_HANDLE;  // (review: no further compiles after a failure)
     // 3. Fragment shader: the pixel shader - compiled here, once. All depth / stencil state is dynamic; multisample
     // state is not part of it (dynamic rendering, no sample shading: review), so the sample count is not in the key.
-    const std::tuple<VkShaderModule, uint32_t> fs_key{job.modules[1], 0u};
+    // 0.6.5 (review): the multisample state is given to the fragment-shader library too, the same as to the output
+    // library (required where the shader reads the sample index - sample shading); the sample count is in the key.
+    const std::tuple<VkShaderModule, uint32_t> fs_key{job.modules[1], uint32_t(ms.rasterizationSamples)};
     const VkPipeline fs_lib = LibraryFor(lib_fs_, fs_key, [&] {
       const VkPipelineShaderStageCreateInfo st{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, job.modules[1], "main", nullptr};
       VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -2158,6 +2201,7 @@ class VulkanBackend final : public Backend {
       gi.stageCount = 1;
       gi.pStages = &st;
       gi.pDepthStencilState = &ds;
+      gi.pMultisampleState = &ms;
       gi.pDynamicState = &dy;
       return CreateLibrary(VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, gi, &no_formats);
     });
@@ -2192,7 +2236,8 @@ class VulkanBackend final : public Backend {
     gi.layout = layout_;
     VkPipeline out = VK_NULL_HANDLE;
     const auto t0 = std::chrono::steady_clock::now();
-    const VkResult r = vk_.vkCreateGraphicsPipelines(device_, pipeline_cache_vk_, 1, &gi, nullptr, &out);
+    // 0.6.5: not into the pipeline cache (a link compiles nothing; the cache keeps the optimised whole pipelines).
+    const VkResult r = vk_.vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gi, nullptr, &out);
     gpl_link_us_.fetch_add(uint64_t(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()));
     gpl_links_.fetch_add(1);
     if (r != VK_SUCCESS) {
@@ -2942,6 +2987,7 @@ class VulkanBackend final : public Backend {
       anisotropy_ = ext_->anisotropy;
       if (!ext_->texture_compression_bc) REXLOG_WARN("gow2_renderer: Vulkan: BC texture formats not enabled on the SDK's device");
       gpl_ = options_.vk_pipeline_libraries && !options_.vk_pipeline_stats && ext_->graphics_pipeline_library;  // 0.6.2
+      cache_control_ = gpl_ && ext_->pipeline_cache_control;  // 0.6.5 (SDK patch 116)
       if (options_.vk_pipeline_libraries && !gpl_)
         REXLOG_WARN("gow2_renderer: Vulkan: graphics pipeline libraries not enabled on the SDK's device - pipelines are built whole");
       return FinishDevice(error);
@@ -2973,6 +3019,8 @@ class VulkanBackend final : public Backend {
     if (device_api_ >= VK_API_VERSION_1_4) e13.pNext = &e14;
     e13.dynamicRendering = VK_TRUE;
     e13.synchronization2 = VK_TRUE;
+    e13.pipelineCreationCacheControl = f13.pipelineCreationCacheControl;  // 0.6.5: cache-only builds (with libraries)
+    own_cache_control_ = f13.pipelineCreationCacheControl == VK_TRUE;
     VkPhysicalDeviceVulkan12Features e12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     e12.timelineSemaphore = VK_TRUE;
     e12.pNext = &e13;
@@ -3050,6 +3098,7 @@ class VulkanBackend final : public Backend {
         }
       }
       if (!gpl_) REXLOG_WARN("gow2_renderer: Vulkan: graphics pipeline libraries not usable on this device (not offered, or no fast linking) - pipelines are built whole");
+      cache_control_ = gpl_ && own_cache_control_;  // 0.6.5
     }
     if (options_.vk_pipeline_stats) {
       uint32_t n = 0;
@@ -3121,6 +3170,7 @@ class VulkanBackend final : public Backend {
         stop_workers_ = true;
         jobs_.clear();
         backlog_jobs_.clear();
+        fills_left_ = 0;
       }
       job_cv_.notify_all();
       for (auto& t : workers_) t.join();
@@ -3931,6 +3981,7 @@ class VulkanBackend final : public Backend {
   uint64_t pipeline_misses_ = 0;
   std::vector<std::thread> workers_;
   std::deque<PipelineJob> jobs_;
+  uint64_t fills_left_ = 0;  // 0.6.5: cache-fill jobs queued or running (under job_mutex_)
   std::deque<PipelineJob> backlog_jobs_;  // patch 0076: start-up backlog / guessed pipelines, after live requests
   bool pipeline_backlog_ = false;
   // 0.6.1: the game's occlusion queries (see BeginOcclusionQuery).
@@ -4037,6 +4088,9 @@ class VulkanBackend final : public Backend {
   std::map<std::string, PipelineLib> lib_out_;
   uint64_t gpl_libs_ = 0, gpl_lib_us_ = 0;  // under lib_mutex_
   std::atomic<uint64_t> gpl_links_{0}, gpl_link_us_{0}, gpl_fallbacks_{0};
+  std::atomic<uint64_t> gpl_cache_hits_{0}, gpl_fills_{0};  // 0.6.5: whole pipelines from the cache / built for it
+  bool own_cache_control_ = false;  // 0.6.5: on our own device (set where it is made; used once gpl_ is known)
+  bool cache_control_ = false;  // 0.6.5: pipelineCreationCacheControl enabled (FAIL_ON_PIPELINE_COMPILE_REQUIRED)
   PFN_vkGetPipelineExecutablePropertiesKHR get_exec_props_ = nullptr;
   PFN_vkGetPipelineExecutableStatisticsKHR get_exec_stats_ = nullptr;
   bool ts_failed_ = false, ts_open_ = false;

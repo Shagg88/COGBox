@@ -262,6 +262,8 @@ struct VulkanExternal {
   // 0.6.2: VK_KHR_pipeline_library + VK_EXT_graphics_pipeline_library enabled, with the graphicsPipelineLibrary feature,
   // on a device whose graphicsPipelineLibraryFastLinking and ...IndependentInterpolationDecoration properties are true.
   bool graphics_pipeline_library = false;
+  // 0.6.5 (SDK patch 116): Vulkan 1.3 pipelineCreationCacheControl enabled (a pipeline asked for from the cache only).
+  bool pipeline_cache_control = false;
 };
 // Notes/68 V3: the presenter's guest-output image for Backend::PresentPacked (Vulkan: VkImage + VkImageView, format
 // A2B10G10R10_UNORM_PACK32, usable as a colour attachment). It is left in SHADER_READ_ONLY_OPTIMAL, visible to

@@ -466,6 +466,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_dedicated_images, false, "Gears2",
 // SDK's rex/ui/vulkan/device.h, so this builds with either header (it links against runtime 066).
 namespace rex::ui::vulkan {
 bool CogboxGraphicsPipelineLibraryEnabled(VkDevice device);
+bool CogboxPipelineCreationCacheControlEnabled(VkDevice device);
 }
 #endif
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_pipeline_libraries, false, "Gears2",
@@ -1656,6 +1657,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           vk_external_.occlusion_query_precise = pr.occlusionQueryPrecise;  // 0.6.1
           vk_external_.graphics_pipeline_library =  // 0.6.5: SDK patch 116 (runtime 066)
               rex::ui::vulkan::CogboxGraphicsPipelineLibraryEnabled(dev->device());
+          vk_external_.pipeline_cache_control = rex::ui::vulkan::CogboxPipelineCreationCacheControlEnabled(dev->device());
           options.vulkan_external = &vk_external_;
           presenter_ = presenter;
           presenter_vulkan_ = true;
