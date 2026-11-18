@@ -125,11 +125,11 @@ bool fab_write_record(const std::string &folder, const FabInstallRecord &r)
 
 // ---- zip check (the rules mods.cpp's unpacking keeps, checked before anything is written) ----
 static const uint64_t kMaxPackedBytes = 4ull << 30, kMaxUnpackedBytes = 8ull << 30, kMaxFiles = 50000;
-static const long kModApiLevel = 1;
+
 static const size_t kMaxIniBytes = 256 * 1024;
 
 // no absolute, drive-letter / stream (':') path, no ".." component - also as Windows reads it (trailing dots and spaces dropped)
-static bool bad_path(const std::string &raw)
+bool fab_path_unsafe(const std::string &raw)
 {
     if (raw.find('\0') != std::string::npos || raw.find(':') != std::string::npos) return true;
     std::string p = raw;
@@ -164,14 +164,14 @@ static std::string trim_dots_spaces(std::string s)
     return s;
 }
 // The first segment that is a Windows device name (mod_file_is_device_name), "" none.
-static std::string device_segment(const std::string &name)
+std::string fab_device_segment(const std::string &name)
 {
     for (const std::string &seg : segments(name)) if (mod_file_is_device_name(seg)) return seg;
     return "";
 }
 // The name as Windows compares it: one separator, no empty or "." segments, trailing dots and spaces off, case folded
 // (Unicode lower case, for the scripts mod names use)
-static std::string windows_key(const std::string &name)
+std::string fab_windows_key(const std::string &name)
 {
     std::string key;
     for (const std::string &seg : segments(name)) {
@@ -230,13 +230,13 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
         const std::string name = st.m_filename;
         if (mz_zip_reader_get_filename(&z, i, nullptr, 0) != name.size() + 1) note("unsafe path in the zip (outside the mod folder)");   // an embedded NUL
         if (st.m_is_encrypted) note("encrypted entry: " + name);
-        if (bad_path(name)) note("unsafe path in the zip (outside the mod folder)");
+        if (fab_path_unsafe(name)) note("unsafe path in the zip (outside the mod folder)");
         if ((st.m_version_made_by >> 8) == 3 && ((st.m_external_attr >> 16) & 0xf000) == 0xa000) note("the zip contains a link (symlink), which is not allowed");
         const bool isDir = !name.empty() && name.back() == '/';
-        const std::string dev = device_segment(name);
+        const std::string dev = fab_device_segment(name);
         if (!dev.empty() && devicesShown++ < 5)
             note("Windows device name not allowed as a file or folder name (CON, PRN, AUX, NUL, COM1-9, LPT1-9): " + dev);
-        const std::string key = windows_key(name);
+        const std::string key = fab_windows_key(name);
         if (!key.empty()) {
             for (size_t at = key.find('/'); at != std::string::npos; at = key.find('/', at + 1)) dirKeys.insert(key.substr(0, at));
             if (isDir) dirKeys.insert(key);
@@ -296,7 +296,7 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
         }
         zi.game = iniGame;
         if (iniGame != game) note("mod.ini is for game " + iniGame + ", but this is for " + game + ": wrong game");
-        if (iniApi > kModApiLevel) note("mod.ini needs Api " + std::to_string(iniApi) + ", which is newer than this COGBox supports (" + std::to_string(kModApiLevel) + ")");
+        if (iniApi > kFabModApiLevel) note("mod.ini needs Api " + std::to_string(iniApi) + ", which is newer than this COGBox supports (" + std::to_string(kFabModApiLevel) + ")");
     }
     return problems;
 }

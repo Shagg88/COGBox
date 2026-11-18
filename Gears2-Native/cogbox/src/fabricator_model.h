@@ -58,3 +58,15 @@ struct FabZipInfo {
 // mod.ini for another game or a newer Api. Program files (mod_file_rules.h) are not a refusal here: the unpack leaves
 // them out and reports them (mods_unpack_zip_in's left_out). info (may be null) is filled as far as the zip was read.
 std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::string &game, FabZipInfo *info = nullptr);
+
+// The path rules fab_check_zip applies, shared with the Creator's folder check (fabricator_pack.h).
+// name (a zip entry name or a relative path, '/' or '\'): it would escape the mod folder (absolute, drive letter or
+// stream ':', NUL, a ".." component, also as Windows reads it with trailing dots and spaces dropped).
+bool fab_path_unsafe(const std::string &name);
+// The first segment of name that is a Windows device name (mod_file_rules.h), "" when none.
+std::string fab_device_segment(const std::string &name);
+// name as Windows compares it (one separator, no empty or "." segments, trailing dots and spaces off, case folded):
+// two names with the same key cannot both exist in one folder.
+std::string fab_windows_key(const std::string &name);
+// The mod API level this COGBox supports (a mod.ini Api above it is refused).
+constexpr long kFabModApiLevel = 1;
