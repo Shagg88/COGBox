@@ -1696,11 +1696,11 @@ class VulkanBackend final : public Backend {
     const uint64_t links = gpl_links_.load();
     return std::format("pipeline libraries: {} built ({} vertex input, {} pre-rasterization, {} fragment, {} output), "
                        "{:.1f} ms each ({:.0f} ms in all); {} pipelines linked, {:.3f} ms each ({:.0f} ms in all); {} built whole after a failure; "
-                       "{} whole from the pipeline cache, {} built whole for it in the background{}",
+                       "{} whole from the pipeline cache, {} built whole for it in the background ({:.0f} ms){}",
                        gpl_libs_, lib_vi_.size(), lib_pr_.size(), lib_fs_.size(), lib_out_.size(),
                        gpl_libs_ ? double(gpl_lib_us_) / 1000.0 / double(gpl_libs_) : 0.0, double(gpl_lib_us_) / 1000.0, links,
                        links ? double(gpl_link_us_.load()) / 1000.0 / double(links) : 0.0, double(gpl_link_us_.load()) / 1000.0,
-                       gpl_fallbacks_.load(), gpl_cache_hits_.load(), gpl_fills_.load(),
+                       gpl_fallbacks_.load(), gpl_cache_hits_.load(), gpl_fills_.load(), double(gpl_fill_us_.load()) / 1000.0,
                        cache_control_ ? "" : " (no cache-only builds: pipelineCreationCacheControl not enabled)");
   }
 
@@ -1891,10 +1891,14 @@ class VulkanBackend final : public Backend {
         // Patch 0076: live requests first; backlog jobs (start-up set, guessed pipelines) on at most half the workers,
         // so the driver time a draw is waiting for is never all taken by guesses.
         const auto backlog_ok = [this] { return !backlog_jobs_.empty() && backlog_busy_ < std::max<size_t>(1, worker_count_ / 2); };
-        job_cv_.wait(lock, [&] { return stop_workers_ || !jobs_.empty() || backlog_ok(); });
+        // 0.6.5: background whole builds for the pipeline cache only when nothing else is queued, on the backlog slots
+        const auto fill_ok = [this] {
+          return !fill_jobs_.empty() && jobs_.empty() && backlog_jobs_.empty() && backlog_busy_ < std::max<size_t>(1, worker_count_ / 2);
+        };
+        job_cv_.wait(lock, [&] { return stop_workers_ || !jobs_.empty() || backlog_ok() || fill_ok(); });
         if (stop_workers_) return;
         backlog = jobs_.empty();
-        auto& q = backlog ? backlog_jobs_ : jobs_;
+        auto& q = !backlog ? jobs_ : !backlog_jobs_.empty() ? backlog_jobs_ : fill_jobs_;
         job = q.front();
         q.pop_front();
         ++jobs_busy_;
@@ -1903,10 +1907,14 @@ class VulkanBackend final : public Backend {
       const auto t0 = std::chrono::steady_clock::now();
       Build(job);
       const uint64_t us = uint64_t(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count());
-      built_async_.fetch_add(1);
-      async_us_.fetch_add(us);
-      async_bytes_.fetch_add(job.bytes);
-      for (uint64_t m = async_max_us_.load(); us > m && !async_max_us_.compare_exchange_weak(m, us);) {}
+      if (job.cache_fill) {
+        gpl_fill_us_.fetch_add(us);  // 0.6.5: kept out of the game's pipeline counts
+      } else {
+        built_async_.fetch_add(1);
+        async_us_.fetch_add(us);
+        async_bytes_.fetch_add(job.bytes);
+        for (uint64_t m = async_max_us_.load(); us > m && !async_max_us_.compare_exchange_weak(m, us);) {}
+      }
       {
         std::lock_guard<std::mutex> lock(job_mutex_);
         --jobs_busy_;
@@ -2052,7 +2060,7 @@ class VulkanBackend final : public Backend {
     if (gpl_ && !pipeline_stats_ && job.modules[0] && job.modules[1]) {
       // 0.6.5: the whole (optimised) pipeline first, from the pipeline cache only - a start after the first finds it
       // there; only a pipeline the driver would have to compile is linked from libraries.
-      if (cache_control_) {
+      if (cache_control_ && pipeline_cache_vk_) {  // (review: without a cache every try would miss)
         VkGraphicsPipelineCreateInfo gc = gi;
         gc.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
         VkPipeline cached = VK_NULL_HANDLE;
@@ -2081,12 +2089,12 @@ class VulkanBackend final : public Backend {
         p.linked = true;
         p.pipeline = linked;
         p.ready.store(true, std::memory_order_release);
-        if (cache_control_ && !workers_.empty()) {  // 0.6.5: the optimised one for the next start, after live work
+        if (cache_control_ && pipeline_cache_vk_ && !workers_.empty()) {  // 0.6.5: the optimised one for the next start, after live work
           PipelineJob fill = job;
           fill.cache_fill = true;
           {
             std::lock_guard<std::mutex> lock(job_mutex_);
-            backlog_jobs_.push_back(fill);
+            fill_jobs_.push_back(fill);  // (review: its own queue, after all live and backlog work)
             ++fills_left_;
           }
           job_cv_.notify_one();
@@ -3019,8 +3027,10 @@ class VulkanBackend final : public Backend {
     if (device_api_ >= VK_API_VERSION_1_4) e13.pNext = &e14;
     e13.dynamicRendering = VK_TRUE;
     e13.synchronization2 = VK_TRUE;
-    e13.pipelineCreationCacheControl = f13.pipelineCreationCacheControl;  // 0.6.5: cache-only builds (with libraries)
-    own_cache_control_ = f13.pipelineCreationCacheControl == VK_TRUE;
+    if (options_.vk_pipeline_libraries) {  // 0.6.5: cache-only builds (with libraries; review: else as before)
+      e13.pipelineCreationCacheControl = f13.pipelineCreationCacheControl;
+      own_cache_control_ = f13.pipelineCreationCacheControl == VK_TRUE;
+    }
     VkPhysicalDeviceVulkan12Features e12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     e12.timelineSemaphore = VK_TRUE;
     e12.pNext = &e13;
@@ -3170,6 +3180,7 @@ class VulkanBackend final : public Backend {
         stop_workers_ = true;
         jobs_.clear();
         backlog_jobs_.clear();
+        fill_jobs_.clear();
         fills_left_ = 0;
       }
       job_cv_.notify_all();
@@ -3982,7 +3993,8 @@ class VulkanBackend final : public Backend {
   std::vector<std::thread> workers_;
   std::deque<PipelineJob> jobs_;
   uint64_t fills_left_ = 0;  // 0.6.5: cache-fill jobs queued or running (under job_mutex_)
-  std::deque<PipelineJob> backlog_jobs_;  // patch 0076: start-up backlog / guessed pipelines, after live requests
+  std::deque<PipelineJob> backlog_jobs_;
+  std::deque<PipelineJob> fill_jobs_;  // 0.6.5: whole builds for the pipeline cache (after links), last of all  // patch 0076: start-up backlog / guessed pipelines, after live requests
   bool pipeline_backlog_ = false;
   // 0.6.1: the game's occlusion queries (see BeginOcclusionQuery).
   static constexpr uint32_t kGqBlock = 256, kGqBlocks = 128, kGqMaxParts = 256;
@@ -4088,7 +4100,7 @@ class VulkanBackend final : public Backend {
   std::map<std::string, PipelineLib> lib_out_;
   uint64_t gpl_libs_ = 0, gpl_lib_us_ = 0;  // under lib_mutex_
   std::atomic<uint64_t> gpl_links_{0}, gpl_link_us_{0}, gpl_fallbacks_{0};
-  std::atomic<uint64_t> gpl_cache_hits_{0}, gpl_fills_{0};  // 0.6.5: whole pipelines from the cache / built for it
+  std::atomic<uint64_t> gpl_cache_hits_{0}, gpl_fills_{0}, gpl_fill_us_{0};  // 0.6.5: whole pipelines from the cache / built for it
   bool own_cache_control_ = false;  // 0.6.5: on our own device (set where it is made; used once gpl_ is known)
   bool cache_control_ = false;  // 0.6.5: pipelineCreationCacheControl enabled (FAIL_ON_PIPELINE_COMPILE_REQUIRED)
   PFN_vkGetPipelineExecutablePropertiesKHR get_exec_props_ = nullptr;
