@@ -35,6 +35,14 @@
 - **Open matches: DLC light** - a dot next to each match: green when you have the host's map (base game or your
   installed DLC), red when you don't, grey while the host hasn't picked one. Gears 3 and Judgment; needs the updated
   online server.
+- **Linux / Steam Deck players can be joined online again** (Discord): Linux doesn't let a game use port 1000, so on
+  Proton the game was moved to another port - and other players' games, still sending to 1000, found the lobby but
+  couldn't reach it, so the join failed. The game now keeps its usual port as far as the game and other players can
+  tell, while using the port Linux gave it underneath. Tested on Windows with the port refused on purpose; joins through
+  the online server were not tested on our PC.
+- **A versus search no longer sends you into someone's campaign** (Discord): searching for a versus match could join
+  another player's campaign lobby (seen with RAAM's Shadow in Gears 3). Searches for a versus playlist now skip lobbies
+  that don't name a playlist.
 - **Judgment: no more one-frame light flashes with XeGTAO, steady blood decals with DLSS, and no freeze back to the main
   menu** (by Flippage):
   - With XeGTAO on, large areas (and the player model) lit up for a single frame as the camera moved. On some frames

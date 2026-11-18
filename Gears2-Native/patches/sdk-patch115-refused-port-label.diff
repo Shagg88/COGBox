@@ -1,0 +1,343 @@
+diff --git a/include/rex/kernel/xam/net/socket_hooks.h b/include/rex/kernel/xam/net/socket_hooks.h
+index 835bb0d..68ddda3 100644
+--- a/include/rex/kernel/xam/net/socket_hooks.h
++++ b/include/rex/kernel/xam/net/socket_hooks.h
+@@ -15,9 +15,13 @@ namespace rex::kernel::xam::net {
+ 
+ bool NetOnline();
+ int BindPortOffset();  // --net_bind_port_offset, for two copies of a game on one PC
++bool TestRefusesPort(uint16_t port);  // patch 115: --net_test_refuse_ports (tests: Linux's refusal on Windows)
+ 
+ // A game UDP socket was bound: register it, list its LAN addresses, try UPnP, start the 100 ms worker.
+-void OnSocketBound(uint64_t native_handle);
++// COGBox SDK patch 115: game_port = the port the game bound (0: the socket's own). It differs when the host refused
++// that port and the system chose another (Linux / Proton below 1024): peers are offered the game's port, with the
++// real port in the candidates, so their packets to it arrive.
++void OnSocketBound(uint64_t native_handle, uint16_t game_port = 0);
+ void OnSocketClosed(uint64_t native_handle);
+ // Called after a game socket registered (online signaling retries offers that waited for one).
+ void SetSocketRegisteredCallback(std::function<void(uint16_t port)> fn);
+diff --git a/include/rex/kernel/xam/net/virtual_peer_manager.h b/include/rex/kernel/xam/net/virtual_peer_manager.h
+index c873dcc..d15c7a9 100644
+--- a/include/rex/kernel/xam/net/virtual_peer_manager.h
++++ b/include/rex/kernel/xam/net/virtual_peer_manager.h
+@@ -77,7 +77,10 @@ class VirtualPeerManager {
+   void SetPublicAddressFn(std::function<void(uint16_t port)> fn);
+ 
+   // The game's UDP sockets (each one is probed and punches).
+-  void RegisterSocket(uint64_t native_handle, uint16_t local_port);
++  // COGBox SDK patch 115: local_port is the game's port (the label peers know it by); native_port the socket's real one
++  // when the host gave it another (0: the same). NativePortOf: the real port of the newest socket with that label.
++  void RegisterSocket(uint64_t native_handle, uint16_t local_port, uint16_t native_port = 0);
++  std::optional<uint16_t> NativePortOf(uint16_t local_port) const;
+   void UnregisterSocket(uint64_t native_handle);
+   void AddLocalCandidate(uint16_t local_port, const Candidate& c);
+   std::vector<Candidate> LocalCandidates(uint16_t local_port) const;
+@@ -139,6 +142,8 @@ class VirtualPeerManager {
+   };
+   struct SocketInfo {
+     uint16_t local_port = 0;
++    uint16_t native_port = 0;   // patch 115 (RegisterSocket)
++    uint64_t order = 0;
+     StunTxId txid{};
+     std::optional<Clock::time_point> last_stun;
+   };
+diff --git a/include/rex/system/xsocket.h b/include/rex/system/xsocket.h
+index 5830b57..0d3e1f7 100644
+--- a/include/rex/system/xsocket.h
++++ b/include/rex/system/xsocket.h
+@@ -95,6 +95,9 @@ class XSocket : public XObject {
+ 
+   uint64_t native_handle() const { return native_handle_; }
+   uint16_t bound_port() const { return bound_port_; }
++  // COGBox SDK patch 115: the port the host refused (below 1024 on Linux / Proton) so the socket is bound to one the
++  // system chose; bound_port() is still the port the game asked for, which is what peers and the game itself see.
++  bool port_fallback() const { return port_fallback_; }
+   void MoveToFreePort();  // COGBox SDK patch 79 (xsocket.cpp)
+   Type type() const { return type_; }  // COGBox SDK patch 79
+ 
+@@ -141,6 +144,7 @@ class XSocket : public XObject {
+   bool bound_ = false;  // Explicitly bound to an IP address?
+   uint16_t bound_port_ = 0;
+   bool net_registered_ = false;  // COGBox SDK patch 79: known to the online-play socket hooks
++  bool port_fallback_ = false;   // COGBox SDK patch 115 (port_fallback())
+ 
+   bool broadcast_socket_ = false;
+ 
+diff --git a/src/kernel/xam/net/online_sessions.cpp b/src/kernel/xam/net/online_sessions.cpp
+index d0c9920..84e85fe 100644
+--- a/src/kernel/xam/net/online_sessions.cpp
++++ b/src/kernel/xam/net/online_sessions.cpp
+@@ -423,9 +423,11 @@ std::vector<LobbyInfo> OnlineSessions::Search(uint32_t title_id, uint64_t own_xu
+     if (l.host_xuid == own_xuid) {
+       continue;
+     }
+-    if (playlist) {   // patch 92: another playlist's lobby (a lobby that names none is kept)
++    if (playlist) {   // patch 92: another playlist's lobby
++      // COGBox SDK patch 115 (ticket-0014): a lobby that names no playlist is not a matchmaking lobby - a campaign's
++      // (Gears 3: a RAAM's Shadow co-op lobby was joined from a versus search, twice) - and is left out too
+       const std::optional<int64_t> lp = PlaylistOf(l);
+-      if (lp && *lp != *playlist) continue;
++      if (!lp || *lp != *playlist) continue;
+     }
+     TakeFound(std::move(l), &out, &qos);
+   }
+diff --git a/src/kernel/xam/net/socket_hooks.cpp b/src/kernel/xam/net/socket_hooks.cpp
+index 29a2db4..8da9e42 100644
+--- a/src/kernel/xam/net/socket_hooks.cpp
++++ b/src/kernel/xam/net/socket_hooks.cpp
+@@ -13,6 +13,7 @@
+ #include <condition_variable>
+ #include <mutex>
+ #include <cstring>
++#include <cstdlib>
+ #include <string>
+ #include <thread>
+ 
+@@ -154,6 +155,28 @@ int BindPortOffset() {
+   return REXCVAR_GET(net_bind_port_offset);
+ }
+ 
++// COGBox SDK patch 115: a test of the Linux / Proton case on Windows - the listed ports are refused at bind as a host
++// refuses ports below 1024 to an ordinary program ("1000" or "1000,3074"; empty = off).
++REXCVAR_DEFINE_STRING(net_test_refuse_ports, "", "Network",
++                      "Tests only: refuse binds to these ports (comma-separated) as Linux refuses ports below 1024");
++bool TestRefusesPort(uint16_t port) {
++  const std::string& list = REXCVAR_GET(net_test_refuse_ports);
++  if (list.empty() || port == 0) return false;
++  size_t at = 0;
++  while (at <= list.size()) {
++    size_t e = list.find(',', at);
++    if (e == std::string::npos) e = list.size();
++    std::string item = list.substr(at, e - at);
++    const size_t b = item.find_first_not_of(" \t"), z = item.find_last_not_of(" \t");
++    item = b == std::string::npos ? std::string() : item.substr(b, z - b + 1);
++    if (!item.empty() && item.size() <= 5 && item.find_first_not_of("0123456789") == std::string::npos &&
++        std::strtoul(item.c_str(), nullptr, 10) == port)
++      return true;
++    at = e + 1;
++  }
++  return false;
++}
++
+ namespace {
+ std::mutex g_listen_mutex;
+ std::set<uint16_t> g_listen_ports;
+@@ -192,7 +215,7 @@ bool NetOnline() {
+   return REXCVAR_GET(net_online);
+ }
+ 
+-void OnSocketBound(uint64_t native_handle) {
++void OnSocketBound(uint64_t native_handle, uint16_t game_port) {
+   if (!NetOnline()) {
+     return;
+   }
+@@ -201,7 +224,11 @@ void OnSocketBound(uint64_t native_handle) {
+   if (getsockname(static_cast<SOCKET>(native_handle), reinterpret_cast<sockaddr*>(&local), &len) != 0) {
+     return;
+   }
+-  const uint16_t port = ntohs(local.sin_port);
++  // COGBox SDK patch 115: `port` is the game's port - the label peers send to and the key of our candidates - and
++  // `native` the socket's real one, which every candidate address carries (they differ when the host refused the
++  // game's port: Linux / Proton below 1024)
++  const uint16_t native = ntohs(local.sin_port);
++  const uint16_t port = game_port ? game_port : native;
+   // A game socket is not read while the game loads a map (13 s in a traced Gears 3 join); Windows' default 64 KB
+   // receive buffer overflowed and the peer's packets were lost. Give it room for a load's worth of traffic.
+ #if defined(_WIN32)
+@@ -220,7 +247,7 @@ void OnSocketBound(uint64_t native_handle) {
+              sizeof(rcvbuf));
+   auto& mgr = VirtualPeerManager::Get();
+   mgr.SetSendFn(NativeSend);
+-  mgr.RegisterSocket(native_handle, port);
++  mgr.RegisterSocket(native_handle, port, native);
+   for (const in_addr& ip : LanAddresses()) {
+     sockaddr_in a{};
+     a.sin_family = AF_INET;
+@@ -228,7 +255,11 @@ void OnSocketBound(uint64_t native_handle) {
+     a.sin_port = local.sin_port;
+     mgr.AddLocalCandidate(port, {a, Candidate::Host});
+   }
+-  REXKRNL_INFO("cogbox_online: game socket on UDP port {} registered", port);
++  if (native != port)
++    REXKRNL_INFO("cogbox_online: game socket on UDP port {} registered (really on port {}: the host refused {}; peers "
++                 "are offered port {} at {})", port, native, port, port, native);
++  else
++    REXKRNL_INFO("cogbox_online: game socket on UDP port {} registered", port);
+   std::function<void(uint16_t)> on_registered;
+   {
+     std::lock_guard<std::mutex> lock(g_registered_mutex);
+@@ -237,10 +268,10 @@ void OnSocketBound(uint64_t native_handle) {
+   if (on_registered) {
+     on_registered(port);
+   }
+-  std::thread([port] {
+-    UPnPResult r = TryUPnPPortMap(port);
++  std::thread([port, native] {
++    UPnPResult r = TryUPnPPortMap(native);   // patch 115: the router forwards to the real port
+     if (!r.success) {
+-      REXKRNL_INFO("cogbox_online: no UPnP mapping for port {} (the router has UPnP off or does not support it; punching and the relay still connect)", port);
++      REXKRNL_INFO("cogbox_online: no UPnP mapping for port {} (the router has UPnP off or does not support it; punching and the relay still connect)", native);
+       return;
+     }
+     sockaddr_in a{};
+diff --git a/src/kernel/xam/net/stream_tunnel.cpp b/src/kernel/xam/net/stream_tunnel.cpp
+index d0d8567..58c3b69 100644
+--- a/src/kernel/xam/net/stream_tunnel.cpp
++++ b/src/kernel/xam/net/stream_tunnel.cpp
+@@ -170,6 +170,15 @@ void StreamTunnel::Run() {
+     }
+     const uint16_t local = uint16_t(port + BindPortOffset());
+     sockaddr_in to = Loopback(local);
++    {   // COGBox SDK patch 115: a listener whose port the host refused is really on another port: connect there
++      const uint64_t game = GameListenSocket(local);
++      sockaddr_in at{};
++      int al = sizeof(at);
++      if (game != ~0ull && ::getsockname(SOCKET(game), reinterpret_cast<sockaddr*>(&at), &al) == 0 &&
++          ntohs(at.sin_port) != 0 && ntohs(at.sin_port) != local) {
++        to = Loopback(ntohs(at.sin_port));
++      }
++    }
+     SOCKET s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+     int err = 0;
+     if (s == INVALID_SOCKET || ::connect(s, reinterpret_cast<sockaddr*>(&to), sizeof(to)) != 0) {
+@@ -281,7 +290,7 @@ void StreamTunnel::Run() {
+             REXKRNL_INFO("cogbox_online: 10.254.{}.{} game port {} relayed through the tunnel to our port {}",
+                          (who->first >> 8) & 0xFF, who->first & 0xFF, src, dst);
+           }
+-          sockaddr_in to = Loopback(dst);
++          sockaddr_in to = Loopback(mgr.NativePortOf(dst).value_or(dst));   // patch 115: the socket's real port
+           h->second.last = now;
+           ::sendto(h->second.s, reinterpret_cast<const char*>(f->payload.data()), int(f->payload.size()), 0,
+                    reinterpret_cast<const sockaddr*>(&to), sizeof(to));
+diff --git a/src/kernel/xam/net/virtual_peer_manager.cpp b/src/kernel/xam/net/virtual_peer_manager.cpp
+index 4fa2203..a286e86 100644
+--- a/src/kernel/xam/net/virtual_peer_manager.cpp
++++ b/src/kernel/xam/net/virtual_peer_manager.cpp
+@@ -113,9 +113,23 @@ std::optional<uint16_t> VirtualPeerManager::LocalPortOf(uint64_t native_handle)
+   return it->second.local_port;
+ }
+ 
+-void VirtualPeerManager::RegisterSocket(uint64_t native_handle, uint16_t local_port) {
++void VirtualPeerManager::RegisterSocket(uint64_t native_handle, uint16_t local_port, uint16_t native_port) {
+   std::lock_guard<std::mutex> lock(mutex_);
+-  sockets_[native_handle] = SocketInfo{local_port, {}, std::nullopt};
++  static uint64_t order = 0;
++  SocketInfo s{};
++  s.local_port = local_port;
++  s.native_port = native_port ? native_port : local_port;
++  s.order = ++order;
++  sockets_[native_handle] = s;
++}
++
++std::optional<uint16_t> VirtualPeerManager::NativePortOf(uint16_t local_port) const {
++  std::lock_guard<std::mutex> lock(mutex_);
++  const SocketInfo* best = nullptr;
++  for (const auto& [h, s] : sockets_)
++    if (s.local_port == local_port && (!best || s.order > best->order)) best = &s;
++  if (!best) return std::nullopt;
++  return best->native_port;
+ }
+ 
+ void VirtualPeerManager::SetPublicAddressFn(std::function<void(uint16_t port)> fn) {
+@@ -143,6 +157,14 @@ void VirtualPeerManager::AddLocalCandidate(uint16_t local_port, const Candidate&
+                list.end());
+   } else if (std::any_of(list.begin(), list.end(), [&](const Candidate& x) { return SameEndpoint(x.addr, c.addr); })) {
+     return;
++  } else {
++    // COGBox patch 115: a fallback socket's real port changes on every re-bind, and one socket owns a label at a
++    // time (patch 79), so a Host candidate on the same address with another port is a closed, stale one.
++    list.erase(std::remove_if(list.begin(), list.end(),
++                              [&](const Candidate& x) {
++                                return x.kind == Candidate::Host && x.addr.sin_addr.s_addr == c.addr.sin_addr.s_addr;
++                              }),
++               list.end());
+   }
+   list.push_back(c);
+ }
+diff --git a/src/kernel/xam/xam_net.cpp b/src/kernel/xam/xam_net.cpp
+index c026ed7..f1a26b9 100644
+--- a/src/kernel/xam/xam_net.cpp
++++ b/src/kernel/xam/xam_net.cpp
+@@ -1316,7 +1316,8 @@ u32 NetDll_getsockname_entry(u32 caller, u32 socket_handle, ppc_ptr_t<XSOCKADDR_
+     return -1;
+   }
+   name->sin_family = native.sin_family;
+-  name->sin_port = ntohs(native.sin_port);
++  // COGBox SDK patch 115: a socket whose port the host refused reports the port the game bound, as the console would
++  name->sin_port = socket->port_fallback() ? uint16_t(socket->bound_port()) : ntohs(native.sin_port);
+   name->sin_addr = ntohl(native.sin_addr.s_addr);
+   std::memset(name->x_sin_zero, 0, sizeof(name->x_sin_zero));
+   *namelen_ptr = uint32_t(sizeof(XSOCKADDR_IN));
+@@ -1355,7 +1356,8 @@ u32 NetDll_bind_entry(u32 caller, u32 socket_handle, ppc_ptr_t<XSOCKADDR_IN> nam
+   // COGBox SDK patch 38 (GitHub #11 / #3, "error initializing network layer" under Proton): the game binds the
+   // console's own ports (1000 for system link, 3074). Below 1024 Linux refuses that without administrator rights, and
+   // another program may hold 3074 on any OS. Nothing local depends on the exact port, so a refused bind is retried
+-  // with a port the system picks.
++  // with a port the system picks. (Patch 115: XSocket::Bind now does this itself and keeps the game's port as the
++  // socket's label for online peers; this stays for any other refusal.)
+   if (XFAILED(status) && uint16_t(native_name.sin_port) != 0) {
+     const uint16_t wanted = native_name.sin_port;
+     N_XSOCKADDR_IN any_port = native_name;
+diff --git a/src/system/xsocket.cpp b/src/system/xsocket.cpp
+index 34ca2f3..82589c3 100644
+--- a/src/system/xsocket.cpp
++++ b/src/system/xsocket.cpp
+@@ -130,6 +130,7 @@ void XSocket::MoveToFreePort() {
+   REXLOG_INFO("cogbox_online: socket {:08X} moved from port {} to {}: a newer game socket binds that port", handle(),
+               bound_port_, ntohs(local.sin_port));
+   bound_port_ = ntohs(local.sin_port);
++  port_fallback_ = false;   // patch 115: known by its own (new) port from now on
+   if (net_registered_) {
+     rex::kernel::xam::net::OnSocketBound(native_handle_);
+   }
+@@ -242,13 +243,38 @@ X_STATUS XSocket::Bind(N_XSOCKADDR_IN* name, int name_len) {
+       g_port_owner.erase(it);
+     }
+   }
+-  int ret = bind(native_handle_, (sockaddr*)name, name_len);
++  // COGBox SDK patch 115: the game's own port - what peers and the game know this socket by - even if the host refuses
++  // it (Linux / Proton: ports below 1024 need administrator rights; patch 38 then took a port the system chose, and
++  // online peers were told that port while their games send to 1000, so a Linux host could not be joined). The socket
++  // is bound to a port the system chooses, and keeps the game's port as its label (bound_port_, port_fallback_).
++  const uint16_t wanted = uint16_t(name->sin_port);
++  int ret = rex::kernel::xam::net::TestRefusesPort(wanted) ? -1 : bind(native_handle_, (sockaddr*)name, name_len);
++  bool fallback = false;
++  if (ret < 0 && wanted != 0) {
++    N_XSOCKADDR_IN any_port = *name;
++    any_port.sin_port = 0;
++    ret = bind(native_handle_, (sockaddr*)&any_port, name_len);
++    fallback = ret >= 0;
++    if (fallback) {
++      sockaddr_in local{};
++#if REX_PLATFORM_WIN32
++      int len = sizeof(local);
++      const bool known = ::getsockname(SOCKET(native_handle_), reinterpret_cast<sockaddr*>(&local), &len) == 0;
++#else
++      socklen_t len = sizeof(local);
++      const bool known = ::getsockname(int(native_handle_), reinterpret_cast<sockaddr*>(&local), &len) == 0;
++#endif
++      REXLOG_WARN("XSocket: port {} refused by the host; bound to port {} instead, still known as port {} to the game and "
++                  "to online peers", wanted, known ? ntohs(local.sin_port) : 0, wanted);
++    }
++  }
+   if (ret < 0) {
+     return X_STATUS_UNSUCCESSFUL;
+   }
+ 
+   bound_ = true;
+-  bound_port_ = name->sin_port;
++  port_fallback_ = fallback;
++  bound_port_ = wanted;
+   if (type_ == X_SOCK_DGRAM && bound_port_ != 0 && rex::kernel::xam::net::NetOnline()) {
+     std::lock_guard<std::mutex> lock(g_port_mutex);
+     g_port_owner[bound_port_] = this;
+@@ -259,7 +285,7 @@ X_STATUS XSocket::Bind(N_XSOCKADDR_IN* name, int name_len) {
+ 
+   // COGBox SDK patch 79: an online-play game socket (UDP / VDP) is probed and punches from here.
+   if (type_ == X_SOCK_DGRAM && rex::kernel::xam::net::NetOnline()) {
+-    rex::kernel::xam::net::OnSocketBound(native_handle_);
++    rex::kernel::xam::net::OnSocketBound(native_handle_, fallback ? wanted : 0);   // patch 115: labelled by the game's port
+     net_registered_ = true;
+   }
+ 
