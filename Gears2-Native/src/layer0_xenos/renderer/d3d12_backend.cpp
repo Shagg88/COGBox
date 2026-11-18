@@ -3467,6 +3467,11 @@ class D3D12Backend final : public Backend {
       if (pipeline_library_dirty_.load()) SavePipelineLibrary();
       SafeRelease(pipeline_library_);
     }
+    {  // 0.6.5: none left once the final save stored them; released if the save could not run
+      std::lock_guard<std::mutex> q(pending_stores_mutex_);
+      for (auto& [n, pso] : pending_stores_) pso->Release();
+      pending_stores_.clear();
+    }
     for (Pipeline& p : pipelines_) SafeRelease(p.pso);
     for (IndexBuffer& b : index_buffers_) SafeRelease(b.resource);
     for (Readback& r : readbacks_) SafeRelease(r.buffer);
@@ -4985,13 +4990,45 @@ class D3D12Backend final : public Backend {
     swprintf(name, 40, L"gp%016llx%016llx", (unsigned long long)h.high64, (unsigned long long)h.low64);
     return name;
   }
+  // 0.6.5: StorePipeline never waits for a save. A save holds the library's lock while it serialises (366 ms for Gears
+  // 3's ~480 MB library, job 2013), and every pipeline built meanwhile - by a worker, or on the recording thread when a
+  // draw needs one at once - used to wait for it. Now a pipeline that finds the lock taken is kept (AddRef) in a short
+  // list and stored by the next holder of the lock: the next store, or the save itself before it serialises.
   void StorePipeline(const std::wstring& name, ID3D12PipelineState* pso) {
     if (!pipeline_library_ || name.empty() || !pso) return;
-    std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
+    std::unique_lock<std::mutex> lock(pipeline_library_mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+      pso->AddRef();
+      {
+        std::lock_guard<std::mutex> q(pending_stores_mutex_);
+        pending_stores_.emplace_back(name, pso);
+      }
+      deferred_stores_.fetch_add(1, std::memory_order_relaxed);
+      pending_stores_waiting_.store(true, std::memory_order_release);
+      pipeline_library_dirty_.store(true, std::memory_order_relaxed);  // the next save stores and keeps it
+      return;
+    }
+    StorePipelineLocked(name, pso);
+    StorePendingLocked();
+  }
+  void StorePipelineLocked(const std::wstring& name, ID3D12PipelineState* pso) {  // pipeline_library_mutex_ held
     const HRESULT hr = pipeline_library_->StorePipeline(name.c_str(), pso);
     if (SUCCEEDED(hr)) {  // E_INVALIDARG = the name is already there (two creations of one pipeline): fine
       ++stats_.pipelines_stored;
       pipeline_library_dirty_.store(true, std::memory_order_relaxed);
+    }
+  }
+  void StorePendingLocked() {  // pipeline_library_mutex_ held
+    if (!pending_stores_waiting_.load(std::memory_order_acquire)) return;
+    std::vector<std::pair<std::wstring, ID3D12PipelineState*>> todo;
+    {
+      std::lock_guard<std::mutex> q(pending_stores_mutex_);
+      todo.swap(pending_stores_);
+      pending_stores_waiting_.store(false, std::memory_order_release);
+    }
+    for (auto& [n, pso] : todo) {
+      if (pipeline_library_) StorePipelineLocked(n, pso);
+      pso->Release();
     }
   }
   // Patch 0010: also called on the background saver thread (on_recording_thread = false): then it leaves the stats and
@@ -5004,6 +5041,7 @@ class D3D12Backend final : public Backend {
       std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
       if (on_recording_thread) pipeline_library_saved_at_ = std::chrono::steady_clock::now();
       if (!pipeline_library_ || !pipeline_library_dirty_.exchange(false)) return false;
+      StorePendingLocked();  // pipelines that arrived during the last save
       const auto t_ser = std::chrono::steady_clock::now();
       const SIZE_T size = pipeline_library_->GetSerializedSize();
       out.resize(size);
@@ -5030,14 +5068,20 @@ class D3D12Backend final : public Backend {
     }
     if (on_recording_thread) ++stats_.pipeline_library_saves;
     // 0.6.5 (measurement): the workers wait on the library's lock while it is serialised
-    REXLOG_INFO("gow2_renderer: saved pipelines: {} MB saved (serialised under the lock {:.0f} ms, written {:.0f} ms)",
+    REXLOG_INFO("gow2_renderer: saved pipelines: {} MB saved (serialised under the lock {:.0f} ms, written {:.0f} ms; "
+                "{} pipeline(s) so far built during a save, stored later without waiting)",
                 out.size() >> 20, serialize_ms,
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_write).count());
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_write).count(),
+                deferred_stores_.load(std::memory_order_relaxed));
     return true;
   }
   ID3D12PipelineLibrary1* pipeline_library_ = nullptr;
   std::vector<uint8_t> pipeline_library_blob_;
   std::mutex pipeline_library_mutex_;
+  std::mutex pending_stores_mutex_;  // 0.6.5: pipelines built during a save (taken after pipeline_library_mutex_)
+  std::vector<std::pair<std::wstring, ID3D12PipelineState*>> pending_stores_;
+  std::atomic<bool> pending_stores_waiting_{false};
+  std::atomic<uint64_t> deferred_stores_{0};  // stores that found a save running (did not wait for it)
   std::atomic<bool> pipeline_library_dirty_{false};
   std::chrono::steady_clock::time_point pipeline_library_saved_at_{};
   // Patch 0010: background saves and asynchronous library loads.
