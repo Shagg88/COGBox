@@ -1096,6 +1096,18 @@ REXCVAR_DEFINE_INT32(gow2_ao_debug, 0, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_upscale_jitter_sign, 1, "Gears2",
                      "Diagnostic: 1 or -1 - the sign of the jitter handed to the upscaler (the image shift itself is "
                      "unchanged), for checking against the DLSS SDK's jitter overlay");
+REXCVAR_DEFINE_STRING(gow2_upscale_scene_guest_formats, "", "Gears2",
+                      "Preferred guest colour formats of the scene copy (comma-separated numbers; empty = off). Gears 3 "
+                      "copies its float scene (format 10) for translucency mid-frame - a different number of times each "
+                      "frame - and its 10:10:10:2 UNORM scene (format 2) once at the end; on the host both are R10G10B10A2. "
+                      "While frames have a preferred copy after the camera, the first one is taken (decided within the "
+                      "frame, nothing counted); a frame after one without takes the frame's last scene copy of any format "
+                      "(chapter 12's later part ends on the float scene). Gears 3 sets 2");
+REXCVAR_DEFINE_INT32(gow2_upscale_camera_handedness, 0, "Gears2",
+                     "The sign of the real camera's c0-c3 determinant (+1 / -1; 0 = not checked). A camera of the other sign "
+                     "is a mirror - a planar reflection drawn into the scene depth before the view - and is never taken as "
+                     "the frame's camera. Gears 3 chapter 1 (the submarine): its reflection passes the near-plane test on "
+                     "some frames, so the upscaler counted the reflection's copy as a scene copy on those frames only");
 REXCVAR_DEFINE_BOOL(gow2_upscale_depth_last_copy, false, "Gears2",
                     "With --gow2_upscale_depth_at_resolve: the upscaler keeps the frame's LAST scene-depth copy, not the "
                     "first. Gears 3 and Judgment copy their scene depth out twice in some frames, and the first copy holds "
@@ -6355,6 +6367,22 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (up_vp_tries_ == 64) REXLOG_WARN("gow2_upscaler: no camera matrix found in c0-c63 on 64 scene draws - no jitter");
   }
 
+  // The determinant of c0-c3 (4x4; the same for the matrix and its transpose). For one game's projection convention
+  // its sign tells a mirrored view (a planar reflection) from the real one; it is calibrated per game, not universal.
+  static double CameraDeterminant(const float* m) {
+    const double a[4][4] = {{m[0], m[1], m[2], m[3]}, {m[4], m[5], m[6], m[7]}, {m[8], m[9], m[10], m[11]},
+                            {m[12], m[13], m[14], m[15]}};
+    auto det3 = [&](int c0, int c1, int c2, int r0, int r1, int r2) {
+      return a[r0][c0] * (a[r1][c1] * a[r2][c2] - a[r1][c2] * a[r2][c1]) -
+             a[r0][c1] * (a[r1][c0] * a[r2][c2] - a[r1][c2] * a[r2][c0]) +
+             a[r0][c2] * (a[r1][c0] * a[r2][c1] - a[r1][c1] * a[r2][c0]);
+    };
+    const double d = a[0][0] * det3(1, 2, 3, 1, 2, 3) - a[0][1] * det3(0, 2, 3, 1, 2, 3) +
+                     a[0][2] * det3(0, 1, 3, 1, 2, 3) - a[0][3] * det3(0, 1, 2, 1, 2, 3);
+    return d;
+  }
+  uint64_t up_mirror_draws_ = 0;  // --gow2_upscale_camera_handedness: draws refused as the camera (log window)
+  uint64_t up_selected_ = 0, up_selected_upscaled_ = 0;  // scene copies taken / of them upscaled (log window)
   // Called for each draw before its viewport is set (v in host pixels). c: the draw's VS float constants c0-c3.
   void UpscaleJitter(const uint32_t* r, const rr::GuestShader& vsg, const rr::PipelineState& ps,
                      const rr::RenderTarget* depth, bool depth_writes, rr::ViewportState& v) {
@@ -6409,8 +6437,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const bool perspective = rr::ao::MakeGtaoConstants(rr::upscale::FromConstantsTransposed(c, 0),
                                                          rr::ao::ViewportDepthMap(ps.viewport),
                                                          uint32_t(ps.viewport.width), uint32_t(ps.viewport.height), probe);
+      // A mirror camera (a planar reflection: the opposite handedness to the game's real camera) is never the camera.
+      static const int32_t handedness = std::clamp(REXCVAR_GET(gow2_upscale_camera_handedness), -1, 1);
+      const double det = handedness != 0 ? CameraDeterminant(c) : 0.0;
+      const bool mirrored = handedness != 0 && std::isfinite(det) && det * double(handedness) < 0.0;
+      if (mirrored) ++up_mirror_draws_;
       if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < kSceneMinHeight ||
-          (up_vp_auto_ && !rows_camera && !ObjectRowsIdentity(r, vsg)) || !perspective) {  // job 716: the camera alone
+          (up_vp_auto_ && !rows_camera && !ObjectRowsIdentity(r, vsg)) || !perspective || mirrored) {  // job 716
         // Job 726 (job 725's captures: the lighting on stone changed frame to frame in the INPUT): Gears 1 draws its
         // objects into the scene depth before the first level-geometry draw, so they were drawn unjittered while the
         // later passes were jittered, and UE3's depth-equal light passes failed in patches. Draws into last frame's
@@ -6425,6 +6458,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
       up_camera_ = true;
       ++up_camera_frames_;  // Gears 3 job 054
+      // --gow2_upscale_scene_guest_formats: only a fog pass of this view counts - one drawn before it (a reflection's)
+      // would open the gate for the real view's mid-scene copy. Judgment's anchor (#371) keeps its own tracking.
+      if (SceneGuestFormatMask() && !up_scene_copy_.anchored) up_fog_seen_ = false;
       up_rows_votes_.clear();
       if (up_camera_reg_ && vsg.Reads(up_camera_reg_)) {  // Gears 3 job 056: the camera's world position
         std::memcpy(up_cam_pos_, &r[kRegFloatConstVs + up_camera_reg_ * 4], sizeof(float) * 3);
@@ -6470,6 +6506,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t up_scene_formats_ = 1;
   rr::upscale::SceneCopyPicker up_scene_copy_;  // --gow2_upscale_scene_last_copy: notes/80 s.11
   bool up_fog_seen_ = false;  // --gow2_upscale_scene_after_fog: this frame drew the fog pass
+  bool up_fog_last_ = false;  // ...and so did the frame before (--gow2_upscale_scene_guest_formats)
   std::string up_fog_ps_;     // its shader hashes, ",A,B,"
   uint32_t up_jitter_scope_ = 0;         // --gow2_upscale_jitter_scope
   uint64_t up_jittered_scope_ = 0;       // draws jittered only because of the scope (log window)
@@ -6498,6 +6535,31 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (t.key == up_depth_key_) return true;
     return up_jitter_scope_ >= 3 && t.key.base_tiles == up_depth_key_.base_tiles && t.key.msaa == up_depth_key_.msaa &&
            t.scale == up_depth_scale_;
+  }
+  // --gow2_upscale_scene_guest_formats: a bit per guest colour format (0 = any).
+  static uint64_t SceneGuestFormatMask() {
+    static const uint64_t mask = [] {
+      uint64_t m = 0;
+      const std::string s = REXCVAR_GET(gow2_upscale_scene_guest_formats);
+      size_t i = 0;
+      while (i < s.size()) {
+        while (i < s.size() && (s[i] < '0' || s[i] > '9')) ++i;
+        uint32_t v = 0;
+        bool any = false;
+        while (i < s.size() && s[i] >= '0' && s[i] <= '9') v = v * 10 + uint32_t(s[i++] - '0'), any = true;
+        if (any && v < 64) m |= uint64_t(1) << v;
+      }
+      return m;
+    }();
+    return mask;
+  }
+  // The preferred formats' state: a preferred scene copy this frame / in the frame before; the fallback picker
+  // (the last scene copy of any format, by guest and host format).
+  bool up_pref_copy_frame_ = false, up_pref_copy_last_ = true;
+  rr::upscale::SceneCopyPicker up_scene_copy_fallback_ = [] { rr::upscale::SceneCopyPicker p; p.last_only = true; return p; }();
+  static bool SceneGuestFormatOk(const ::xenos::resolve::Regs& rg) {
+    const uint64_t m = SceneGuestFormatMask();
+    return !m || (uint32_t(rg.color_format) < 64 && ((m >> uint32_t(rg.color_format)) & 1u));
   }
   bool IsSceneColourResolve(const ::xenos::resolve::Info& info, const rr::RenderTarget& rt) const {
     const bool f16 = (up_scene_formats_ & 1u) && rt.format == gpu::Format::kR16G16B16A16Float;
@@ -9202,7 +9264,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     hl_armed_ = hl_taken_ = false;  // patch 0148 (hl_sources_ is cleared by RequestDisplay, which runs after this)
     hl_format_ = fg_wanted_ ? XenosFrameGenerationHudlessFormat() : 0u;  // notes/83: Vulkan too
     up_scene_copy_.EndFrame(up_fog_seen_);  // notes/80 s.11
+    up_fog_last_ = up_fog_seen_;
     up_fog_seen_ = false;
+    up_scene_copy_fallback_.EndFrame();  // --gow2_upscale_scene_guest_formats
+    up_pref_copy_last_ = up_pref_copy_frame_;
+    up_pref_copy_frame_ = false;
     up_depth_saved_ = false;  // notes/80 s.6
     if (up_prev_camera_) vel_prev_objs_.swap(vel_objs_);  // notes/80 s.6 (up_camera_ is already reset): this frame's characters, for the camera position
     else vel_prev_objs_.clear();
@@ -9236,6 +9302,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   up_inputs_only_ ? "no upscaler" : "with the upscaler");
       if (up_dc_pipe_) REXLOG_INFO("gow2_fg_motion_depth_check: depth check on {} frames", up_dc_frames_);
       fg_made_ = fg_resets_ = up_dc_frames_ = 0;
+    }
+    if (frame_ % uint64_t(log_every_) == 0 && up_selected_ != up_selected_upscaled_) {
+      REXLOG_INFO("gow2_upscaler: frames {}-{}: scene copies taken {}, of them {} got an upscaled image back",
+                  frame_ - uint64_t(log_every_) + 1, frame_, up_selected_, up_selected_upscaled_);
+    }
+    if (frame_ % uint64_t(log_every_) == 0) up_selected_ = up_selected_upscaled_ = 0;
+    if (frame_ % uint64_t(log_every_) == 0 && up_mirror_draws_) {
+      REXLOG_INFO("gow2_upscaler: frames {}-{}: {} mirror-camera draws not taken as the camera "
+                  "(--gow2_upscale_camera_handedness)", frame_ - uint64_t(log_every_) + 1, frame_, up_mirror_draws_);
+      up_mirror_draws_ = 0;
     }
     if (frame_ % uint64_t(log_every_) == 0 && up_depth_at_resolve_) {
       static const bool last_copy = REXCVAR_GET(gow2_upscale_depth_last_copy);
@@ -10142,7 +10218,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (rcp_on_ && ps_.dwords && ps_hash != rcp_last_ps_) MarkRecipeChapterHot(ps_hash);  // job 634
     // --gow2_upscale_scene_after_fog: the anchor pass, by its pixel shader (a fog draw skipped before this point is not
     // seen: that frame counts as one without the anchor - no copy taken - and the picker lets go after two)
-    if (up_scene_copy_.anchored && !up_fog_seen_ && psg) {
+    if ((up_scene_copy_.anchored || SceneGuestFormatMask()) && !up_fog_seen_ && psg) {
       char fog_hex[20];
       std::snprintf(fog_hex, sizeof(fog_hex), ",%016llX,", static_cast<unsigned long long>(ps_hash));
       up_fog_seen_ = up_fog_ps_.find(fog_hex) != std::string::npos;
@@ -14246,13 +14322,32 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint32_t source_scale = rt->scale;  // patch 0141: the upscaler's output is at the output scale
     // Every scene copy is counted, also after the one that was taken (notes/80 s.11).
     bool scene_taken = false;  // --gow2_ssil: this is the frame's scene copy
-    if (up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt) && up_scene_copy_.Take(uint32_t(rt->format) + 1u, up_fog_seen_) && !up_scene_done_) {
+    const bool scene_candidate = up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt);
+    // A preferred-format copy before the fog pass is a mid-scene copy (Gears 3 chapter 1's cutscenes make their
+    // translucency copy from the UNORM scene on some frames): the finished scene comes after the fog. Only while frames
+    // draw a fog pass at all (the frame before did); a level without one keeps the plain rule.
+    const bool fog_gate = up_fog_seen_ || !up_fog_last_;
+    const bool preferred = scene_candidate && SceneGuestFormatMask() && SceneGuestFormatOk(rg) && fog_gate;
+    if (preferred) up_pref_copy_frame_ = true;
+    const bool take = !scene_candidate ? false
+                      : !SceneGuestFormatMask() ? up_scene_copy_.Take(uint32_t(rt->format) + 1u, up_fog_seen_)
+                      : !fog_gate ? false  // before the fog: neither taken nor counted, by either rule
+                      : up_pref_copy_last_ ? (up_scene_copy_fallback_.Take(), preferred)  // the fallback counts every frame
+                      : up_scene_copy_fallback_.Take();  // the frame's last scene copy of any format (no format learning)
+    // A scene copy seen but not taken still starts the next frame at the scene scale - otherwise a frame
+    // that took nothing begins at the output scale, where RunUpscaler refuses the copy, and a picker that misses on
+    // alternate frames never evaluates again.
+    // Only with --gow2_upscale_scene_guest_formats: the other games' pickers keep 0.6.5's phase behaviour.
+    if (SceneGuestFormatMask() && scene_candidate && !take && up_scale_in_) up_scene_seen_ = true;
+    if (take && !up_scene_done_) {
       up_scene_done_ = true;
       scene_taken = true;
       up_output_upscaled_ = false;
+      ++up_selected_;
       // Notes/80: camera only (the AO) - the scene stays as it is, nothing to run here.
       if (const gpu::TextureHandle o = up_camera_only_ ? gpu::TextureHandle(0) : RunUpscaler(*rt, w, h)) {
         resolve_source = o;
+        ++up_selected_upscaled_;
         if (up_output_upscaled_) source_scale = res_scale_;
       } else if (ssil_in_upscaler_) {
         resolve_source = ssil_out_;  // the upscaler stopped after SSIL ran: the copy still gets it
