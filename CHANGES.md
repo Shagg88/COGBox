@@ -23,6 +23,12 @@
   - **No more short pause while pipelines are saved** (DirectX 12): every ~15 s of new pipelines, saving them held up
     the pipelines being built for about a third of a second (Gears 3's ~480 MB file); a pipeline built during a save
     is now stored right after it instead of waiting.
+  - **Smoother first start after a new graphics driver or card** (DirectX 12; Gears 3 with every cache emptied, NVIDIA's
+    included): the shaders of the area you are playing are now built first instead of after every shader saved from earlier
+    starts - **33% fewer** draws left out while waiting (17,286 -> 11,657) and worst frame times (p99) a little lower. The
+    background building also runs at a lower priority with half its threads during play. And when the shaders weren't
+    prepared for this driver, card and renderer, **Play now offers "Prepare all shaders" first** (then the game starts by
+    itself; Play now / Don't ask again). Vulkan: about the same as before on a fully cold start.
   - **"Prepare all shaders" runs offline** (#370 by Flippage): the run that prepares the shaders started like a normal
     game and signed in to the COGBox server as you - a second copy of you online for minutes. It now starts with no
     online server and without your online identity.
