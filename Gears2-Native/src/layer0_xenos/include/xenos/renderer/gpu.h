@@ -544,6 +544,9 @@ class Backend {
   // Patch 0061 ("Preparing shaders"): asynchronous pipeline jobs not finished yet (queued + being built), and a save of
   // the saved-pipeline library now (on this thread) if it has new entries.
   virtual uint64_t PipelineJobsLeft() { return 0; }
+  // 0.6.5 (cold starts: the recipe pack's current-level records were held back by the whole start-up backlog): live
+  // (non-backlog) jobs queued or being built - what a new live request waits behind.
+  virtual uint64_t LiveJobsLeft() { return PipelineJobsLeft(); }
   // 0.6.5 (Vulkan pipeline libraries): optimised whole builds still queued or running, for the pipeline cache.
   virtual uint64_t PipelineFillsLeft() { return 0; }
   // Patch 0063: true while the asynchronous pipeline for this description is still being built (a waiting start-up

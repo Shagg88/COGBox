@@ -12945,6 +12945,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         // workers' queue, so the cap below never let a wanted record through): a wanted record is limited only by the
         // wanted jobs still being built, and goes to the workers' live queue, ahead of every backlog.
         const bool wanted = chapter_hold_on_ && rcp_rec_want_[i];
+        // 0.6.5 (job 2025: a fully cold start queued 0 of 14,076 - every ready record waited for the 6,769-job start-up
+        // backlog to fall below the cap, minutes at ~200 ms a driver build): a record of the area being played is
+        // limited only by the live jobs and goes to the live queue, ahead of the backlog.
+        const bool hot = !wanted && rcp_hot_chapters_ && rcp_rec_hot_[i];
         bool blocked = false;
         if (shaders_ready && wanted) {
           // (review) In a hold enough to keep every worker busy (the hold refills every slice, ~2 ms) - a deep live queue
@@ -12956,7 +12960,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           }
           blocked = want_pending >= want_cap;
         } else if (shaders_ready) {
-          blocked = backend_->PipelineJobsLeft() >= cap;
+          blocked = (hot ? backend_->LiveJobsLeft() : backend_->PipelineJobsLeft()) >= cap;
         }
         if (!shaders_ready || blocked) {
           // 0.6.1 (job 1752: with background conversion the wanted records' shaders sat behind the whole backlog and
@@ -12982,9 +12986,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ++rcp_n_.no_gs;
           continue;
         }
-        if (backlog == wanted) {  // backlog for the others, the live queue for wanted records (0.6.1)
-          backend_->SetPipelineBacklog(!wanted);
-          backlog = !wanted;
+        const bool live = wanted || hot;  // 0.6.5: hot records too
+        if (backlog == live) {  // backlog for the others, the live queue for wanted records (0.6.1)
+          backend_->SetPipelineBacklog(!live);
+          backlog = !live;
         }
         const uint64_t m = backend_->PipelineMisses();
         backend_->GetGraphicsPipeline(d, true, nullptr);

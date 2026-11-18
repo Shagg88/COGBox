@@ -5111,6 +5111,12 @@ class D3D12Backend final : public Backend {
     for (const auto& d : jobs_) q += d.size();
     return q;
   }
+  uint64_t LiveJobsLeft() override {  // 0.6.5
+    std::lock_guard<std::mutex> lock(job_mutex_);
+    uint64_t q = jobs_busy_ > backlog_busy_ ? jobs_busy_ - backlog_busy_ : 0;
+    for (uint32_t p = kPipelineClasses; p < kPipelinePriorities; ++p) q += jobs_[p].size();
+    return q;
+  }
   void RefreshWorkerStats() {  // patch 0057 (moved here by 0061: also for the prepare-only report)
     stats_.pipelines_loaded_async = loaded_async_.load(std::memory_order_relaxed);
     stats_.pipelines_built_async = built_async_.load(std::memory_order_relaxed);
