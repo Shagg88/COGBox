@@ -28,3 +28,7 @@ std::vector<std::string> fab_check_folder(const std::string &folder, const std::
 
 // The package's file name: mod_folder_chars(name + "-" + version) + ".zip", or "mod.zip" if nothing is left.
 std::string fab_package_name(const ModIniFields &f);
+
+// The same with the file-count limit given (a test hook: the real limit is kFabMaxFiles).
+std::string fab_pack_folder_limit(const std::string &folder, const std::string &zip_path, FabProgress &p, size_t max_files);
+std::vector<std::string> fab_check_folder_limit(const std::string &folder, const std::string &game, size_t max_files);

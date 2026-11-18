@@ -97,7 +97,11 @@ std::optional<ModIniFields> mod_ini_read(const std::string &folder)
         else if (key == "author") f.author = value;
         else if (key == "description") f.description = value;
         else if (key == "side") f.side = value;
-        else if (key == "requires") f.needs = split_list(value);
+        else if (key == "requires") {
+            for (const std::string &r : split_list(value))
+                if (std::find(f.needs.begin(), f.needs.end(), r) == f.needs.end()) f.needs.push_back(r);
+        }
+        else if (key == "api") { char *end = nullptr; const long v = strtol(value.c_str(), &end, 10); if (end != value.c_str()) f.api = v; }
     }
     return f;
 }
@@ -126,41 +130,51 @@ bool mod_ini_write(const std::string &folder, const ModIniFields &f)
     for (Want &w : want)   // one line each: no line breaks inside a value
         for (char &c : w.value) if (c == '\r' || c == '\n') c = ' ';
 
-    // the [Mod] region is lines [begin, end): after its header (added at the top if there is none) to the next header
-    size_t begin = 0;
+    // The [Mod] regions: the lines after a [Mod] header up to the next header. modcore reads every [Mod] section (later
+    // lines win), so every occurrence is edited and a new key goes into the last region. No [Mod] header at all: one is
+    // added at the top (keys before any section are mod keys to modcore, so they join it).
     bool found = false;
-    for (size_t i = 0; i < lines.size(); i++) {
-        std::string sec;
-        if (header_of(lines[i].text, sec) && sec == "mod") { begin = i + 1; found = true; break; }
-    }
-    if (!found) {
-        lines.insert(lines.begin(), Line{ "[Mod]", eol });
-        begin = 1;
-    }
-    auto region_end = [&]() {
-        for (size_t i = begin; i < lines.size(); i++) {
+    for (const Line &l : lines) { std::string sec; if (header_of(l.text, sec) && sec == "mod") { found = true; break; } }
+    if (!found) lines.insert(lines.begin(), Line{ "[Mod]", eol });
+    // region[i]: line i is a key line place of a [Mod] section; lastHeader: the last [Mod] header's index
+    auto regions = [&](std::vector<bool> &in, size_t &lastHeader) {
+        in.assign(lines.size(), false);
+        bool mod = false;
+        lastHeader = 0;
+        for (size_t i = 0; i < lines.size(); i++) {
             std::string sec;
-            if (header_of(lines[i].text, sec)) return i;
+            if (header_of(lines[i].text, sec)) { mod = sec == "mod"; if (mod) lastHeader = i; continue; }
+            in[i] = mod;
         }
-        return lines.size();
     };
 
     for (const Want &w : want) {
+        std::vector<bool> in;
+        size_t lastHeader;
+        regions(in, lastHeader);
         bool had = false;
-        size_t last = begin;   // just after the region's last key line (else after its header)
-        for (size_t i = begin; i < region_end();) {
+        std::vector<size_t> drop;
+        for (size_t i = 0; i < lines.size(); i++) {
             std::string key, value;
             size_t eq;
-            if (!key_of(lines[i].text, key, value, eq)) { i++; continue; }
-            if (key != w.lowkey) { last = ++i; continue; }
+            if (!in[i] || !key_of(lines[i].text, key, value, eq) || key != w.lowkey) continue;
+            if (w.value.empty() || (had && w.lowkey == std::string("requires"))) { drop.push_back(i); continue; }   // (Requires: later lines fold into the first)
             had = true;
-            if (w.value.empty()) { lines.erase(lines.begin() + (long)i); continue; }
             size_t v = eq + 1;   // keep the key's own spelling and spacing: "Name  =  x" -> "Name  =  new"
             while (v < lines[i].text.size() && (lines[i].text[v] == ' ' || lines[i].text[v] == '\t')) v++;
             lines[i].text = lines[i].text.substr(0, v) + w.value;
-            last = ++i;
         }
-        if (!had && !w.value.empty()) lines.insert(lines.begin() + (long)last, Line{ std::string(w.key) + " = " + w.value, eol });
+        for (size_t k = drop.size(); k-- > 0;) lines.erase(lines.begin() + (long)drop[k]);
+        if (!had && !w.value.empty()) {
+            regions(in, lastHeader);
+            size_t last = lastHeader + 1;   // just after the last region's last key line (else after its header)
+            for (size_t i = lastHeader + 1; i < lines.size() && in[i]; i++) {
+                std::string key, value;
+                size_t eq;
+                if (key_of(lines[i].text, key, value, eq)) last = i + 1;
+            }
+            lines.insert(lines.begin() + (long)last, Line{ std::string(w.key) + " = " + w.value, eol });
+        }
     }
     // (an inserted line after an unterminated last one)
     for (size_t i = 0; i + 1 < lines.size(); i++) if (lines[i].eol.empty()) lines[i].eol = eol;

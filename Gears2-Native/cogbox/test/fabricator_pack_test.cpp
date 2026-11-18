@@ -202,6 +202,48 @@ int main()
         CHECK(r && r->name == "\xE6\x97\xA5\xE6\x9C\xAC");
     }
 
+    // ---- review fixes ----
+    {
+        // spacing and BOM + CRLF kept; Requires lines add up on read and fold into the first on write
+        const std::string dir = join(tmp, "ini4");
+        put(join(dir, "mod.ini"), "\xEF\xBB\xBF[Mod]\r\nName  =  Old\r\nRequires = A\r\nRequires = B, A\r\nApi=1\r\n");
+        auto r = mod_ini_read(dir);
+        CHECK(r && r->needs == (std::vector<std::string>{ "A", "B" }) && r->api == 1);
+        ModIniFields w = *r;
+        w.name = "New"; w.needs = { "C", "D" };
+        CHECK(mod_ini_write(dir, w));
+        CHECK(slurp(join(dir, "mod.ini")) == "\xEF\xBB\xBF[Mod]\r\nName  =  New\r\nRequires = C, D\r\nApi=1\r\n");
+        // two [Mod] sections: every occurrence is edited, a new key goes into the last one
+        const std::string d2 = join(tmp, "ini5");
+        put(join(d2, "mod.ini"), "[Mod]\nName = One\n[Other]\nX=1\n[mod]\nName = Two\n[Tail]\nY=2\n");
+        ModIniFields w2;
+        w2.name = "Final"; w2.author = "me";
+        CHECK(mod_ini_write(d2, w2));
+        CHECK(slurp(join(d2, "mod.ini")) == "[Mod]\nName = Final\n[Other]\nX=1\n[mod]\nName = Final\nAuthor = me\n[Tail]\nY=2\n");
+        auto r2 = mod_ini_read(d2);
+        CHECK(r2 && r2->name == "Final" && r2->author == "me");
+    }
+    {
+        // mod.ini over 256 KB: "too large", not "no mod.ini"
+        const std::string dir = join(tmp, "big");
+        put(join(dir, "mod.ini"), "[Mod]\nName = X\nGame = gears2\n; " + std::string(300 * 1024, 'x') + "\n");
+        const auto pr = fab_check_folder(dir, "gears2");
+        CHECK(has(pr, "mod.ini is too large") && !has(pr, "no mod.ini"));
+        // the file-count cap counts files (not folders) and a cut-off folder is a problem, never a short zip
+        const std::string d2 = join(tmp, "many");
+        put(join(d2, "mod.ini"), "[Mod]\nName = X\nGame = gears2\n");
+        for (int i = 0; i < 3; i++) put(join(d2, "sub" + std::to_string(i) + "\\f.txt"), "x");
+        CHECK(fab_check_folder_limit(d2, "gears2", 4).empty());   // 4 files, 3 folders: at the limit
+        CHECK(has(fab_check_folder_limit(d2, "gears2", 3), "too many files"));
+        FabProgress p;
+        const std::string zip = join(tmp, "many.zip");
+        CHECK(fab_pack_folder_limit(d2, zip, p, 4).empty() && zip_names(zip).size() == 4);
+        DeleteFileW(widen(zip).c_str());
+        CHECK(fab_pack_folder_limit(d2, zip, p, 3).find("over 3 files") != std::string::npos && !file_exists(zip));
+        // a folder that is not there is an error, not a clean empty one
+        CHECK(has(fab_check_folder(join(tmp, "nope"), "gears2"), "couldn't read"));
+    }
+
     std::filesystem::remove_all(std::filesystem::path(widen(tmp)), ec);
     printf(g_failures ? "%d FAILED\n" : "all ok\n", g_failures);
     return g_failures;

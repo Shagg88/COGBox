@@ -124,9 +124,7 @@ bool fab_write_record(const std::string &folder, const FabInstallRecord &r)
 }
 
 // ---- zip check (the rules mods.cpp's unpacking keeps, checked before anything is written) ----
-static const uint64_t kMaxPackedBytes = 4ull << 30, kMaxUnpackedBytes = 8ull << 30, kMaxFiles = 50000;
 
-static const size_t kMaxIniBytes = 256 * 1024;
 
 // no absolute, drive-letter / stream (':') path, no ".." component - also as Windows reads it (trailing dots and spaces dropped)
 bool fab_path_unsafe(const std::string &raw)
@@ -214,9 +212,9 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
     memset(&z, 0, sizeof z);
     if (!mz_zip_reader_init_cfile(&z, f, 0, 0)) { note("not a valid zip file"); return problems; }
     struct Ender { mz_zip_archive *z; ~Ender() { mz_zip_reader_end(z); } } ender{&z};
-    if (file_size(zip_path) > kMaxPackedBytes) note("the zip is over the packed size limit of " + std::to_string(kMaxPackedBytes) + " bytes");
+    if (file_size(zip_path) > kFabMaxPackedBytes) note("the zip is over the packed size limit of " + std::to_string(kFabMaxPackedBytes) + " bytes");
     const mz_uint n = mz_zip_reader_get_num_files(&z);
-    if (n > kMaxFiles) { note("too many files: more than " + std::to_string(kMaxFiles) + " files in the zip"); return problems; }
+    if (n > kFabMaxFiles) { note("too many files: more than " + std::to_string(kFabMaxFiles) + " files in the zip"); return problems; }
 
     // (program files - mod_file_rules.h - are not looked at here: the unpack leaves them out and says so)
     int iniIdx = -1, iniDepth = 99, devicesShown = 0;
@@ -250,7 +248,7 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
         if (depth < iniDepth) { iniDepth = depth; iniIdx = (int)i; }
         declared += st.m_uncomp_size;
         if (!st.m_is_encrypted) toInflate.push_back(i);
-        if (declared > kMaxUnpackedBytes) { note("unpacked size is over the limit of " + std::to_string(kMaxUnpackedBytes) + " bytes"); return problems; }
+        if (declared > kFabMaxUnpackedBytes) { note("unpacked size is over the limit of " + std::to_string(kFabMaxUnpackedBytes) + " bytes"); return problems; }
     }
     for (const std::string &k : fileKeys) if (dirKeys.count(k)) sameName = true;   // a file and a folder of one name
     if (sameName) note("two entries in the zip have the same path or paths that differ only in case: Windows cannot keep both");
@@ -261,16 +259,16 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
     std::string ini;
     for (mz_uint i : toInflate) {
         CountSink sink;
-        sink.total = &real; sink.limit = kMaxUnpackedBytes;
-        if ((int)i == iniIdx) { sink.keep = &ini; sink.keepMax = kMaxIniBytes + 1; }
+        sink.total = &real; sink.limit = kFabMaxUnpackedBytes;
+        if ((int)i == iniIdx) { sink.keep = &ini; sink.keepMax = kFabMaxIniBytes + 1; }
         if (!mz_zip_reader_extract_to_callback(&z, i, count_cb, &sink, 0)) {
-            if (sink.over) note("unpacked size is over the limit of " + std::to_string(kMaxUnpackedBytes) + " bytes");
+            if (sink.over) note("unpacked size is over the limit of " + std::to_string(kFabMaxUnpackedBytes) + " bytes");
             else note("an entry unpacks to a different size than declared (size mismatch) or is damaged");
             return problems;
         }
     }
     if (iniIdx >= 0) {
-        if (ini.size() > kMaxIniBytes) { note("mod.ini is too large"); return problems; }
+        if (ini.size() > kFabMaxIniBytes) { note("mod.ini is too large"); return problems; }
         // modcore's rules: keys case-insensitive, ; / # comment lines, [Mod] or no section, no Game key = gears3
         std::string iniGame = "gears3", section;
         long iniApi = -1;
@@ -296,7 +294,13 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
         }
         zi.game = iniGame;
         if (iniGame != game) note("mod.ini is for game " + iniGame + ", but this is for " + game + ": wrong game");
-        if (iniApi > kFabModApiLevel) note("mod.ini needs Api " + std::to_string(iniApi) + ", which is newer than this COGBox supports (" + std::to_string(kFabModApiLevel) + ")");
+        { const std::string ap = fab_api_problem(iniApi); if (!ap.empty()) note(ap); }
     }
     return problems;
+}
+
+std::string fab_api_problem(long api)
+{
+    if (api <= kFabModApiLevel) return "";
+    return "mod.ini needs Api " + std::to_string(api) + ", which is newer than this COGBox supports (" + std::to_string(kFabModApiLevel) + ")";
 }

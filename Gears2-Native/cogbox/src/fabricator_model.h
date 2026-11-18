@@ -70,3 +70,9 @@ std::string fab_device_segment(const std::string &name);
 std::string fab_windows_key(const std::string &name);
 // The mod API level this COGBox supports (a mod.ini Api above it is refused).
 constexpr long kFabModApiLevel = 1;
+// "" or the problem text for a mod.ini Api value (-1 = none given) newer than kFabModApiLevel.
+std::string fab_api_problem(long api);
+// The mod limits shared by the zip check and the Creator's folder check: packed zip bytes, unpacked bytes, files, and
+// the size of mod.ini (larger is "mod.ini is too large").
+constexpr uint64_t kFabMaxPackedBytes = 4ull << 30, kFabMaxUnpackedBytes = 8ull << 30, kFabMaxFiles = 50000;
+constexpr size_t kFabMaxIniBytes = 256 * 1024;
