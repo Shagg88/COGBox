@@ -40,6 +40,10 @@ details) is kept while your game is connected and removed when it disconnects. I
 10 minutes. Whether you are online and which game you are in is shown to your friends and kept in memory only.
 A **public** match you host in Gears 2, Gears 3 or Judgment is listed under Open matches for other signed-in players as
 its game, mode, player count, region and whether it has started - never your name, tag or address.
+**Name tags and Recent players** (0.6.5): in an online match your game asks the server for the COGBox tags of the
+other players (by their online XUID) to show after their names, and tells the server which of them you played with. The
+server keeps one entry per player you played with - which game, and when - until either account is deleted. Only you
+see your list: the last 14 days, at most 30 players, never anyone either of you blocked.
 **The games' own lobby search** (the in-game Find Match / Quick Match) reads public lobbies from the server too. For now anyone can make that request without an account, and each public lobby it returns shows your tag, your online XUID, your COGBox account ID, the game, region and player count, and the game's own session details (from COGBox 0.6.1, without your PC's local network address). It never shows the join code, your token or your internet address. Once most players are on a COGBox that signs in to search, the server will require a signed-in player for it.
 
 **Your IP address:** to connect two players directly (there is no relay), the server passes each player's network

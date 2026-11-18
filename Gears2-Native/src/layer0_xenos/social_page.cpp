@@ -29,8 +29,8 @@ char g_add[40] = {};
 bool g_bad_tag = false;
 bool g_keyboard = false;          // the on-screen keyboard is open (controller)
 std::string g_remove_uuid;        // the friend REMOVE asks about
-std::string g_note;
-int g_right = -1;                 // 0.6.5: the right half: 0 invites, 1 open matches, 2 recent players (-1 not chosen)               // a line for the player (a join they can't do from here)
+std::string g_note;               // a line for the player (a join they can't do from here)
+int g_right = -1;                 // 0.6.5: the right half: 0 invites, 1 open matches, 2 recent players (-1 not chosen)
 
 // the Achievements page's colours
 const ImU32 kCrimson = IM_COL32(200, 34, 26, 255);

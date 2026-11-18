@@ -7,6 +7,7 @@
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -114,6 +115,7 @@ std::atomic<uint32_t> g_cls{0};
 std::atomic<int> g_name_off{-1}, g_id_off{-1};
 std::atomic<bool> g_class_set_due{false};  // Gears 1 / 2: a name needs its tag (the game thread does the class-wide set)
 std::string g_before, g_after;
+std::atomic<int> g_backoff_s{1};  // Gears 1 / 2: seconds before the next class-wide attempt (review r366 (4))
 
 std::string TaggedName(uint32_t pri, bool* plain, bool* changed) {
   *changed = false;
@@ -153,7 +155,12 @@ void Worker(bool (*objects_ready)(), bool class_set, std::string style_font) {
     for (const uint32_t pri : Pris(g_cls.load())) {
       bool plain = true, changed = false;
       const std::string name = TaggedName(pri, &plain, &changed);
-      if (!changed) continue;
+      if (!changed) {
+        // review r366 (3): tagged now (or needs none) - forget what was queued, so a name the engine puts back later
+        // (a new round, a re-replicated PRI at the same address) is tagged again; it also keeps the map small
+        asked.erase(pri);
+        continue;
+      }
       if (class_set) {
         g_class_set_due = true;
         break;
@@ -184,6 +191,15 @@ void Ue3NameTagsTick(bool (*objects_ready)(), const Ue3NameTagStyle& style) {
   // included (the class-wide set changes them all) - its name now and the name it should have; then the set, and in
   // its callback (the same frame) each name written back into its new engine-owned buffer.
   if (!style.class_set || !g_class_set_due.exchange(false)) return;
+  // review r366 (4): an attempt that can't finish (a name that isn't plain ASCII, a `set` the engine refused, a write
+  // that didn't fit) used to come back every second, each time a whole object-table walk on the game thread. The next
+  // attempt waits 1, 2, 4 ... 64 s while attempts keep being needed; an attempt that finds nothing to change resets it.
+  static std::chrono::steady_clock::time_point next_try{};
+  const auto now_t = std::chrono::steady_clock::now();
+  if (now_t < next_try) return;
+  const int wait_s = g_backoff_s.load();
+  next_try = now_t + std::chrono::seconds(wait_s);
+  g_backoff_s = std::min(wait_s * 2, 64);  // put back to 1 by a write-back that wrote every name
   const uint32_t cls = g_cls.load();
   struct Want { uint32_t object; std::string name; };
   std::vector<Want> all;
@@ -196,13 +212,18 @@ void Ue3NameTagsTick(bool (*objects_ready)(), const Ue3NameTagStyle& style) {
     change = change || changed;
     all.push_back({o, std::move(name)});
   }
-  if (!change) return;
+  if (!change) {
+    g_backoff_s = 1;  // every name already right: the next need is tried at once
+    next_try = {};
+    return;
+  }
   const std::string placeholder(160, 'x');
   for (const Want& w : all) if (w.name.size() + 1 > placeholder.size()) return;  // never: names are short
   const int name_off = g_name_off.load();
   Ue3ConsoleQueueTrusted("set PlayerReplicationInfo PlayerName " + placeholder, [all, name_off] {
     int written = 0;
     for (const Want& w : all) written += WriteName(w.object + uint32_t(name_off), w.name) ? 1 : 0;
+    if (written == int(all.size())) g_backoff_s = 1;  // all done: a player who joins later is tagged at once
     REXLOG_DEBUG("name tags: {} of {} names written back", written, all.size());
   });
 }

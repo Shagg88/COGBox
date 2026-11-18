@@ -320,7 +320,9 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
       if (!ExecNow(ctx, base, g_target.before_each, &ignored)) return;  // no player yet: keep it queued
     }
     if (!ExecNow(ctx, base, command, &handled)) return;  // no player yet: keep it queued for a later tick
-    if (after) after();  // GitHub #353: same thread, same frame
+    // GitHub #353: same thread, same frame; review r366 (4): only when the engine ran the command (a refused `set` left
+    // the old buffers - Gears 1 / 2's write-back must not follow it)
+    if (after && handled) after();
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       g_queue.pop_front();
