@@ -1233,6 +1233,10 @@ REXCVAR_DEFINE_STRING(gow2_renderer_queries, "off", "Gears2",
                       "--gow2_pm4_split; the launcher's \"Real occlusion (experimental)\", D3D12) | "
                       "answer (also write our answers into the game's query reports: the last real count for that "
                       "report, 1 if none; corrected when our count lands)");
+REXCVAR_DEFINE_BOOL(gow2_upscale_scene_after_fog, false, "Gears2",
+                    "With --gow2_upscale_scene_last_copy: the scene copy is one made after the fog pass (--gow2_ao_fog_ps) "
+                    "once a frame has drawn it - Judgment adds a mid-frame scene copy before its fog on some frames, which "
+                    "moved the taken copy before the fog (XeGTAO's AO left out of that frame: a one-frame flash)");
 REXCVAR_DEFINE_DOUBLE(gow2_renderer_occlusion_slope_bias, 1.0, "Gears2",
                       "Occlusion boxes (query draws that write nothing) get this slope-scaled depth bias toward passing. "
                       "Gears 3 tests them against a half-size depth that keeps the nearest of each 2x2: a flat object's box, "
@@ -6099,6 +6103,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       up_camera_reg_ = cr > 0 && cr <= 255 ? uint32_t(cr) : 0u;
       up_scene_formats_ = uint32_t(std::clamp(REXCVAR_GET(gow2_upscale_scene_formats), 1, 3));
       up_scene_copy_.last_only = REXCVAR_GET(gow2_upscale_scene_last_copy);
+      up_scene_copy_.anchored = up_scene_copy_.last_only && REXCVAR_GET(gow2_upscale_scene_after_fog);
+      up_fog_ps_ = "," + REXCVAR_GET(gow2_ao_fog_ps) + ",";
       up_jitter_scope_ = uint32_t(std::clamp(REXCVAR_GET(gow2_upscale_jitter_scope), 0, 3));
       REXLOG_INFO("gow2_upscaler: object rows c{}-c{}, camera position {}, scene formats {}", up_object_base_,
                   up_object_base_ + 3, up_camera_reg_ ? "c" + std::to_string(up_camera_reg_) : std::string("not used"),
@@ -6432,6 +6438,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Gears 3 chat, 21:15), as --gow2_upscale_scene_formats says.
   uint32_t up_scene_formats_ = 1;
   rr::upscale::SceneCopyPicker up_scene_copy_;  // --gow2_upscale_scene_last_copy: notes/80 s.11
+  bool up_fog_seen_ = false;  // --gow2_upscale_scene_after_fog: this frame drew the fog pass
+  std::string up_fog_ps_;     // its shader hashes, ",A,B,"
   uint32_t up_jitter_scope_ = 0;         // --gow2_upscale_jitter_scope
   uint64_t up_jittered_scope_ = 0;       // draws jittered only because of the scope (log window)
   bool up_jitter_late_ = false;          // --gow2_upscale_jitter_late (Gears 3 job 120)
@@ -9150,7 +9158,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     hl_frame_logged_ = hl_frame_takes_ = 0;
     hl_armed_ = hl_taken_ = false;  // patch 0148 (hl_sources_ is cleared by RequestDisplay, which runs after this)
     hl_format_ = fg_wanted_ ? XenosFrameGenerationHudlessFormat() : 0u;  // notes/83: Vulkan too
-    up_scene_copy_.EndFrame();  // notes/80 s.11
+    up_scene_copy_.EndFrame(up_fog_seen_);  // notes/80 s.11
+    up_fog_seen_ = false;
     up_depth_saved_ = false;  // notes/80 s.6
     if (up_prev_camera_) vel_prev_objs_.swap(vel_objs_);  // notes/80 s.6 (up_camera_ is already reset): this frame's characters, for the camera position
     else vel_prev_objs_.clear();
@@ -10081,6 +10090,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const rr::GuestShader& vsg = dxil_twin ? cache_->GetDxilTwin(vs_hash, vs_.dwords, vs_.count, tess_n) : vsg0;
     if (dxil_twin) ++stats_.dxil_twins;
     if (rcp_on_ && ps_.dwords && ps_hash != rcp_last_ps_) MarkRecipeChapterHot(ps_hash);  // job 634
+    // --gow2_upscale_scene_after_fog: the anchor pass, by its pixel shader (a fog draw skipped before this point is not
+    // seen: that frame counts as one without the anchor - no copy taken - and the picker lets go after two)
+    if (up_scene_copy_.anchored && !up_fog_seen_ && psg) {
+      char fog_hex[20];
+      std::snprintf(fog_hex, sizeof(fog_hex), ",%016llX,", static_cast<unsigned long long>(ps_hash));
+      up_fog_seen_ = up_fog_ps_.find(fog_hex) != std::string::npos;
+    }
 
     // Patch 0025 (Canary render_target_cache.cc Update, 9da693480; Gears 3 review 01-g): a depth target at the same
     // guest EDRAM base as a colour target this draw writes is not bound - the colour target owns those tiles - unless
@@ -14166,7 +14182,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint32_t source_scale = rt->scale;  // patch 0141: the upscaler's output is at the output scale
     // Every scene copy is counted, also after the one that was taken (notes/80 s.11).
     bool scene_taken = false;  // --gow2_ssil: this is the frame's scene copy
-    if (up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt) && up_scene_copy_.Take(uint32_t(rt->format) + 1u) && !up_scene_done_) {
+    if (up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt) && up_scene_copy_.Take(uint32_t(rt->format) + 1u, up_fog_seen_) && !up_scene_done_) {
       up_scene_done_ = true;
       scene_taken = true;
       up_output_upscaled_ = false;

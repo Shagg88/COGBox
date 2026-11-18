@@ -143,6 +143,7 @@ struct Stats {
   // Phase 2: packets handed back to the host, memory words we wrote, wait loops and the iterations they spun.
   uint64_t handed_back = 0, memory_writes_done = 0, wait_loops = 0, wait_spins = 0;
   uint64_t wait_timeouts = 0;  // 0.6.0: memory waits given up after 2 s (Judgment freeze)
+  uint64_t waits_met_by_own_write = 0;  // memory waits passed by this stream's own landed write (Judgment freeze)
   uint64_t waits_spun = 0;  // frame log: wait loops that had to spin at all, and the time they took
   double wait_ms = 0.0;
   uint64_t zpds = 0, zpd_ends = 0;
@@ -200,6 +201,15 @@ class Processor {
     return true;
   }
   uint32_t pending_lo_ = ~0u, pending_hi_ = 0;  // job 173: address range of deferred writes not yet known done
+  // Judgment's freeze back to the main menu: the last memory words this stream wrote (address, raw stored value), so a
+  // memory wait for a value the stream itself wrote there passes once that write has landed - even if a late write
+  // (an older occlusion query's answer, from the renderer thread) replaced it before the wait could read it.
+  struct OwnWrite {
+    uint32_t address = ~0u, raw = 0;
+  };
+  OwnWrite own_writes_[16];
+  uint32_t own_write_next_ = 0;
+  bool OwnWriteMeets(uint32_t poll, uint32_t info, uint32_t ref, uint32_t mask) const;
   uint32_t ReadReg(uint32_t index) const;
   void HandBack(const Reader& r, uint32_t start_pos, uint32_t dwords, uint32_t packet);  // phase 2: one packet
   bool Compare(uint32_t func, uint32_t value, uint32_t ref, uint32_t mask) const;

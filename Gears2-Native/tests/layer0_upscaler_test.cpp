@@ -579,3 +579,51 @@ TEST_CASE("upscale: the creation size shrinks slowly, without oscillating (GitHu
   for (int i = 0; i < 5000; ++i) none += up::UpdateCreationSize(s, 1024, 550, 1280, 720, 0) == C::kNone;
   CHECK(none == 5000);
 }
+
+TEST_CASE("upscale: the scene copy comes after the anchor pass (Judgment: a mid-frame copy before the fog on some frames)",
+          "[upscale]") {
+  xenos::renderer::upscale::SceneCopyPicker p;
+  p.last_only = true;
+  p.anchored = true;
+  constexpr uint32_t kF16 = 1;
+  const auto frame = [&](std::initializer_list<bool> copies_after_fog, bool fog) {  // the copies' "after the fog" flags
+    int taken = -1, i = 0;
+    for (bool after : copies_after_fog) {
+      if (p.Take(kF16, after) && taken < 0) taken = i;
+      ++i;
+    }
+    p.EndFrame(fog);
+    return taken;
+  };
+  // Not anchored yet (start-up): the first copy is taken by count, as before; the frame shows the fog with a copy after it.
+  REQUIRE(frame({false, true}, true) == 0);
+  // Anchored from then on: the copy before the fog is neither taken nor counted.
+  REQUIRE(frame({false, true}, true) == 1);
+  REQUIRE(frame({true}, true) == 0);           // only the copy after the fog
+  REQUIRE(frame({false, true}, true) == 1);    // the mid-frame copy comes back: still the one after the fog
+  // One frame without the fog (a skipped fog draw): no copy that frame; the next frame with it still skips the early copy.
+  REQUIRE(frame({false}, false) == -1);
+  REQUIRE(frame({false, true}, true) == 1);
+  REQUIRE(frame({true}, true) == 0);
+  // kNoAnchorFrames frames in a row without the fog (a pause or menu over the world): it lets go, copies are taken by
+  // count from the next frame, and the anchor comes back with the fog.
+  for (uint32_t k = 0; k < xenos::renderer::upscale::SceneCopyPicker::kNoAnchorFrames; ++k) frame({false}, false);
+  REQUIRE(frame({false}, false) == 0);
+  REQUIRE(frame({false, true}, true) == 0);    // the fog is back: this frame still counts every copy...
+  REQUIRE(frame({false, true}, true) == 1);    // ...and from the next the early copy is skipped again
+  // The fog drawn but no copy after it for kAnchorPatience frames: the anchor lets go and copies are taken by count again.
+  for (uint32_t k = 0; k < xenos::renderer::upscale::SceneCopyPicker::kAnchorPatience; ++k) frame({false}, true);
+  REQUIRE(frame({false}, true) == 0);
+  // Not anchored (every other game): copies are taken by count whatever the fog does, as before.
+  xenos::renderer::upscale::SceneCopyPicker q;
+  q.last_only = true;
+  REQUIRE(q.Take(kF16, false));
+  REQUIRE(q.Take(kF16, true));
+  q.EndFrame(true);
+  REQUIRE(!q.Take(kF16, false));   // last_only: the second of two copies, by count
+  REQUIRE(q.Take(kF16, true));
+  q.EndFrame(true);
+  REQUIRE(!q.Take(kF16, true));
+  REQUIRE(q.Take(kF16, false));    // the fog makes no difference
+  q.EndFrame(false);
+}
