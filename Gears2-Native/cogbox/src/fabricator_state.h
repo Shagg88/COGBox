@@ -49,6 +49,7 @@ struct FabJob {
     std::string sha256;          // (worker)
     int game = -1;               // (UI) the game it goes to
     std::string old_version;     // (UI) an update: the installed version
+    bool decided_update = false; // (UI) Checked found an installed version (and the player said Update)
     FabInstallPlan plan;         // (UI) written before Unpacking, read by the worker
     std::vector<std::string> left_out;   // (worker) program files the unpack left out
     std::vector<std::string> pack_left_out;   // (worker) a folder's program files the pack left out

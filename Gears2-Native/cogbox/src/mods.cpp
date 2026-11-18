@@ -183,8 +183,9 @@ std::vector<ModItem> mods_list(App &a, int g)
             std::wstring n = fd.cFileName;
             if (n == L"." || n == L".." || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
             std::string s = narrow(n);
-            // hidden: names starting with '.' (the Fabricator's .fabricator-backup) and unpackings not finished (.partial)
-            if (s.find('|') != std::string::npos || s[0] == '.' ||
+            // hidden: the Fabricator's backups (.fabricator-backup) and unpackings not finished (*.partial); other
+            // '.'-named folders are listed as before
+            if (s.find('|') != std::string::npos || lower(s) == ".fabricator-backup" ||
                 (s.size() >= 8 && lower(s.substr(s.size() - 8)) == ".partial")) continue;
             found.push_back(s);
         } while (FindNextFileW(f, &fd));
@@ -452,7 +453,10 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err, s
     // 0.6.1: 0.6.0 installed an EMPTY folder for a zip mod (review C1); RemoveDirectoryW only removes an empty one, so
     // that leftover no longer blocks adding the zip again and a real mod of the same name is still refused.
     if (dir_exists(dest) && !RemoveDirectoryW(widen(dest).c_str())) { err = "A mod named \"" + name + "\" is already there - remove or rename it first."; return false; }
+    // a <name>.partial with COGBox's record is a Fabricator install unpacking now (or the next start's sweep's): never
+    // removed here - another unpacking name is used instead
     std::string part = dest + ".partial";
+    for (int i = 2; dir_exists(part) && fab_read_record(part); i++) part = dest + " " + std::to_string(i) + ".partial";
     mods_remove_tree(widen(part));   // what an earlier, failed try left
     std::vector<std::string> left;
     bool ok = mods_unpack_zip(a, g, zipPath, part, true, err, &left);

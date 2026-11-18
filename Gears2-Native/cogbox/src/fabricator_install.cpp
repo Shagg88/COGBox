@@ -145,11 +145,26 @@ std::string fab_install_unpack(const FabInstallPlan &p, std::vector<std::string>
     std::string err;
     FabInstallRecord rec;   // COGBox's own: a fabricator.json in the zip is never unpacked (mods_unpack_zip_in)
     rec.source = p.item.source; rec.name = p.item.name; rec.version = p.item.version; rec.sha256 = p.item.sha256;
-    if (!mods_unpack_zip_in(p.data_dir, p.zip, part, true, err, left_out) || !fab_write_record(part, rec)) {
+    // the record first: a .partial an unpack cut short (COGBox closed or crashed) is then COGBox's, and the next start's
+    // sweep (fab_sweep_partials) removes it
+    if (!make_dirs(part) || !fab_write_record(part, rec)) {
         mods_remove_tree(widen(part));
-        return err.empty() ? "Couldn't write the mod's record (is the disk full?)." : err;
+        return "Couldn't write the mod's record (is the disk full?).";
+    }
+    if (!mods_unpack_zip_in(p.data_dir, p.zip, part, p.strip_top, err, left_out)) {
+        mods_remove_tree(widen(part));
+        return err.empty() ? "The mod couldn't be unpacked." : err;
     }
     return "";
+}
+
+void fab_sweep_partials(int g)
+{
+    for (const std::string &n : mods_entries(g)) {
+        if (n.size() <= 8 || lower_s(n.substr(n.size() - 8)) != ".partial") continue;
+        const std::string p = join(mods_dir(g), n);
+        if (plain_dir(attrs_of(p)) && fab_read_record(p)) mods_remove_tree(widen(p));
+    }
 }
 
 void fab_install_abandon(const FabInstallPlan &p)

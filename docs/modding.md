@@ -17,8 +17,9 @@ mods\MyMod\
 
 Mods made for the Xbox 360 are often shared as bare files. A package (`.xxx`, `.upk`), texture cache (`.tfc`) or
 `Coalesced_*.bin` at the mod's top goes to `GearGame\CookedXbox360`, and a movie (`.bik`) to `GearGame\Movies`.
-Programs (`.xex`, `.dll`, `.exe`) are never used from a mod. Folders inside a mod that are links (junctions or
-symlinks) are not followed: copy the files in (the log names any link it skipped).
+Program files are never used from a mod: programs and libraries, scripts, installers, shortcuts and other things
+Windows runs, and archives inside the mod are left out when it is added. Folders inside a mod that are links
+(junctions or symlinks) are not followed: copy the files in (the log names any link it skipped).
 
 **Load order:** the Mods tab's order, top to bottom. Where two mods have the same file, the lower one wins.
 
@@ -197,10 +198,10 @@ COGBox's **FABRICATOR** screen (the launcher's FABRICATOR button, or **More in F
    | `Side` | `everyone`, `host` or `client` (see above). |
    | `Requires` | Mods that must be on too, by name, comma-separated: `Other Mod, Another Mod`. The game leaves your mod out without them. |
 
-3. **Fix what the check lists.** The check is the one an install makes: unsafe or duplicate file names, links,
-   a `mod.ini` for a newer mod API, and the limits (50 000 files, 8 GiB unpacked, a 4 GiB zip, a `mod.ini` of at
-   most 256 KB). It also lists **program files**, because a clean package has none: programs and libraries (`.exe`,
-   `.dll`, `.xex`), scripts (`.bat`, `.cmd`, `.ps1`, `.vbs`, `.js`), installers, shortcuts, registry files and other
+3. **Fix what the check lists.** The check looks for what a clean package needs: a `mod.ini` with `Name` and `Game`
+   (not for a newer mod API), safe file names (no unsafe or duplicate names, no links), and the limits (50 000 files,
+   8 GiB unpacked, a `mod.ini` of at most 256 KB; the 4 GiB zip limit is checked when the zip is made). It also
+   lists **program files**, because a clean package has none: programs and libraries (`.exe`, `.dll`, `.xex`), scripts (`.bat`, `.cmd`, `.ps1`, `.vbs`, `.js`), installers, shortcuts, registry files and other
    things Windows runs, and archives (`.zip`, `.7z`, `.rar`, `.cab`) inside the mod. When a player adds a mod that has
    such files, they are left out and the install says so. `fabricator.json` is never packed, and a zip's own is ignored.
 4. **Make a zip.** Pick where to save it; its name is the mod's name and version. Test it by adding it to your own

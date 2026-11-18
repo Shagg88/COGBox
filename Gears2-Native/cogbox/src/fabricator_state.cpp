@@ -159,6 +159,7 @@ void run_add(const std::shared_ptr<FabJob> &j)
     }), p.end());
     j->problems = p;
     if (p.empty()) j->sha256 = sha256_file(j->zip);
+    if (j->progress.cancel) { drop_temp(*j); j->phase = FabJob::Cancelled; return; }   // Cancel pressed while it checked
     j->phase = FabJob::Checked;
 }
 
@@ -413,25 +414,10 @@ bool fab_answer(App &a, const Modal &m)
 }
 
 // ---- once a frame -------------------------------------------------------------------------------------------------------
-// <mods>\<name>.partial folders with COGBox's record: Fabricator installs a closed (or crashed) COGBox never finished.
-// (The Mods tab's own .partial unpackings have no record and are left to it.)
+// (fab_sweep_partials: a .partial with COGBox's record is an install a closed or crashed COGBox never finished)
 static void sweep_partials()
 {
-    for (int g = 0; g < G_COUNT; g++) {
-        const std::string dir = mods_dir(g);
-        WIN32_FIND_DATAW fd;
-        HANDLE f = FindFirstFileW((widen(dir) + L"\\*").c_str(), &fd);
-        if (f == INVALID_HANDLE_VALUE) continue;
-        std::vector<std::string> found;
-        do {
-            const std::string n = narrow(fd.cFileName);
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
-            if (n.size() > 8 && lower_s(n.substr(n.size() - 8)) == ".partial") found.push_back(join(dir, n));
-        } while (FindNextFileW(f, &fd));
-        FindClose(f);
-        for (const std::string &p : found)
-            if (fab_read_record(p)) mods_remove_tree(widen(p));
-    }
+    for (int g = 0; g < G_COUNT; g++) fab_sweep_partials(g);
 }
 
 void fab_state_poll(App &a)
@@ -459,6 +445,7 @@ void fab_state_poll(App &a)
             continue;
         }
         if (ph == FabJob::Checked) {
+            if (j->progress.cancel) { drop_temp(*j); j->phase = FabJob::Cancelled; continue; }
             if (a.modal.open) continue;   // (decided once the open question is answered; no disk scan meanwhile)
             // the game it goes to: the LIBRARY's, or the one its mod.ini names
             int g = j->want_game;
@@ -486,6 +473,7 @@ void fab_state_poll(App &a)
                 fail_ui(a, *j, trf("This zip is {1}, not the mod you chose to update. Add it with Add a mod instead.", { j->name }));
                 continue;
             }
+            j->decided_update = !match.empty();
             if (match.empty()) { j->phase = FabJob::Waiting; continue; }
             const std::string from = j->old_version.empty() ? "" : " " + j->old_version, to = j->info.version.empty() ? "" : " to " + j->info.version;
             // "Update Horde Bank 1.0 to 1.1?" - the name and versions as the mod gives them (not translated)
@@ -505,6 +493,11 @@ void fab_state_poll(App &a)
             const std::string e = fab_install_prepare(a, j->game, item, j->zip, &plan);
             if (e == kClose) continue;
             if (!e.empty()) { fail_ui(a, *j, e); continue; }
+            if (plan.update != j->decided_update) {   // another add of this name was installed meanwhile: decided (asked) again
+                j->phase = FabJob::Checked;
+                continue;
+            }
+            plan.strip_top = !j->from_folder;   // a folder add: the chosen folder is the mod's root
             j->plan = plan;   // (read by the worker after the post)
             j->phase = FabJob::Unpacking;
             installing = true;
@@ -516,6 +509,10 @@ void fab_state_poll(App &a)
             }
             const std::string e = fab_install_commit(a, j->plan);
             if (e == kClose) continue;
+            if (e.rfind("The mods folder changed", 0) == 0) {   // (the commit removed the .partial) decided and unpacked again
+                j->phase = FabJob::Checked;
+                continue;
+            }
             fab_library_changed();
             if (!e.empty()) { fail_ui(a, *j, e); continue; }
             drop_temp(*j);

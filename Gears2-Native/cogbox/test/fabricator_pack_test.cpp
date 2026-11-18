@@ -2,6 +2,7 @@
 // Prints FAIL lines; exit code = failures. MinGW, from cogbox\:
 //   gcc -w -c third_party/miniz/miniz.c -o miniz.o
 //   g++ -std=c++17 -Wall -Wextra -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX -Isrc -Ithird_party
+//       -I../../Gears3-Native/src/layer2_ue3   (modcore/campaigns.h: the mod API level)
 //       test/fabricator_pack_test.cpp src/fabricator_pack.cpp src/mod_ini_edit.cpp src/fabricator_model.cpp
 //       src/mod_file_rules.cpp src/util.cpp miniz.o
 //       -static-libgcc -static-libstdc++ -lole32 -lshell32 -luuid -lbcrypt -ladvapi32 -o fabricator_pack_test.exe

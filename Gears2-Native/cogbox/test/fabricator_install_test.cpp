@@ -459,6 +459,54 @@ int main()
         CHECK(index_of(v, "Pack") == (int)v.size() - 1 && v.back().enabled);
     }
 
+    // ---- final review: the startup sweep, the record before the unpack, a folder add's top folder, the Mods tab's
+    // .partial name, '.'-named mod folders ----
+    {
+        FabInstallRecord rec;
+        rec.name = "Gone";
+        const std::string recorded = join(mods, "Gone.partial"), handOwn = join(mods, "Hand.partial");
+        make_dirs(join(recorded, "GearGame"));
+        write_file(join(recorded, "GearGame/half.xxx"), "half");
+        CHECK(fab_write_record(recorded, rec));
+        make_dirs(handOwn);
+        write_file(join(handOwn, "x.xxx"), "x");
+        fab_sweep_partials(g);
+        CHECK(!exists(recorded));                 // COGBox's unfinished install: removed
+        CHECK(text_of(join(handOwn, "x.xxx")) == "x");   // no record: left alone
+        remove_tree(widen(handOwn));
+
+        // the record is written before the unpack: a failed unpack leaves nothing; a finished one has it
+        FabInstallItem ti;
+        ti.name = "Top Kept"; ti.version = "1";
+        std::string z = put_zip("topkept.zip", {{"Top Kept/GearGame/t.xxx", "t"}});
+        FabInstallPlan plan;
+        CHECK(fab_install_prepare(a, g, ti, z, &plan) == "");
+        plan.strip_top = false;   // a folder add: the zip's top folder is part of the mod
+        CHECK(fab_install_unpack(plan) == "");
+        CHECK(text_of(join(mods, "Top Kept.partial/Top Kept/GearGame/t.xxx")) == "t");
+        CHECK(fab_read_record(join(mods, "Top Kept.partial")).has_value());
+        // the Mods tab's add of a zip of that name keeps the Fabricator's .partial and unpacks beside it
+        std::string z2 = put_zip("Top Kept.zip", {{"GearGame/m.xxx", "m"}, {"readme.txt", "r"}});   // (no single top folder: named by the zip)
+        std::string err;
+        CHECK(mods_add_zip(a, g, z2, err) && err.empty());
+        CHECK(text_of(join(mods, "Top Kept/GearGame/m.xxx")) == "m");
+        CHECK(text_of(join(mods, "Top Kept.partial/Top Kept/GearGame/t.xxx")) == "t");
+        CHECK(fab_install_commit(a, plan) != "");   // the folder is the Mods tab's now: refused, .partial removed
+        CHECK(!exists(join(mods, "Top Kept.partial")));
+        FabInstallPlan bad = plan;
+        bad.zip = join(g_root, "missing.zip");
+        CHECK(fab_install_unpack(bad) != "" && !exists(join(mods, "Top Kept.partial")));
+        remove_tree(widen(join(mods, "Top Kept")));
+
+        // '.'-named folders are listed again, except the Fabricator's backups and unfinished unpackings
+        make_dirs(join(mods, ".dotmod/GearGame"));
+        std::vector<ModItem> v = mods_list(a, g);
+        CHECK(index_of(v, ".dotmod") >= 0);
+        CHECK(index_of(v, ".fabricator-backup") < 0);
+        remove_tree(widen(join(mods, ".dotmod")));
+        mods_store(a, g, mods_list(a, g));
+    }
+
     // ---- mods_unpack_zip: names as Windows reads them, never outside the folder, real byte counts ----
     {
         std::string dest = join(g_root, "unpack1");

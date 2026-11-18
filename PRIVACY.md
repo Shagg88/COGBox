@@ -76,7 +76,7 @@ uninstalls mods from files on your PC. What it keeps, in the COGBox folder:
 - `fabricator\work\` next to COGBox: a temporary folder used while a mod folder is packed and checked. It is removed
   afterwards.
 
-A mod you put in the mods folder by hand has no `fabricator.json`, and COGBox never changes or deletes it.
+A mod you put in the mods folder by hand has no `fabricator.json`, and COGBox never moves or deletes its folder.
 
 ## Problem reports
 

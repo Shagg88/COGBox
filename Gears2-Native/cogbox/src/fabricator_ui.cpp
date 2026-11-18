@@ -453,7 +453,7 @@ void creator_check_section(App &a)
     }
     const bool busy = g_crCheck && fab_job_running(*g_crCheck);
     if (btn("Check again", !busy)) creator_check(a);
-    ui_tip("The same checks as an install: program files, unsafe or duplicate names, links, mod.ini, and the size limits.");
+    ui_tip("What a clean package needs: a mod.ini with Name and Game, no program files, safe file names (no links), and the limits. The zip's 4 GB limit is checked when the zip is made.");
 }
 
 void creator_form_section(App &a)

@@ -2,6 +2,7 @@
 #include "fabricator_model.h"
 #include "mod_file_rules.h"
 #include "util.h"
+#include "modcore/campaigns.h"   // modcore::kModApiLevel: the mod API the game implements
 #include "../third_party/miniz/miniz.h"
 #include "../third_party/nlohmann/json.hpp"
 
@@ -83,7 +84,7 @@ static const char *latin_ascii(unsigned cp)
 
 std::string mod_folder_chars(const std::string &base)
 {
-    // accented Latin letters folded to ASCII first ("ÃœnÃ¯code MÃ¶d" -> "Unicode Mod"); other non-ASCII text is dropped
+    // accented Latin letters folded to ASCII first (U+00DC -> U, U+00DF -> ss, U+0141 -> L); other non-ASCII text is dropped
     std::string folded;
     for (size_t i = 0; i < base.size();) {
         const unsigned char c = (unsigned char)base[i];
@@ -343,6 +344,6 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
 
 std::string fab_api_problem(long api)
 {
-    if (api <= kFabModApiLevel) return "";
-    return "mod.ini needs Api " + std::to_string(api) + ", which is newer than this COGBox supports (" + std::to_string(kFabModApiLevel) + ")";
+    if (api <= modcore::kModApiLevel) return "";
+    return "mod.ini needs Api " + std::to_string(api) + ", which is newer than this COGBox supports (" + std::to_string(modcore::kModApiLevel) + ")";
 }

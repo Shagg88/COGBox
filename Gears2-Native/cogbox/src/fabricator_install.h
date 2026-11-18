@@ -27,6 +27,8 @@ struct FabInstallPlan {
     std::string folder;     // under mods_dir(g)
     bool update = false;    // folder holds the installed version of item (its record); else a new folder
     std::string data_dir;   // the game's data folder (App::st[g].dataDir), for the unpack's top-folder rule
+    bool strip_top = true;  // false: the zip was packed from the mod's own folder (a folder add), so its top folder is
+                            // the mod's, never one to take off
 };
 std::string fab_install_prepare(App &a, int g, const FabInstallItem &item, const std::string &zip_path, FabInstallPlan *plan);
 std::string fab_install_unpack(const FabInstallPlan &plan, std::vector<std::string> *left_out = nullptr);
@@ -40,5 +42,9 @@ void fab_install_abandon(const FabInstallPlan &plan);   // removes the plan's .p
 // the same call (each turns into the other as the mods folder says).
 std::string fab_install(App &a, int g, const FabInstallItem &item, const std::string &zip_path, std::vector<std::string> *left_out = nullptr);
 std::string fab_update(App &a, int g, const FabInstallItem &item, const std::string &zip_path, std::vector<std::string> *left_out = nullptr);
+// <mods>\<name>.partial folders of game g that hold COGBox's record: Fabricator unpackings a closed or crashed COGBox
+// never finished (the record is written before the unpack starts). A .partial without a record (the Mods tab's own
+// unpacking) is left alone. Run at start, before any install.
+void fab_sweep_partials(int g);
 // Moves <mods>\<folder> to the backup folder. Only a folder with COGBox's fabricator.json is ever moved.
 std::string fab_uninstall(App &a, int g, const std::string &folder);

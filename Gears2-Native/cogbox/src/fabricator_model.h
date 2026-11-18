@@ -68,9 +68,7 @@ std::string fab_device_segment(const std::string &name);
 // name as Windows compares it (one separator, no empty or "." segments, trailing dots and spaces off, case folded):
 // two names with the same key cannot both exist in one folder.
 std::string fab_windows_key(const std::string &name);
-// The mod API level this COGBox supports (a mod.ini Api above it is refused).
-constexpr long kFabModApiLevel = 1;
-// "" or the problem text for a mod.ini Api value (-1 = none given) newer than kFabModApiLevel.
+// "" or the problem text for a mod.ini Api value (-1 = none given) newer than modcore::kModApiLevel (modcore/campaigns.h: the level the game's modcore implements).
 std::string fab_api_problem(long api);
 // The mod limits shared by the zip check and the Creator's folder check: packed zip bytes, unpacked bytes, files, and
 // the size of mod.ini (larger is "mod.ini is too large").
