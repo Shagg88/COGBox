@@ -245,6 +245,11 @@ static void answered(App &a)
     else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
     else if (m.tag == "protonrec" || m.tag == "protonfound") linux_answer(a, m);   // proton049
     else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
+    else if (m.tag == "coldprep") {   // 0.6.5: the cold-start question (play.cpp); closing it starts nothing
+        if (m.answer == 0) { a.prepThenPlay[m.game] = true; play_start(a, m.game, true); }
+        else if (m.answer == 1) { a.coldPrepOk[m.game] = true; play_start(a, m.game); }
+        else if (m.answer == 2) { a.ini.seti("Graphics", "AutoPrepareAsk", 0); a.ini.save(); a.coldPrepOk[m.game] = true; play_start(a, m.game); }
+    }
     else if (m.tag == "tumismatch") a.joinLobby[m.game].clear();   // 0.6.0: Cancel drops a pending Join
     else if (m.tag == "foundsaves") {   // 0.6.4: hand-copied saves; Not now, or a done import, then starts the game
         bool start = true;

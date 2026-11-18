@@ -109,6 +109,13 @@ static std::vector<std::string> adapters_text()
     return out;
 }
 
+std::string report_graphics_fingerprint()
+{
+    std::string s;
+    for (const std::string &a : adapters_text()) s += a + "; ";
+    return s;
+}
+
 std::vector<std::string> report_gpu_names()
 {
     std::vector<std::string> out;

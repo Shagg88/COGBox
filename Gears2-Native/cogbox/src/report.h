@@ -12,7 +12,10 @@ struct ReportFile {
 
 // The PC: Windows, processor, memory, graphics adapters, then 'displays' (lines the caller makes), display scale
 std::string report_system_text(const std::string &displays);
-std::vector<std::string> report_gpu_names();   // the graphics adapters' names (no software adapters)
+std::vector<std::string> report_gpu_names();
+// 0.6.5 (cold starts): the graphics adapters with their driver versions, one line - changes when the driver is updated
+// or the graphics card changed (what makes the game's saved pipelines unusable).
+std::string report_graphics_fingerprint();   // the graphics adapters' names (no software adapters)
 // 0.6.2 (GitHub #304): the graphics cards the game can be told to use (Graphics tab, Graphics card): hardware DXGI adapters
 // only (no software adapters, no Microsoft Basic Render / Display), each name once, with its video memory of its own in MB.
 struct GpuCard { std::string name; unsigned mb = 0; };

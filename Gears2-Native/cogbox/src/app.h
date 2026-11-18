@@ -107,6 +107,8 @@ struct App {
     bool padConnected = false;
     bool lastPad = true;              // 0.2.0: the last input came from a controller (hints follow it), else keyboard / mouse
     std::string joinLobby[G_COUNT];   // social step 3: the next start of this game joins that room code (Join friend)
+    bool coldPrepOk[G_COUNT] = {};      // 0.6.5: "Play now" chosen at the cold-start question (until the launcher closes)
+    bool prepThenPlay[G_COUNT] = {};    // 0.6.5: a Prepare all shaders run started from that question - play when it ends
     bool misplacedAsked[G_COUNT] = {};  // 0.6.4: the hand-copied saves question was asked for this Play (play.cpp)
     bool tuMismatchOk[G_COUNT] = {};  // TU preflight: "Play anyway" chosen for this game (until the launcher closes)
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
