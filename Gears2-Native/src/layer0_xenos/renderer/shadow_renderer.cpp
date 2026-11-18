@@ -90,6 +90,8 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 
 #include <algorithm>
 #include <source_location>
+#include <type_traits>
+#include <utility>
 #include <tuple>
 #include <array>
 #include <bit>
@@ -460,6 +462,26 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_dedicated_images, false, "Gears2",
                     "Patch 0097 (Vulkan): images the driver prefers in an allocation of their own (NVIDIA: render "
                     "targets) get one, as D3D12's committed resources are. A measurement switch first (job 403): "
                     "Vulkan colour targets draw in ~2x D3D12's GPU time even with DXC-compiled shaders (job 402)");
+#if GN_SDK_VULKAN
+namespace {
+// 0.6.5: SDK patch 116 adds VulkanDevice::Properties::graphicsPipelineLibrary (true only with fast linking and
+// independent interpolation decorations). Read where the SDK headers have it; older SDK headers -> false (built whole).
+template <class P, class = void>
+struct HasGplField : std::false_type {};
+template <class P>
+struct HasGplField<P, std::void_t<decltype(std::declval<const P&>().graphicsPipelineLibrary)>> : std::true_type {};
+template <class P>
+bool SdkGraphicsPipelineLibrary(const P& pr) {
+  if constexpr (HasGplField<P>::value) return bool(pr.graphicsPipelineLibrary);
+  else return false;
+}
+}  // namespace
+#endif
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_pipeline_libraries, false, "Gears2",
+                    "0.6.5 (Vulkan): build each new pipeline from per-stage pipeline libraries "
+                    "(VK_EXT_graphics_pipeline_library, SDK patch 116 / runtime 066): each shader is compiled once, and a "
+                    "new state combination is a link of a few microseconds instead of a whole build (bench 1755: 87 ms "
+                    "mean). Used only where the driver offers fast linking; else pipelines are built whole");
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_count_pixels, false, "Gears2",
                     "Patch 0098 (Vulkan, a measurement; with --gow2_renderer_gpu_by_target): the samples that pass depth "
                     "/ stencil per render target, from occlusion queries - whether Vulkan's ~2x colour-target GPU time "
@@ -1598,6 +1620,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       options.vk_suballoc_textures = REXCVAR_GET(gow2_renderer_vulkan_suballoc_textures);  // 0.5.1
       options.vk_dedicated_images = REXCVAR_GET(gow2_renderer_vulkan_dedicated_images);                    // 0097
       options.vk_count_pixels = REXCVAR_GET(gow2_renderer_vulkan_count_pixels);                            // 0098
+      options.vk_pipeline_libraries = REXCVAR_GET(gow2_renderer_vulkan_pipeline_libraries);                 // 0.6.5
       options.vk_attachment_layouts = REXCVAR_GET(gow2_renderer_vulkan_attachment_layouts) == "optimal";   // 0100
       options.vk_barrier_src_stages = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "work";          // 0107
       options.vk_skip_memory_barriers = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "skip_memory";  // 0108
@@ -1640,6 +1663,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           vk_external_.anisotropy = pr.samplerAnisotropy;
           vk_external_.texture_compression_bc = pr.textureCompressionBC;
           vk_external_.occlusion_query_precise = pr.occlusionQueryPrecise;  // 0.6.1
+          vk_external_.graphics_pipeline_library = SdkGraphicsPipelineLibrary(pr);  // 0.6.5: SDK patch 116 (runtime 066)
           options.vulkan_external = &vk_external_;
           presenter_ = presenter;
           presenter_vulkan_ = true;
