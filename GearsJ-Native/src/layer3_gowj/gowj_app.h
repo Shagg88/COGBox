@@ -115,6 +115,7 @@ class GowjApp : public rex::ReXApp {
     // Gears 2 notes/80 s.6: the upscalers' depth copied at the scene depth resolve - by the scene colour copy the game has
     // reused that EDRAM, and DLSS got one depth for the whole frame (distant edges broke up; captured 2026-11-04).
     game_default("gow2_upscale_depth_at_resolve", "true");
+    game_default("gow2_upscale_depth_last_copy", "true");   // the last of its two scene-depth copies (the first holds part of the scene)
     // Gears 2 notes/81: with --gow2_ao=gtao, ours goes in before the fog pass, the same shader as Gears 3's. The launcher
     // turns Judgment's own AO off with AmbientOcclusion=False.
     game_default("gow2_ao_fog_ps", "724AB5F143DBBFD4");
