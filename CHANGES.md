@@ -131,6 +131,9 @@
 - Kernel fixes from the Xenia Canary / Edge comparison (timers, semaphores, a read/write lock, XMA): none of our four games
   was seen to use the changed paths, so no change is expected in play.
 
+### Translations
+- **Hungarian** fixes and newly translated lines (PR #356 by hevesij - thank you).
+
 ## 0.6.4
 
 - **Built for AVX2 CPUs only** (all four games): the game code now uses the AVX2 / FMA / BMI2 instructions of Intel Core

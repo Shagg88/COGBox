@@ -220,8 +220,8 @@ Frame rate limit = Képkockasebesség-korlát
 FPS counter = FPS számláló
 Bar at the top = Sáv felül
 Bar at the bottom = Sáv alul
-Game's own (column) = A játék saját (oszlop)
-Bar: one line (FPS, frame time, slowest frame) drawn by the port itself, nothing in the game changed. Game's own: the game's built-in FPS / frame-time column. = Sáv: egy sor (FPS, képkockaidő, leglassabb képkocka), amelyet maga a port jelenít meg, a játékon semmi sem változik. A játék saját: a játék beépített FPS / képkockaidő sávja.
+Game's own (column) = Játék saját (oszlop)
+Bar: one line (FPS, frame time, slowest frame) drawn by the port itself, nothing in the game changed. Game's own: the game's built-in FPS / frame-time column. = Sáv: egy sor (FPS, képkockaidő, leglassabb képkocka), amelyet maga a port jelenít meg, a játékon semmi sem változik. Játék saját: a játék beépített FPS / képkockaidő sávja.
 Ultrawide = Ultraszéles 21:9
 Quality preset = Minőségi előbeállítás
 Original (as on the console) = Eredeti (mint a konzolon)
@@ -256,7 +256,7 @@ Sharp textures show at once (fast mip fade) = Az éles textúrák azonnal megjel
 A newly loaded sharper texture shows at once instead of fading in over 0.3-2 seconds. = Az újonnan betöltött élesebb textúra azonnal megjelenik ahelyett, hogy 0,3-2 másodperc alatt úsznának be.
 Pool = Pool
 Texture memory = Textúramemória
-Game's own (smallest) = A játék saját (legkisebb)
+Game's own (smallest) = Játék saját (legkisebb)
 Standard (196 MB / Gears 3 200 MB) = Szabványos (196 MB / Gears 3 200 MB)
 Large (256 MB) = Nagy (256 MB)
 Larger (320 MB, not long-tested) = Nagyobb (320 MB, nincs hosszan tesztelve)
@@ -285,7 +285,7 @@ Mouse sensitivity = Egér érzékenység
 How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = Milyen gyorsan forgatja az egér a kamerát. A 0,5 jó kiindulópont; egér magas DPI-nél csökkentsd, alacsony DPI-nél növeld.
 Left stick dead zone (%) = Bal kar holtzónája (%)
 Right stick dead zone (%) = Jobb kar holtzónája (%)
-Game's own = A játék saját
+Game's own = Játék saját
 Vibration = Rezgés
 Controller vibration = Kontroller rezgése
 The controller's rumble. = A kontroller rezgése.
@@ -700,7 +700,7 @@ Ambient occlusion = Környezeti takarás
 XeGTAO (high, highly experimental) = XeGTAO (magas, erősen kísérleti)
 XeGTAO (ultra, highly experimental) = XeGTAO (ultra, erősen kísérleti)
 Gears 2 first = először a Gears 2
-The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, characters included, at about the cost of the original. Ultra looks in more directions and catches more small details, for a little more. Game's own: the original. Off: none. = A lágy árnyékolás a sarkokban, a résekben és ott, ahol a tárgyak összeérnek. XeGTAO: modern, teljes felbontású változat (az Intel XeGTAO-ja) a játék saját, alacsony felbontású változata helyett - foltok helyett pontos érintkezési árnyékok, a karaktereken is, nagyjából az eredeti költségén. Az Ultra több irányban keres, és több apró részletet talál, kicsivel többért. A játék saját: az eredeti. Ki: nincs.
+The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, characters included, at about the cost of the original. Ultra looks in more directions and catches more small details, for a little more. Game's own: the original. Off: none. = A lágy árnyékolás a sarkokban, a résekben és ott, ahol a tárgyak összeérnek. XeGTAO: modern, teljes felbontású változat (az Intel XeGTAO-ja) a játék saját, alacsony felbontású változata helyett - foltok helyett pontos érintkezési árnyékok, a karaktereken is, nagyjából az eredeti költségén. Az Ultra több irányban keres, és több apró részletet talál, kicsivel többért. Játék saját: az eredeti. Ki: nincs.
 SMAA T2x (temporal) = SMAA T2x (időbeli)
 SMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now. = SMAA T2x: SMAA egy időbeli lépéssel - simább élek és sokkal kevesebb vibrálás, kevés költséggel, bármely videokártyán, DirectX 12 vagy Vulkan alatt. Egyelőre csak a Gears 2-ben és a Gears 3-ban.
 Gears 2 and Gears 3 for now. = Egyelőre csak a Gears 2-ben és a Gears 3-ban.
@@ -922,24 +922,24 @@ SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX
 The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = A textúra-streaming pool. Nagyobb: kevesebb elmosódott textúra, amely az élesedésre vár. A nagyobb méretek kevesebb memóriát hagynak a játék többi részének.
 Character detail (LOD) = Karakter részletesség (LOD)
 Keeps characters' and weapons' detailed models (hair, faces, armour) at a greater distance, for high resolutions. Costs some GPU time in crowded scenes. Original = the game's own. = A karakterek és fegyverek részletes modelljeit (haj, arcok, páncél) nagyobb távolságig megtartja, nagy felbontásokhoz. Zsúfolt jelenetekben némi GPU-időbe kerül. Eredeti: a játék saját beállítása.
-The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, characters included. Highly experimental (Shagg 3 Nov): in our tests it cost about 5 ms a frame, roughly halving a high frame rate - being worked on. Ultra looks in more directions and catches more small details, for a little more. Game's own: the original. Off: none. = A lágy árnyékolás a sarkokban, redőkben és ott, ahol a dolgok összeérnek. XeGTAO: modern, teljes felbontású változat (az Intel XeGTAO-ja) a játék saját, alacsony felbontású változata helyett - pontos érintkezési árnyékok foltok helyett, a karaktereken is. Kísérleti (Shagg, nov. 3.): tesztjeinkben képkockánként kb. 5 ms-ba került, ami egy magas képkockasebességet nagyjából megfelez - dolgozunk rajta. Az Ultra több irányba néz, és több apró részletet észlel, kicsivel nagyobb költséggel. A játék saját: az eredeti. Ki: nincs.
+The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, characters included. Highly experimental (Shagg 3 Nov): in our tests it cost about 5 ms a frame, roughly halving a high frame rate - being worked on. Ultra looks in more directions and catches more small details, for a little more. Game's own: the original. Off: none. = A lágy árnyékolás a sarkokban, redőkben és ott, ahol a dolgok összeérnek. XeGTAO: modern, teljes felbontású változat (az Intel XeGTAO-ja) a játék saját, alacsony felbontású változata helyett - pontos érintkezési árnyékok foltok helyett, a karaktereken is. Kísérleti (Shagg, nov. 3.): tesztjeinkben képkockánként kb. 5 ms-ba került, ami egy magas képkockasebességet nagyjából megfelez - dolgozunk rajta. Az Ultra több irányba néz, és több apró részletet észlel, kicsivel nagyobb költséggel. Játék saját: az eredeti. Ki: nincs.
 100 = the original. Widens (or narrows) every camera view by this much. = 100: az eredeti. Ennyivel szélesíti (vagy szűkíti) minden kameranézetet.
 Controller button prompts = Kontroller gombjelzései
 With Keyboard and mouse on, keep the game's controller button prompts instead of the key caps (for example when Steam Input sends a controller as keyboard and mouse). = Bekapcsolt Billentyűzet és egér mellett is a játék kontrolleres gombjelzései maradnak a billentyűfeliratok helyett (például ha a Steam Input a kontrollert billentyűzetként és egérként küldi).
 Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own dead zone. = A bal kar ennél kisebb mozgását a játék figyelmen kívül hagyja – növeld, ha a kar magától mozog. 0 = csak a játék saját holtzónája.
 Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own dead zone. = A jobb kar ennél kisebb mozgását a játék figyelmen kívül hagyja – növeld, ha a kamera magától mozog. 0 = csak a játék saját holtzónája.
 Radial stick dead zone = Kerek kar holtzóna
-A round dead zone on both sticks (measured from the centre, not per axis), so small diagonal aim moves are not swallowed. Gears 1 and 2's own square dead zone on the camera is removed with it. Game's own = unchanged. = Kerek holtzóna mindkét karon (a középponttól mérve, nem tengelyenként), így a kis átlós célzómozdulatok nem vesznek el. Ezzel együtt a Gears 1 és 2 saját, négyzetes kamera-holtzónája is megszűnik. A játék saját: változatlan.
+A round dead zone on both sticks (measured from the centre, not per axis), so small diagonal aim moves are not swallowed. Gears 1 and 2's own square dead zone on the camera is removed with it. Game's own = unchanged. = Kerek holtzóna mindkét karon (a középponttól mérve, nem tengelyenként), így a kis átlós célzómozdulatok nem vesznek el. Ezzel együtt a Gears 1 és 2 saját, négyzetes kamera-holtzónája is megszűnik. Játék saját: változatlan.
 Controller layout = Kontroller kiosztás
 Southpaw (sticks swapped) = Balkezes (karok felcserélve)
 A and B swapped = A és B felcserélve
 Bumpers and triggers swapped = Bumperek és ravaszok felcserélve
 Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = Átrendezi a kontroller gombjait és karjait, mielőtt a játék megkapná őket, így a játék saját gombjelzései továbbra is az eredeti gombokat mutatják. Egyéni: az alábbi listában válaszd ki a játék minden gombjához a kontroller gombját (egy kiosztás mind a négy játékhoz, a CogBox.ini [Pad] alatti Remap= sorában tárolva).
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = A Title Update-ek mostantól kötelezőek: minden játék az Epic utolsó javításával fut (Gears 2 és 3: TU6, Judgment: TU4, Gears 1: TU5). A csak lemezes verziók már nem támogatottak.
-Two-player split = Kétjátékos osztás
+Two-player split = Kétjátékos felosztás
 Top and bottom (game's) = Fent és lent (a játéké)
 Side by side = Egymás mellett
-Experimental - how the screen is split for 2 players. Side by side suits ultrawide monitors. 3 and 4 players keep the game's own split. = Kísérleti - hogyan osztja fel a képernyőt 2 játékosnál. Az Egymás mellett ultraszéles monitorokhoz illik. 3 és 4 játékosnál a játék saját osztása marad.
+Experimental - how the screen is split for 2 players. Side by side suits ultrawide monitors. 3 and 4 players keep the game's own split. Gears 2: side by side from the start. = Kísérleti - hogyan osztja fel a képernyőt 2 játékosnál. Az Egymás mellett ultraszéles monitorokhoz illik. 3 és 4 játékosnál a játék saját osztása marad. Gears 2: kezdettől egymás mellett 
 System Link - LAN play (experimental) = System Link - LAN-játék (kísérleti)
 Experimental - lets the game's System Link find and join games on other PCs on your network (or on a LAN VPN such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. Gears of War and Gears 2 co-op worked in testing; other modes and the other games are less tested. Voice chat is not supported yet. Windows may ask about the firewall: allow Private networks. = Kísérleti - lehetővé teszi, hogy a játék System Linkje megtalálja a hálózatodon (vagy egy LAN VPN-en, például Radmin VPN, ZeroTier vagy Hamachi; nem internetes VPN-en, mint a NordVPN) lévő más gépek játékait, és csatlakozzon hozzájuk. Csak Title Update verziókkal. A Gears of War és a Gears 2 co-op működött a tesztekben; a többi mód és a többi játék kevésbé tesztelt. A hangcsevegés még nem támogatott. A Windows rákérdezhet a tűzfalra: engedélyezd a magánhálózatokat.
 Voice language = Hang nyelve
@@ -1281,7 +1281,7 @@ Windowed = Ablakos
 PCSS High (experimental) = PCSS magas (kísérleti)
 PCSS Ultra (experimental) = PCSS ultra (kísérleti)
 Soft shadows = Lágy árnyékok
-Contact-hardening soft shadows (PCSS) for the dynamic shadows of characters and moving objects: sharp where a shadow touches what casts it, softer further away, instead of the game's same small blur everywhere. Ultra takes more samples and draws the shadow maps at the render resolution for finer edges. Experimental: about 0.4 ms (High) / 0.7 ms (Ultra) a frame at 4K on an RTX 5090 in our tests, more on slower cards. Game's own: the original. = Érintéskeményítő lágy árnyékok (PCSS) a karakterek és mozgó objektumok dinamikus árnyékaihoz: élesek ott, ahol az árnyék hozzáér ahhoz, amiről vetődik, távolabb lágyabbak, a játékban megszokott apró elmosódás helyett mindenhol. Az Ultra több mintát vesz, és az árnyéktérképeket renderelési felbontásban rajzolja meg a finomabb élek érdekében. Kísérleti: körülbelül 0,4 ms (Magas) / 0,7 ms (Ultra) képkockaként 4K felbontásban RTX 5090-en a tesztjeinkben, több lassabb kártyákon. A játék sajátja: az eredeti.
+Contact-hardening soft shadows (PCSS) for the dynamic shadows of characters and moving objects: sharp where a shadow touches what casts it, softer further away, instead of the game's same small blur everywhere. Ultra takes more samples and draws the shadow maps at the render resolution for finer edges. Experimental: about 0.4 ms (High) / 0.7 ms (Ultra) a frame at 4K on an RTX 5090 in our tests, more on slower cards. Game's own: the original. = Érintéskeményítő lágy árnyékok (PCSS) a karakterek és mozgó objektumok dinamikus árnyékaihoz: élesek ott, ahol az árnyék hozzáér ahhoz, amiről vetődik, távolabb lágyabbak, a játékban megszokott apró elmosódás helyett mindenhol. Az Ultra több mintát vesz, és az árnyéktérképeket renderelési felbontásban rajzolja meg a finomabb élek érdekében. Kísérleti: körülbelül 0,4 ms (Magas) / 0,7 ms (Ultra) képkockaként 4K felbontásban RTX 5090-en a tesztjeinkben, több lassabb kártyákon. Játék saját: az eredeti.
 Button prompt style = Gombfelirat stílusa
 Which controller's buttons the game shows. Automatic follows the controller in use. = A játék melyik vezérlő gombjait jeleníti meg. Az „Automatikus” beállítás a használt vezérlőhöz igazodik.
 Title updates are now required - this game always runs with its Title Update 6. = A Title Update ezután kötelező - ez a játék csak a Title Update 6. telepítése után fut.
@@ -1337,7 +1337,7 @@ Add friend = Barát hozzáadása
 You can invite friends while a game hosts a lobby or match. = Barátokat hívhatsz meg, miközben egy játékban váróterem vagy mérkőzés megy.
 ADD = HOZZÁADÁS
 Players = Játékos
-#0.6.1 (missing text that was found - by HJ)
+#0.6.1 - 0.6.4 (missing text that was found - by HJ)
 Show ping = Ping mutatása
 Online: your ping to the host of the match or party, in the FPS bar (or in a bar of its own at the top when the FPS counter is off). When you host, the worst ping among your players. = Online: a pinged a mérkőzés vagy party házigazdájához, az FPS sávban (vagy külön sávban felül, ha az FPS számláló ki van kapcsolva). Ha te vagy a házigazda, a játékosaid közül a legrosszabb ping.
 Brightness = Fényerő
@@ -1391,6 +1391,10 @@ Online play is off. This profile stays offline. = Az online játék ki van kapcs
 A disc image (.iso), a Games on Demand file, a title update or a DLC package (those two have no file extension). = Lemezkép (.iso), egy Games on Demand fájl, egy Title Update vagy egy DLC-csomag (ez a kettő nem rendelkezik fájlkiterjesztéssel).
 A folder with your game (default.xex), a title update or DLC. = Egy mappa a játékoddal (default.xex), egy Title Update vagy DLC.
 Not found: = Nem található:
+Friends' IP addresses = Barátok IP címei
+Keyboard and mouse is off - these keys do nothing in the game until it is turned on (Keyboard and mouse, above). = A billentyűzet és az egér ki van kapcsolva – ezek a billentyűk nem csinálnak semmit a játékban, amíg azokat be nem kapcsolod (lásd fentebb: Billentyűzet és egér).
+Gears 2 and 3 only. = Csak Gears 2 és 3.
+Judgment (needs its console-command support). = Judgment (konzolparancs támogatásra van szükség).
 # 0.6.1
 Choose a file... = Fájl választása...
 Paste a path = Útvonal beillesztése
