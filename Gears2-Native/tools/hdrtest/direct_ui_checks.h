@@ -1,5 +1,6 @@
 // Authored GPU checks for direct HDR UI. No game shader data.
 #pragma once
+#include <xenos/renderer/hdr_scene_effect.h>
 static int DirectUiAttachmentCheck(gpu::Backend& backend,xenos::renderer::ShaderCompiler& compiler) {
   auto shader=[&](const std::string& src,gpu::ShaderStage stage) {
     std::vector<uint8_t> b;std::string e;
@@ -128,7 +129,15 @@ static int AsyncUiCacheCheck(gpu::Backend& backend,xenos::renderer::ShaderCompil
   std::atomic<unsigned> hlslCalls=0;
   xenos::renderer::ShaderCache cache(backend,[&]{return std::make_unique<NoHlslCompiler>(hlslCalls);},{},2);
   cache.SetDxbc(true);using Mode=hdr::OverlayMode;
-  const uint64_t hash=sceneFilter?(code.size()==96?0x8356D7C3D65FE328ull:0x212F89E82422D29Dull):0x1234;
+  uint64_t hash = 0x1234;
+  if (sceneFilter) {
+    switch (code.size()) {
+      case 96: hash = 0x8356D7C3D65FE328ull; break;
+      case 81: hash = 0x212F89E82422D29Dull; break;
+      case 360: hash = hdr::kGears3SceneBlend; break;
+      default: return 85;
+    }
+  }
   const auto mode=sceneFilter?Mode::kFilterLinear:Mode::kUi;
   const auto& ui=cache.GetNativeOverlay(hash,code.data(),code.size(),mode);
   if(ui.state!=xenos::renderer::ShaderState::kPending||cache.PendingCount()!=1)return 86;

@@ -125,7 +125,8 @@ class Gow3App : public rex::ReXApp {
     game_default("gow2_ao_add_radius", "35");
     game_default("gow2_ao_add_power", "1.6");
     XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull,
-                                                true /* native HDR profiles (PR #267) */});
+                                                true /* native HDR profiles (PR #267) */, false, false, false,
+                                                true /* native HDR scene blend */});
     Ue3InstallShaderPrebuildIfRequested();  // notes/78: after the renderer (it asks whether the renderer wants them)
     XenosInstallPm4ShadowIfRequested(runtime());
   }
