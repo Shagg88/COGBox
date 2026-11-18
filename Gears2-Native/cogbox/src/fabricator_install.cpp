@@ -181,7 +181,8 @@ std::string fab_install_unpack(const FabInstallPlan &p, std::vector<std::string>
     // review r369 F4: written again once the zip is unpacked, so no zip entry (another name for the same file) can
     // have replaced it, and checked
     const auto back = fab_write_record(part, rec) ? fab_read_record(part) : std::nullopt;
-    if (!back || !fab_same_install(*back, p.item) || back->sha256 != rec.sha256 || back->version != rec.version) {
+    if (!back || !fab_same_install(*back, p.item) || back->sha256 != rec.sha256 || back->version != rec.version ||
+        !dir_record_contents(part)) {   // audit F1: the files COGBox made, with their identities
         mods_remove_tree(widen(part));
         return "Couldn't write the mod's record (is the disk full?).";
     }

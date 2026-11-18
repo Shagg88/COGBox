@@ -8,6 +8,7 @@
 #include <tlhelp32.h>
 #include <bcrypt.h>
 #include <mutex>
+#include <cstdlib>
 #include <atomic>
 #include <ctime>
 #include <cstdio>
@@ -464,6 +465,9 @@ bool is_plain_child(const std::wstring &real_parent, const std::wstring &child_p
 
 
 // ---- review r369 audit F1 (util.h): folders COGBox made itself ----
+// A claim is a random token in <dir>\.cogbox-owned and a line "token volume index" in <COGBox>\fabricator\owned.txt:
+// the folder's own identity (volume serial and file index - an inode on Wine), so a marker copied or linked into
+// another folder doesn't make that folder COGBox's. A rename on the same volume keeps the identity.
 static std::mutex g_owned_mutex;
 static std::string owned_registry() { return join(join(exe_dir(), "fabricator"), "owned.txt"); }
 static std::string owned_marker(const std::string &dir) { return join(dir, ".cogbox-owned"); }
@@ -472,6 +476,48 @@ static std::string trim_ws(std::string s)
     while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ')) s.pop_back();
     return s;
 }
+bool file_identity(const std::string &path, uint64_t *volume, uint64_t *index, uint32_t *links)
+{
+    HANDLE h = CreateFileW(widen(path).c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    BY_HANDLE_FILE_INFORMATION fi;
+    const bool ok = GetFileInformationByHandle(h, &fi) != 0;
+    CloseHandle(h);
+    if (!ok) return false;
+    if (volume) *volume = fi.dwVolumeSerialNumber;
+    if (index) *index = ((uint64_t)fi.nFileIndexHigh << 32) | fi.nFileIndexLow;
+    if (links) *links = fi.nNumberOfLinks;
+    return true;
+}
+static std::string hex64(uint64_t v) { char b[20]; snprintf(b, sizeof b, "%llx", (unsigned long long)v); return b; }
+static std::string identity_text(const std::string &path)
+{
+    uint64_t v = 0, i = 0;
+    if (!file_identity(path, &v, &i, nullptr)) return "";
+    return hex64(v) + " " + hex64(i);
+}
+static bool registry_lines(std::vector<std::string> &out)   // false: the list is there but can't be read
+{
+    out.clear();
+    std::string reg;
+    if (!read_file(owned_registry(), reg, 8u << 20))
+        return GetFileAttributesW(widen(owned_registry()).c_str()) == INVALID_FILE_ATTRIBUTES;   // none yet: an empty list
+    for (size_t at = 0; at < reg.size();) {
+        size_t e = reg.find('\n', at);
+        if (e == std::string::npos) e = reg.size();
+        const std::string l = trim_ws(reg.substr(at, e - at));
+        if (!l.empty()) out.push_back(l);
+        at = e + 1;
+    }
+    return true;
+}
+static bool registry_write(const std::vector<std::string> &lines)
+{
+    std::string out;
+    for (const std::string &l : lines) out += l + "\n";
+    return make_dirs(join(exe_dir(), "fabricator")) && write_file(owned_registry(), out);
+}
 bool dir_claim(const std::string &dir)
 {
     unsigned char rnd[16];
@@ -479,50 +525,115 @@ bool dir_claim(const std::string &dir)
     static const char *hx = "0123456789abcdef";
     std::string tok;
     for (unsigned char c : rnd) { tok += hx[c >> 4]; tok += hx[c & 15]; }
+    const std::string id = identity_text(dir);
+    if (id.empty()) return false;
     std::lock_guard<std::mutex> lock(g_owned_mutex);
-    std::string reg;
-    read_file(owned_registry(), reg, 8u << 20);
-    if (!reg.empty() && reg.back() != '\n') reg += "\n";
-    reg += tok + "\n";
-    if (!make_dirs(join(exe_dir(), "fabricator")) || !write_file(owned_registry(), reg)) return false;
+    std::vector<std::string> lines;
+    if (!registry_lines(lines)) return false;   // there but unreadable: never rewritten as a shorter list
+    lines.push_back(tok + " " + id);
+    if (!registry_write(lines)) return false;
     return write_file(owned_marker(dir), tok + "\n");
+}
+// the marker's lines (the token first), read only from a plain file really inside dir (not a link to another folder's)
+static bool marker_lines(const std::string &dir, std::vector<std::string> &out)
+{
+    out.clear();
+    const std::string m = owned_marker(dir);
+    const DWORD at = GetFileAttributesW(widen(m).c_str());
+    if (at == INVALID_FILE_ATTRIBUTES || (at & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) return false;
+    const std::wstring realDir = real_path(widen(dir));
+    if (realDir.empty() || !is_plain_child(realDir, widen(m), L".cogbox-owned")) return false;
+    uint32_t links = 0;
+    if (!file_identity(m, nullptr, nullptr, &links) || links != 1) return false;   // a hard link to another's marker
+    std::string t;
+    if (!read_file(m, t, 16u << 20)) return false;
+    for (size_t p = 0; p < t.size();) {
+        size_t e = t.find('\n', p);
+        if (e == std::string::npos) e = t.size();
+        out.push_back(trim_ws(t.substr(p, e - p)));
+        p = e + 1;
+    }
+    return !out.empty();
 }
 static std::string owned_token(const std::string &dir)
 {
-    std::string t;
-    if (!read_file(owned_marker(dir), t, 64)) return "";
-    t = trim_ws(t);
+    std::vector<std::string> l;
+    if (!marker_lines(dir, l)) return "";
+    const std::string &t = l[0];
     return t.size() == 32 && t.find_first_not_of("0123456789abcdef") == std::string::npos ? t : "";
 }
 bool dir_owned(const std::string &dir)
 {
     const std::string tok = owned_token(dir);
     if (tok.empty()) return false;
+    const std::string id = identity_text(dir);
+    if (id.empty()) return false;
     std::lock_guard<std::mutex> lock(g_owned_mutex);
-    std::string reg;
-    if (!read_file(owned_registry(), reg, 8u << 20)) return false;
-    for (size_t at = 0; at < reg.size();) {
-        size_t e = reg.find('\n', at);
-        if (e == std::string::npos) e = reg.size();
-        if (trim_ws(reg.substr(at, e - at)) == tok) return true;
-        at = e + 1;
-    }
-    return false;
+    std::vector<std::string> lines;
+    if (!registry_lines(lines)) return false;
+    return std::find(lines.begin(), lines.end(), tok + " " + id) != lines.end();
 }
 void dir_disown_token(const std::string &tok)
 {
     if (tok.empty()) return;
     std::lock_guard<std::mutex> lock(g_owned_mutex);
-    std::string reg, out;
-    if (!read_file(owned_registry(), reg, 8u << 20)) return;
-    for (size_t at = 0; at < reg.size();) {
-        size_t e = reg.find('\n', at);
-        if (e == std::string::npos) e = reg.size();
-        const std::string l = trim_ws(reg.substr(at, e - at));
-        if (!l.empty() && l != tok) out += l + "\n";
-        at = e + 1;
-    }
-    write_file(owned_registry(), out);
+    std::vector<std::string> lines, keep;
+    if (!registry_lines(lines)) return;
+    for (const std::string &l : lines) if (l.compare(0, tok.size() + 1, tok + " ") != 0) keep.push_back(l);
+    if (keep.size() != lines.size()) registry_write(keep);
 }
 std::string dir_owned_token(const std::string &dir) { return owned_token(dir); }
+
+// After COGBox unpacked into dir: every file and folder in it with its identity, in the marker after the token, so a
+// removal later deletes exactly these and nothing a link or a swapped-in name points at.
+static void list_contents(const std::string &dir, const std::wstring &realDir, const std::string &rel, std::string &out, size_t &n)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW(widen(join(dir, "*")).c_str(), &fd);
+    if (f == INVALID_HANDLE_VALUE) return;
+    do {
+        const std::wstring nm = fd.cFileName;
+        if (nm == L"." || nm == L".." || (rel.empty() && nm == L".cogbox-owned")) continue;
+        const std::string p = join(dir, narrow(nm)), r = rel.empty() ? narrow(nm) : rel + "\\" + narrow(nm);
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) || !is_plain_child(realDir, widen(p), nm)) continue;
+        const std::string id = identity_text(p);
+        if (id.empty() || ++n > 200000) continue;
+        const bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        out += std::string(isDir ? "D " : "F ") + id + " " + r + "\n";
+        if (isDir) list_contents(p, realDir + L"\\" + nm, r, out, n);
+    } while (FindNextFileW(f, &fd));
+    FindClose(f);
+}
+bool dir_record_contents(const std::string &dir)
+{
+    const std::string tok = owned_token(dir);
+    if (tok.empty()) return false;
+    const std::wstring realDir = real_path(widen(dir));
+    if (realDir.empty()) return false;
+    std::string out = tok + "\n";
+    size_t n = 0;
+    list_contents(dir, realDir, "", out, n);
+    return write_file(owned_marker(dir), out);
+}
+// The marker's list: (is folder, volume, index, relative path); false when there is no list (an unpacking cut short)
+bool dir_recorded_contents(const std::string &dir, std::vector<OwnedEntry> &out)
+{
+    out.clear();
+    std::vector<std::string> l;
+    if (!marker_lines(dir, l) || l.size() < 2) return false;
+    for (size_t i = 1; i < l.size(); i++) {
+        const std::string &x = l[i];
+        if (x.size() < 7 || (x[0] != 'F' && x[0] != 'D') || x[1] != ' ') continue;
+        const size_t a = x.find(' ', 2), b = a == std::string::npos ? a : x.find(' ', a + 1);
+        if (b == std::string::npos) continue;
+        OwnedEntry e;
+        e.folder = x[0] == 'D';
+        e.volume = strtoull(x.substr(2, a - 2).c_str(), nullptr, 16);
+        e.index = strtoull(x.substr(a + 1, b - a - 1).c_str(), nullptr, 16);
+        e.rel = x.substr(b + 1);
+        if (e.rel.empty() || e.rel.find(':') != std::string::npos || e.rel.find("..") != std::string::npos || e.rel[0] == '\\') continue;
+        out.push_back(e);
+    }
+    return true;
+}
 bool running_under_wine() { return under_wine(); }

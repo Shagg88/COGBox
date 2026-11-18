@@ -299,16 +299,65 @@ void cogbox_remove_tree(const std::wstring &dir)
     RemoveDirectoryW(dir.c_str());
 }
 
+// only the marker (.cogbox-owned) is left in dir
+static bool only_marker_left(const std::wstring &dir)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    bool other = false;
+    do {
+        const std::wstring n = fd.cFileName;
+        if (n != L"." && n != L".." && n != L".cogbox-owned") other = true;
+    } while (!other && FindNextFileW(f, &fd));
+    FindClose(f);
+    return !other;
+}
+
 // a folder in a mods folder COGBox made itself (a .partial unpacking, an installed mod, a Fabricator backup): removed
-// only when it holds one of COGBox's own tokens (dir_claim) - a folder a mod or a player put there, even one with a
-// fabricator.json, is never removed (review r369 audit F1)
+// only when it holds one of COGBox's own tokens for this very folder (dir_claim) - a folder a mod or a player put there,
+// even one with a fabricator.json, is never removed (review r369 audit F1). What is deleted is the list COGBox kept
+// when it unpacked there (dir_record_contents): each file and folder only while it is still the same one (its identity),
+// so a link or a name swapped in later - on Windows or Wine - is left alone. The marker goes last, and only when
+// nothing else is left, so a removal stopped part way can be done again.
 void mods_remove_tree(const std::wstring &dir)
 {
     const std::string d = narrow(dir);
     if (!dir_owned(d)) return;
     const std::string tok = dir_owned_token(d);
-    cogbox_remove_tree(dir);
-    if (GetFileAttributesW(dir.c_str()) == INVALID_FILE_ATTRIBUTES) dir_disown_token(tok);
+    std::vector<OwnedEntry> list;
+    if (dir_recorded_contents(d, list)) {
+        std::sort(list.begin(), list.end(), [](const OwnedEntry &x, const OwnedEntry &y) { return x.rel.size() > y.rel.size(); });
+        for (const OwnedEntry &e : list) {
+            const std::string p = join(d, e.rel);
+            uint64_t v = 0, i = 0;
+            if (!file_identity(p, &v, &i, nullptr) || v != e.volume || i != e.index) continue;   // not the one COGBox made
+            const DWORD at = GetFileAttributesW(widen(p).c_str());
+            if (at == INVALID_FILE_ATTRIBUTES || (at & FILE_ATTRIBUTE_REPARSE_POINT) || ((at & FILE_ATTRIBUTE_DIRECTORY) != 0) != e.folder) continue;
+            if (e.folder) RemoveDirectoryW(widen(p).c_str());   // (only once empty)
+            else { SetFileAttributesW(widen(p).c_str(), FILE_ATTRIBUTE_NORMAL); DeleteFileW(widen(p).c_str()); }
+        }
+    } else {
+        // no list: an unpacking cut short (COGBox closed or crashed) - everything that is really inside, never a link
+        const std::wstring real = real_path(dir);
+        if (real.empty()) return;
+        WIN32_FIND_DATAW fd;
+        HANDLE f = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+        if (f != INVALID_HANDLE_VALUE) {
+            do {
+                const std::wstring n = fd.cFileName;
+                if (n == L"." || n == L".." || n == L".cogbox-owned") continue;
+                const std::wstring p = dir + L"\\" + n;
+                if ((fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) || !is_plain_child(real, p, n)) continue;
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { remove_tree_in(p, real + L"\\" + n); RemoveDirectoryW(p.c_str()); }
+                else { SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL); DeleteFileW(p.c_str()); }
+            } while (FindNextFileW(f, &fd));
+            FindClose(f);
+        }
+    }
+    if (!only_marker_left(dir)) return;   // something else is still there: the claim stays, for another try
+    DeleteFileW((dir + L"\\.cogbox-owned").c_str());
+    if (RemoveDirectoryW(dir.c_str())) dir_disown_token(tok);
 }
 
 void mods_turn_on_last(App &a, int g, const std::string &folder)
@@ -541,6 +590,7 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err, s
     if (dir_exists(part) || !make_dirs(part) || !dir_claim(part)) { err = "Couldn't make the mod's folder (is the disk full?)."; return false; }
     std::vector<std::string> left;
     bool ok = mods_unpack_zip(a, g, zipPath, part, true, err, &left);
+    if (ok && !dir_record_contents(part)) { ok = false; err = "Couldn't record the mod's files (is the disk full?)."; }   // audit F1
     if (ok && !MoveFileExW(widen(part).c_str(), widen(dest).c_str(), 0)) { ok = false; err = "The unpacked mod couldn't be moved into place."; }
     if (!ok) { mods_remove_tree(widen(part)); return false; }
     mods_turn_on_last(a, g, name);   // new mods start enabled, last in the order

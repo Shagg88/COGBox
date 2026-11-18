@@ -51,10 +51,18 @@ bool is_plain_child(const std::wstring &real_parent, const std::wstring &child_p
 // Review r369 audit F1: folders COGBox made itself. dir_claim writes a random token into <dir>\.cogbox-owned and keeps it
 // in <COGBox>\fabricator\owned.txt; dir_owned is true only for a folder holding a token from that list (a mod or a
 // hand-made folder can't know one). mods_remove_tree removes only such folders. The token moves with the folder.
+// The registry line also holds the folder's identity (volume, file index), and the marker must be a plain, single-link
+// file really inside the folder, so a marker copied, hard-linked or symlinked from another folder counts for nothing.
 bool dir_claim(const std::string &dir);
 bool dir_owned(const std::string &dir);
 std::string dir_owned_token(const std::string &dir);   // "" none
 void dir_disown_token(const std::string &tok);         // after the folder is gone
+// After an unpack into an owned folder: its files and folders with their identities, kept in the marker; a removal
+// deletes only entries whose identity still matches (a link or a swapped-in name is a different file).
+struct OwnedEntry { bool folder = false; uint64_t volume = 0, index = 0; std::string rel; };
+bool dir_record_contents(const std::string &dir);
+bool dir_recorded_contents(const std::string &dir, std::vector<OwnedEntry> &out);
+bool file_identity(const std::string &path, uint64_t *volume, uint64_t *index, uint32_t *links);
 bool running_under_wine();
 
 // Review r369: a game program (gow1.exe, gow2.exe, gow3.exe, gowj.exe) is running, started by COGBox or not (Steam,

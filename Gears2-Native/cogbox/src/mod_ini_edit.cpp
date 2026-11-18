@@ -3,6 +3,7 @@
 #include "util.h"
 
 #include <algorithm>
+#include <cstdlib>   // strtol (MinGW without it: Flippage, #370)
 
 namespace {
 
