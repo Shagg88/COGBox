@@ -88,11 +88,12 @@ target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_pre
     ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp  # GitHub #153
     ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp  # GitHub #264: engine console commands (shared with Gears 2 / 3)
-    ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp)  # GitHub #245: Gears 2's ue3::obj reflection (Judgment has no other)
+    ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp  # GitHub #245: Gears 2's ue3::obj reflection (Judgment has no other)
+    ${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp)  # GitHub #353: COGBox tags after the players' names
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp PROPERTIES
+    ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 # its options are saved under Judgment's settings group
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_CONSOLE_JUDGMENT=1)
@@ -114,7 +115,9 @@ set(GOWJ_SOURCES
 set_source_files_properties(src/layer3_gowj/adaptive_triggers.cpp src/layer3_gowj/first_person.cpp src/layer3_gowj/cheats.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 if(WIN32)
-    add_executable(gowj WIN32 ${GOWJ_SOURCES})
+    # GitHub #355: the game's own window / taskbar icon (res/gowj.rc; SDL takes the exe's first icon)
+    enable_language(RC)
+    add_executable(gowj WIN32 ${GOWJ_SOURCES} res/gowj.rc)
 else()
     add_executable(gowj ${GOWJ_SOURCES})
 endif()

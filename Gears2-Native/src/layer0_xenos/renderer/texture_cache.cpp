@@ -718,8 +718,9 @@ bool TextureCache::BoundSceneInput(uint32_t slot,const uint32_t* fetch,SceneInpu
   if(!e || !e->texture || e->load_failed || e->dimension_mismatch || !e->failure.empty() ||
      e->format!=gpu::Format::kR8G8B8A8Unorm || e->has_overlay || e->pack_hash || e->mip_length)return false;
   const uint32_t scale=(last_scaled_mask_&(1u<<slot))?scale_:1u;
-  out={(fetch[1]>>12)<<12,e->base_length,((fetch[2]&8191)+1)*scale,
-      (((fetch[2]>>13)&8191)+1)*scale,e->texture};return true;
+  const uint32_t* tf=fetch+6*slot;   // (review r351c: the slot's own fetch constant, as Bind reads it)
+  out={(tf[1]>>12)<<12,e->base_length,((tf[2]&8191)+1)*scale,
+      (((tf[2]>>13)&8191)+1)*scale,e->texture};return true;
 }
 
 uint32_t TextureCache::IndependentUiMask(uint32_t slots) {

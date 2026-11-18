@@ -18,6 +18,7 @@ include(cmake/rexglue.cmake)
 add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/achievements_data.cpp
     src/layer0_xenos/achievements_export.cpp
+    src/layer0_xenos/window_icon.cpp
     src/layer0_xenos/achievements_popup_logic.cpp
     src/layer0_xenos/achievements_browser_model.cpp
     src/layer0_xenos/achievements_browser.cpp
@@ -74,8 +75,10 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/window_hotkey.cpp   # GitHub #316
     src/layer0_xenos/menu_look.cpp
     src/layer0_xenos/social_ingame.cpp
+    src/layer0_xenos/player_tags.cpp  # GitHub #353: the COGBox tags of the players in a match
     src/layer0_xenos/social_page.cpp
     src/layer0_xenos/social_popup.cpp
+    src/layer0_xenos/cheat_popup.cpp
     src/layer0_xenos/social_shared.cpp
     src/layer0_xenos/profiler.cpp
 )
@@ -144,6 +147,7 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/package_exports.cpp
     src/layer2_ue3/console.cpp  # GitHub #264: engine console commands (--gow2_cheats, --ue3_hotkeys, --ue3_exec); Gears 3 builds it too
     src/layer2_ue3/objects.cpp  # GitHub #245: the engine's objects by name (ue3/objects.h; Gears 2 only - Gears 1 / 3 have their own)
+    src/layer2_ue3/name_tags.cpp  # GitHub #353: COGBox tags after the players' names (Gears 1 / 3 / J build it too)
 )
 # console.cpp's options are saved under Gears2 here (Gears 3 keeps its Gears3 group)
 set_source_files_properties(src/layer2_ue3/console.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_CONSOLE_GEARS2=1)
@@ -164,7 +168,9 @@ set(GOW2_SOURCES
     src/layer3_gow2/first_person.cpp  # --gow2_first_person (experimental first-person camera)
 )
 if(WIN32)
-    add_executable(gow2 WIN32 ${GOW2_SOURCES})
+    # GitHub #355: the game's own window / taskbar icon (res/gow2.rc; SDL takes the exe's first icon)
+    enable_language(RC)
+    add_executable(gow2 WIN32 ${GOW2_SOURCES} res/gow2.rc)
 else()
     add_executable(gow2 ${GOW2_SOURCES})
 endif()
@@ -432,6 +438,7 @@ if(GN_BUILD_TESTS)
         tests/layer0_pipeline_state_test.cpp
         tests/layer0_transfer_words_test.cpp
         tests/layer0_queries_test.cpp
+        tests/layer0_player_tags_test.cpp
         tests/layer0_colour_formats_test.cpp
         tests/layer0_pm4_test.cpp
         src/layer0_xenos/pm4.cpp

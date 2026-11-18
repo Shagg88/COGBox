@@ -1,0 +1,115 @@
+diff --git a/src/kernel/xam/xam_enum.cpp b/src/kernel/xam/xam_enum.cpp
+index 669c381..f2d5a2e 100644
+--- a/src/kernel/xam/xam_enum.cpp
++++ b/src/kernel/xam/xam_enum.cpp
+@@ -76,7 +76,7 @@ uint32_t xeXamEnumerate(uint32_t handle, uint32_t flags, mapped_void buffer_ptr,
+ 
+ u32 XamEnumerate_entry(u32 handle, u32 flags, mapped_void buffer, u32 buffer_length,
+                        mapped_u32 items_returned, ppc_ptr_t<XAM_OVERLAPPED> overlapped) {
+-  uint32_t dummy;
++  uint32_t dummy = 0;   // COGBox patch 113 (Canary/Edge 26427bc7): 0 when the enumerate fails
+   auto result =
+       xeXamEnumerate(handle, flags, buffer, buffer_length,
+                      !overlapped.guest_address() ? &dummy : nullptr, overlapped.guest_address());
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp b/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp
+index fc4ba3d..2e06af3 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp
+@@ -177,7 +177,10 @@ u32 XMAInitializeContext_entry(mapped_void context_ptr, ppc_ptr_t<XMA_CONTEXT_IN
+   context.output_buffer_ptr = output_buffer_physical_address;
+   context.output_buffer_block_count = context_init->output_buffer_block_count;
+ 
+-  // context.work_buffer = context_init->work_buffer;  // ?
++  // COGBox patch 113 (Canary b6d392d8f): DWORD 8 = the work buffer's physical address (titles can read it back)
++  if (context_init->work_buffer) {
++    context.work_buffer_ptr = REX_KERNEL_MEMORY()->GetPhysicalAddress(context_init->work_buffer);
++  }
+   context.subframe_decode_count = context_init->subframe_decode_count;
+   context.is_stereo = context_init->channel_count & 1;   // patch 80: the channel count is 0-based, only bit 0
+   context.sample_rate = context_init->sample_rate;
+@@ -343,7 +346,7 @@ u32 XMADisableContext_entry(mapped_void context_ptr, u32 wait) {
+ }
+ 
+ // COGBox patch 80 (Edge 9906014): waits until the decoder isn't working on the context. Was a loop that always ended at
+-// once (work_buffer_ptr is never set), so a game could reuse a context the decoder was still reading.
++// once (it tested work_buffer_ptr, which was never set then), so a game could reuse a context the decoder was still reading.
+ u32 XMABlockWhileInUse_entry(mapped_void context_ptr) {
+   static_cast<audio::AudioSystem*>(REX_KERNEL_STATE()->emulator()->audio_system())
+       ->xma_decoder()
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_threading.cpp b/src/kernel/xboxkrnl/xboxkrnl_threading.cpp
+index 57fd161..27c426d 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_threading.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_threading.cpp
+@@ -582,6 +582,9 @@ u32 NtClearEvent_entry(u32 handle) {
+ 
+ // https://msdn.microsoft.com/en-us/library/windows/hardware/ff552150(v=vs.85).aspx
+ void KeInitializeSemaphore_entry(ppc_ptr_t<X_KSEMAPHORE> semaphore_ptr, u32 count, u32 limit) {
++  // COGBox patch 113 (Canary ad907a758): cleared first, as KeInitializeEvent does - leftover bytes were read as the wait
++  // list.
++  semaphore_ptr.Zero();
+   semaphore_ptr->header.type = 5;  // SemaphoreObject
+   semaphore_ptr->header.signal_state = (uint32_t)count;
+   semaphore_ptr->limit = (uint32_t)limit;
+@@ -667,7 +670,7 @@ u32 NtReleaseSemaphore_entry(u32 sem_handle, u32 release_count, mapped_u32 previ
+   } else {
+     result = X_STATUS_INVALID_HANDLE;
+   }
+-  if (previous_count_ptr) {
++  if (previous_count_ptr && XSUCCEEDED(result)) {   // COGBox patch 113 (Canary 61bd30d3c): untouched on a failure
+     *previous_count_ptr = (uint32_t)previous_count;
+   }
+ 
+@@ -732,6 +735,9 @@ u32 NtReleaseMutant_entry(u32 mutant_handle, u32 unknown) {
+ 
+ u32 NtCreateTimer_entry(mapped_u32 handle_ptr, mapped_void obj_attributes_ptr, u32 timer_type) {
+   // timer_type = NotificationTimer (0) or SynchronizationTimer (1)
++  if (timer_type > 1) {   // COGBox patch 113 (Canary b11b97523): other types are refused, as on the console
++    return X_STATUS_INVALID_PARAMETER;
++  }
+ 
+   // Check for an existing timer with the same name.
+   auto existing_object =
+@@ -1320,6 +1326,9 @@ void ExReleaseReadWriteLock_entry(ppc_ptr_t<X_ERWLOCK> lock_ptr) {
+   }
+ 
+   if (!lock_ptr->readers_entry_count) {
++    // COGBox patch 113 (Canary e1d024bac): the exclusive owner is releasing, so hand the lock to the waiting readers, or
++    // else to a waiting writer. Was: --readers_entry_count wrapped 0 to 0xFFFFFFFF, returned without waking the writer
++    // (it blocked for good) and left the count corrupt.
+     auto readers_waiting_count = lock_ptr->readers_waiting_count;
+     if (readers_waiting_count) {
+       lock_ptr->readers_waiting_count = 0;
+@@ -1328,10 +1337,8 @@ void ExReleaseReadWriteLock_entry(ppc_ptr_t<X_ERWLOCK> lock_ptr) {
+       xeKeReleaseSemaphore(&lock_ptr->reader_semaphore, 1, readers_waiting_count, 0);
+       return;
+     }
+-  }
+-
+-  auto readers_entry_count = --lock_ptr->readers_entry_count;
+-  if (readers_entry_count) {
++  } else if (--lock_ptr->readers_entry_count) {
++    // Other readers still hold the lock.
+     xeKeKfReleaseSpinLock(ctx, &lock_ptr->spin_lock, old_irql);
+     return;
+   }
+diff --git a/src/system/xthread.cpp b/src/system/xthread.cpp
+index 3d2e992..9d49af9 100644
+--- a/src/system/xthread.cpp
++++ b/src/system/xthread.cpp
+@@ -1023,10 +1023,12 @@ X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable, uint64_t in
+   int64_t timeout_ticks = interval;
+   uint32_t timeout_ms;
+   if (timeout_ticks > 0) {
+-    // Absolute time, based on January 1, 1601.
+-    // TODO(benvanik): convert time to relative time.
+-    assert_always();
+-    timeout_ms = 0;
++    // Absolute time, based on January 1, 1601. COGBox patch 113 (Canary 391816907): wait for the time left until it (was:
++    // an assert, then 0 = returned at once); a time that has passed returns at once. Rounded UP to whole ms (review r113:
++    // a due time under 1 ms away still sleeps, not the zero-delay backoff path).
++    uint64_t now = chrono::Clock::QueryGuestSystemTime();
++    uint64_t due = static_cast<uint64_t>(timeout_ticks);
++    timeout_ms = due > now ? uint32_t(std::min<uint64_t>((due - now + 9999) / 10000, 0xFFFFFFFEull)) : 0;
+   } else if (timeout_ticks < 0) {
+     // Relative time.
+     timeout_ms = uint32_t(-timeout_ticks / 10000);  // Ticks -> MS

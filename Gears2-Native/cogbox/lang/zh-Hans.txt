@@ -286,7 +286,8 @@ WASD move, mouse look, left click fire, right click aim, Space cover/roll, F mel
 Sens = 灵敏度
 Mouse sensitivity = 鼠标灵敏度
 How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = 鼠标转动镜头的速度。建议从 0.5 开始；高 DPI 鼠标请调低，低 DPI 鼠标请调高。
-Extra stick dead zone = 额外摇杆死区
+Left stick dead zone (%) = 左摇杆死区 (%)
+Right stick dead zone (%) = 右摇杆死区 (%)
 Game's own = 游戏自带
 Vibration = 震动
 Controller vibration = 手柄震动
@@ -745,7 +746,8 @@ Sets the graphics boxes in one go. Original = the game as on the console. Change
 How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = 游戏绘制的细节程度。1x：与主机一致的 1280x720，2x：2560x1440，3x：3840x2160（4K），4x：5120x2880。是真实细节，而非放大。匹配我的显示器：能覆盖屏幕的最小倍率，再重采样到屏幕的精确尺寸。1080p：以 720p 绘制并锐化后放大到屏幕，速度快，适合性能较弱的显卡；比真实细节更柔和。
 The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = 纹理流式加载池。越大，等待变清晰的模糊纹理越少。较大的尺寸会给游戏其余部分留下更少的内存。
 100 = the original. Widens (or narrows) every camera view by this much. = 100：原版。按此数值加宽（或收窄）每个镜头视野。
-Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = 叠加在游戏自带的死区之上，适用于漂移的磨损摇杆。游戏自带：不额外添加。
+Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own dead zone. = 小于此值的左摇杆移动会被忽略——摇杆漂移时请调高。0 = 仅使用游戏自身的死区。
+Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own dead zone. = 小于此值的右摇杆移动会被忽略——视角漂移时请调高。0 = 仅使用游戏自身的死区。
 The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = 游戏文本和语音的语言，包含美版和欧版的所有语言。只有你的游戏副本中包含的语言可用，其他语言会回退为英语。欧版副本包含的语言最多。游戏启动时生效。
 English (US) = 英语（美国）
 English (UK) = 英语（英国）
@@ -1168,7 +1170,7 @@ resume = 继续
 # 0.4.9: Launcher: 4:3, FSR on Vulkan, DLSS model, frame generation
 Aspect ratio = 宽高比
 Auto = 自动
-4:3 tells the game it is on an old 4:3 TV, so it makes a 4:3 picture and HUD itself, as on the console. Auto = 16:9 for now (4:3 is untested: choose it yourself). Not with Ultrawide. = 4:3 会告诉游戏它连接的是旧式 4:3 电视，游戏会像在主机上一样自行生成 4:3 画面和 HUD。自动: 目前为 16:9（4:3 尚未测试：请自行选择）。不能与超宽屏同时使用。
+16:10 and 4:3 tell the game the screen's shape, so it makes a picture of that shape and lays out its HUD itself (16:10: a taller view, for a Steam Deck or a 16:10 laptop). Auto = 16:10 on a 16:10 screen, else 16:9 (4:3 is untested: choose it yourself). Not with Ultrawide. = 16:10 和 4:3 会告诉游戏屏幕的形状，游戏会自行生成该形状的画面并排布 HUD（16:10：更高的视野，适合 Steam Deck 或 16:10 笔记本）。自动 = 在 16:10 屏幕上为 16:10，否则为 16:9（4:3 未经测试：请自行选择）。不能与超宽屏同时使用。
 needs the next runtime (SDK patch 70) = 需要下一个运行时(SDK 补丁 70)
 not checked yet = 尚未检查
 this build has no DLSS file = 此版本没有 DLSS 文件
@@ -1434,6 +1436,9 @@ In progress = 进行中
 This match is full. = 此比赛已满。
 Join the match in progress: you take a bot's place. = 加入进行中的比赛：你将取代一个机器人的位置。
 Join this match. = 加入此比赛。
+You have this match's map. = 你有这场比赛的地图。
+You may not have this match's map (DLC). Add the map pack in COGBox to join. = 你可能没有这场比赛的地图（DLC）。在 COGBox 中添加地图包即可加入。
+The host hasn't chosen a map yet. = 主机还没有选择地图。
 Match = 比赛
 Casual (under level 3) = Casual（3 级以下）
 # deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")
@@ -1572,3 +1577,44 @@ Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and 
 the match's playlist = 该比赛的播放列表
 Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3：想选择 COG 或 Locust，请主持 Versus > Private，让其他玩家用房间代码或“加入好友”进入。在大厅中按 Y 切换队伍。
 Join through Gears 3's own matchmaking: the host's game picks your team. = 通过 Gears 3 自己的匹配加入：由主机的游戏为你分配队伍。
+# GitHub #342: the cheats that are simply on (machine-made; corrections welcome)
+God mode = 无敌模式
+All weapons and ammo = 所有武器和弹药
+Game speed = 游戏速度
+Normal = 正常
+Slow motion (3/4) = 慢动作 (3/4)
+Slow motion (1/2) = 慢动作 (1/2)
+Slow motion (1/4) = 慢动作 (1/4)
+Hide the HUD = 隐藏 HUD
+Cheat keys (F9-F11) = 作弊按键 (F9-F11)
+CHEATS = 作弊
+Cheat: you take no damage. = 作弊：你不会受到伤害。
+Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn. = 作弊：所有武器和满弹药，每次关卡开始、检查点和重生时都会重新给予。
+Cheat: the whole game runs slower (in a game you host, for every player). = 作弊：整个游戏变慢（在你主持的游戏中，对所有玩家生效）。
+The game's own slow-motion moments still play as made. = 游戏自带的慢动作时刻仍按原样播放。
+No HUD while you play - for screenshots and videos. = 游戏时不显示 HUD - 用于截图和视频。
+With Cheat keys on, F11 shows it again. = 开启作弊按键时，F11 可重新显示。
+The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show the HUD. = 游戏内的开发者按键：F9 自由镜头（Gears 1：穿墙飞行），F10 冻结世界，F11 隐藏 / 显示 HUD。
+Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = 仅限战役和波次模式（部落、野兽、生存）- 对战中绝不可用。
+Gears 1 and 2: games on this PC only. = Gears 1 和 2：仅限此电脑上的游戏。
+Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 和 Judgment：也包括你主持的系统链接或在线游戏 - 请只在你自己的游戏中使用。
+Achievements and saves are your own business. = 成就和存档后果自负。
+At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution. = 在此渲染分辨率（3x）下，性能模式会让场景保持全尺寸，因此超分只做抗锯齿（不会增加帧数）。请选择质量或超级性能，或改用 2x 渲染分辨率。
+At this render resolution Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution. = 在此渲染分辨率下，性能模式会让场景保持全尺寸，因此超分只做抗锯齿（不会增加帧数）。性能模式需要 2x 或 4x 渲染分辨率。
+At this render resolution this choice keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Quality and Ultra performance need a 3x render resolution (4K). = 在此渲染分辨率下，此选项会让场景保持全尺寸，因此超分只做抗锯齿（不会增加帧数）。质量和超级性能需要 3x（4K）渲染分辨率。
+# GitHub #359: the cheat key notices in game (machine-made; corrections welcome)
+Fly mode = 飞行模式
+Free camera = 自由镜头
+Freeze the world = 冻结世界
+Slow motion = 慢动作
+All weapons = 所有武器
+All ammo = 所有弹药
+ON = 开
+OFF = 关
+DONE = 完成
+GIVEN = 已获得
+Cheats are off in Versus = 对战模式中作弊已关闭
+Cheats are off with another PC's player in the game = 有其他电脑的玩家在游戏中时作弊已关闭
+not recognised by the game = 游戏无法识别
+not available with Title Update 6 = Title Update 6 下不可用
+HUD = 界面

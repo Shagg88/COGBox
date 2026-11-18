@@ -286,7 +286,8 @@ WASD move, mouse look, left click fire, right click aim, Space cover/roll, F mel
 Sens = Sens
 Mouse sensitivity = 마우스 감도
 How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = 마우스로 카메라를 돌리는 속도입니다. 0.5로 시작해 보세요. DPI가 높은 마우스는 낮추고, DPI가 낮은 마우스는 높이세요.
-Extra stick dead zone = 추가 스틱 데드존
+Left stick dead zone (%) = 왼쪽 스틱 데드존 (%)
+Right stick dead zone (%) = 오른쪽 스틱 데드존 (%)
 Game's own = 게임 자체
 Vibration = 진동
 Controller vibration = 컨트롤러 진동
@@ -745,7 +746,8 @@ Sets the graphics boxes in one go. Original = the game as on the console. Change
 How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = 게임이 그리는 디테일의 정도입니다. 1x: 콘솔과 같은 1280x720, 2x: 2560x1440, 3x: 3840x2160(4K), 4x: 5120x2880. 업스케일이 아닌 실제 디테일입니다. 내 모니터에 맞춤: 화면을 덮는 가장 작은 배율로 그린 뒤 화면의 정확한 크기로 리샘플링합니다. 1080p: 720p로 그린 뒤 선명도를 높여 화면에 업스케일합니다. 빠르며 성능이 낮은 그래픽 카드에 적합하지만 실제 디테일보다 부드럽습니다.
 The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = 텍스처 스트리밍 풀입니다. 클수록 선명해지기를 기다리는 흐릿한 텍스처가 줄어듭니다. 크기가 클수록 게임의 나머지 부분에 쓸 메모리가 줄어듭니다.
 100 = the original. Widens (or narrows) every camera view by this much. = 100: 원본. 모든 카메라 시야를 이 값만큼 넓히거나 좁힙니다.
-Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = 게임 자체의 데드존 위에 더해집니다. 드리프트가 생기는 낡은 스틱용입니다. 게임 자체: 아무것도 더하지 않습니다.
+Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own dead zone. = 이보다 작은 왼쪽 스틱 움직임은 무시돼요. 스틱이 쏠리면 값을 올리세요. 0 = 게임 자체 데드존만.
+Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own dead zone. = 이보다 작은 오른쪽 스틱 움직임은 무시돼요. 카메라가 저절로 움직이면 값을 올리세요. 0 = 게임 자체 데드존만.
 The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = 게임 자체 텍스트와 음성의 언어입니다. 미국판과 유럽판이 지원하는 모든 언어를 선택할 수 있습니다. 사용 중인 게임 사본에 들어 있는 언어만 표시되며, 나머지는 영어로 대체됩니다. 유럽판 사본에 언어가 가장 많습니다. 게임을 시작할 때 적용됩니다.
 English (US) = 영어(미국)
 English (UK) = 영어(영국)
@@ -1168,7 +1170,7 @@ resume = 계속
 # 0.4.9: Launcher: 4:3, FSR on Vulkan, DLSS model, frame generation
 Aspect ratio = 화면 비율
 Auto = 자동
-4:3 tells the game it is on an old 4:3 TV, so it makes a 4:3 picture and HUD itself, as on the console. Auto = 16:9 for now (4:3 is untested: choose it yourself). Not with Ultrawide. = 4:3은 게임에 오래된 4:3 TV라고 알려 주어, 콘솔처럼 게임이 직접 4:3 화면과 HUD를 만들어요. 자동: 지금은 16:9 (4:3은 아직 검증되지 않았으니 직접 선택하세요). 울트라와이드와 함께 쓸 수 없어요.
+16:10 and 4:3 tell the game the screen's shape, so it makes a picture of that shape and lays out its HUD itself (16:10: a taller view, for a Steam Deck or a 16:10 laptop). Auto = 16:10 on a 16:10 screen, else 16:9 (4:3 is untested: choose it yourself). Not with Ultrawide. = 16:10과 4:3은 게임에 화면 모양을 알려 주어, 게임이 직접 그 모양의 화면을 만들고 HUD를 배치해요(16:10: 위아래로 더 넓은 시야, Steam Deck이나 16:10 노트북용). 자동: 16:10 화면에서는 16:10, 그 외에는 16:9 (4:3은 아직 검증되지 않았으니 직접 선택하세요). 울트라와이드와 함께 쓸 수 없어요.
 needs the next runtime (SDK patch 70) = 다음 런타임이 필요해요 (SDK 패치 70)
 not checked yet = 아직 확인하지 않음
 this build has no DLSS file = 이 빌드에는 DLSS 파일이 없어요
@@ -1434,6 +1436,9 @@ In progress = 진행 중
 This match is full. = 이 매치는 가득 찼습니다.
 Join the match in progress: you take a bot's place. = 진행 중인 매치에 참가: 봇의 자리를 대신합니다.
 Join this match. = 이 매치에 참가합니다.
+You have this match's map. = 이 매치의 맵을 가지고 있습니다.
+You may not have this match's map (DLC). Add the map pack in COGBox to join. = 이 매치의 맵(DLC)이 없을 수 있습니다. 참가하려면 COGBox에서 맵 팩을 추가하세요.
+The host hasn't chosen a map yet. = 호스트가 아직 맵을 고르지 않았습니다.
 Match = 매치
 Casual (under level 3) = Casual (레벨 3 미만)
 # deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")
@@ -1572,3 +1577,44 @@ Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and 
 the match's playlist = 매치의 플레이리스트
 Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: COG 또는 Locust를 고르려면 Versus > Private을 호스트하고 다른 플레이어는 방 코드나 친구 참가로 들어오게 하세요. 로비에서 Y를 눌러 팀을 바꿀 수 있습니다.
 Join through Gears 3's own matchmaking: the host's game picks your team. = Gears 3의 매치메이킹으로 참가: 호스트의 게임이 팀을 정합니다.
+# GitHub #342: the cheats that are simply on (machine-made; corrections welcome)
+God mode = 무적 모드
+All weapons and ammo = 모든 무기와 탄약
+Game speed = 게임 속도
+Normal = 보통
+Slow motion (3/4) = 슬로 모션 (3/4)
+Slow motion (1/2) = 슬로 모션 (1/2)
+Slow motion (1/4) = 슬로 모션 (1/4)
+Hide the HUD = HUD 숨기기
+Cheat keys (F9-F11) = 치트 키 (F9-F11)
+CHEATS = 치트
+Cheat: you take no damage. = 치트: 피해를 입지 않습니다.
+Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn. = 치트: 모든 무기와 가득 찬 탄약. 레벨 시작, 체크포인트, 리스폰 때마다 다시 지급됩니다.
+Cheat: the whole game runs slower (in a game you host, for every player). = 치트: 게임 전체가 느려집니다 (내가 호스트하는 게임에서는 모든 플레이어에게).
+The game's own slow-motion moments still play as made. = 게임 자체의 슬로 모션 장면은 원래대로 재생됩니다.
+No HUD while you play - for screenshots and videos. = 플레이 중 HUD 없음 - 스크린샷과 영상용.
+With Cheat keys on, F11 shows it again. = 치트 키를 켜면 F11로 다시 표시합니다.
+The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show the HUD. = 게임 안의 개발자 키: F9 자유 카메라 (Gears 1: 벽을 통과해 날기), F10 세계 정지, F11 HUD 숨기기 / 표시.
+Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = 캠페인과 웨이브 모드 (호드, 비스트, 서바이벌)에서만 - 대전에서는 절대 안 됩니다.
+Gears 1 and 2: games on this PC only. = Gears 1과 2: 이 PC의 게임에서만.
+Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3와 Judgment: 내가 호스트하는 시스템 링크나 온라인 게임에서도 - 내 게임에서만 사용해 주세요.
+Achievements and saves are your own business. = 도전 과제와 저장 파일은 본인 책임입니다.
+At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution. = 이 렌더 해상도(3x)에서는 성능 모드가 장면을 원래 크기로 두어 업스케일러가 안티에일리어싱만 합니다(프레임 증가 없음). 품질이나 울트라 성능, 또는 2x 렌더 해상도를 선택하세요.
+At this render resolution Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution. = 이 렌더 해상도에서는 성능 모드가 장면을 원래 크기로 두어 업스케일러가 안티에일리어싱만 합니다(프레임 증가 없음). 성능 모드에는 2x 또는 4x 렌더 해상도가 필요합니다.
+At this render resolution this choice keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Quality and Ultra performance need a 3x render resolution (4K). = 이 렌더 해상도에서는 이 선택이 장면을 원래 크기로 두어 업스케일러가 안티에일리어싱만 합니다(프레임 증가 없음). 품질과 울트라 성능에는 3x(4K) 렌더 해상도가 필요합니다.
+# GitHub #359: the cheat key notices in game (machine-made; corrections welcome)
+Fly mode = 비행 모드
+Free camera = 자유 카메라
+Freeze the world = 세계 정지
+Slow motion = 슬로 모션
+All weapons = 모든 무기
+All ammo = 모든 탄약
+ON = 켜짐
+OFF = 꺼짐
+DONE = 완료
+GIVEN = 획득
+Cheats are off in Versus = Versus에서는 치트가 꺼집니다
+Cheats are off with another PC's player in the game = 다른 PC의 플레이어가 게임에 있는 동안 치트가 꺼집니다
+not recognised by the game = 게임이 인식하지 못함
+not available with Title Update 6 = Title Update 6에서는 사용할 수 없음
+HUD = HUD

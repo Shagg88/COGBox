@@ -40,6 +40,10 @@ details) is kept while your game is connected and removed when it disconnects. I
 10 minutes. Whether you are online and which game you are in is shown to your friends and kept in memory only.
 A **public** match you host in Gears 2, Gears 3 or Judgment is listed under Open matches for other signed-in players as
 its game, mode, player count, region and whether it has started - never your name, tag or address.
+**Name tags and Recent players** (0.6.5): in an online match your game asks the server for the COGBox tags of the
+other players (by their online XUID) to show after their names, and tells the server which of them you played with. The
+server keeps one entry per player you played with - which game, and when - until either account is deleted. Only you
+see your list: the last 14 days, at most 30 players, never anyone either of you blocked.
 **The games' own lobby search** (the in-game Find Match / Quick Match) reads public lobbies from the server too. For now anyone can make that request without an account, and each public lobby it returns shows your tag, your online XUID, your COGBox account ID, the game, region and player count, and the game's own session details (from COGBox 0.6.1, without your PC's local network address). It never shows the join code, your token or your internet address. Once most players are on a COGBox that signs in to search, the server will require a signed-in player for it.
 
 **Your IP address:** to connect two players directly (there is no relay), the server passes each player's network
@@ -63,6 +67,23 @@ server runs on your own PC.
 - **Writes:** inside the COGBox folder (`CogBox.ini`, `settings.ini`, logs, shader caches, unpacked games, box art)
   and the games' save folders. Old files are moved to `_old-files`, not deleted.
 - **Your Player name** is stored only in `CogBox.ini` on your PC.
+
+## The Fabricator (the mod manager)
+
+The **FABRICATOR** screen works offline and **sends nothing**: it makes no network request. It adds, updates and
+uninstalls mods from files on your PC. What it keeps, all on your PC:
+
+- `fabricator.json` in each mod folder it installed (inside the game's `mods` folder): which mod this is (its name and
+  version, that it was added from a file) and a SHA-256 hash of the zip. COGBox writes it, and it is left out of any zip
+  you make.
+- `mods\.fabricator-backup\` in each game's folder: the old copy of a mod after an update, or of one you uninstalled
+  (one per mod; a newer one replaces it). You can delete it yourself at any time.
+- `fabricator\work\` next to COGBox: a temporary folder used while a mod folder is packed and checked. It is removed
+  afterwards.
+
+A mod folder without a `fabricator.json` (one you put in the mods folder by hand) is never moved or deleted by COGBox.
+A mod added by hand with a COGBox version before 0.6.5 may carry a `fabricator.json` from its zip; the Fabricator then
+treats it as one it installed, and Uninstall moves it to `mods\.fabricator-backup\` (never deletes it).
 
 ## Problem reports
 

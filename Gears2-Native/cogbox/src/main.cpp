@@ -7,6 +7,7 @@
 #include "upgrade_cleanup.h"   // cleanup049
 #include "app.h"
 #include "social_client.h"
+#include "fabricator_state.h"   // the FABRICATOR screen's worker and jobs
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
 #include "update.h"
@@ -244,6 +245,11 @@ static void answered(App &a)
     else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
     else if (m.tag == "protonrec" || m.tag == "protonfound") linux_answer(a, m);   // proton049
     else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
+    else if (m.tag == "coldprep") {   // 0.6.5: the cold-start question (play.cpp); closing it starts nothing
+        if (m.answer == 0) { a.prepThenPlay[m.game] = true; play_start(a, m.game, true); }
+        else if (m.answer == 1) { a.coldPrepOk[m.game] = true; play_start(a, m.game); }
+        else if (m.answer == 2) { a.ini.seti("Graphics", "AutoPrepareAsk", 0); a.ini.save(); a.coldPrepOk[m.game] = true; play_start(a, m.game); }
+    }
     else if (m.tag == "tumismatch") a.joinLobby[m.game].clear();   // 0.6.0: Cancel drops a pending Join
     else if (m.tag == "foundsaves") {   // 0.6.4: hand-copied saves; Not now, or a done import, then starts the game
         bool start = true;
@@ -258,6 +264,7 @@ static void answered(App &a)
         else a.joinLobby[m.game].clear();
         a.misplacedAsked[m.game] = false;
     }
+    else if (m.tag == "fabupdate" || m.tag == "fabuninstall") fab_answer(a, m);   // the Fabricator's questions
     else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
     else if (m.tag == "socialremove") social_remove_answer(m.answer);   // social step 3
     else if (m.tag == "socialdelete") social_delete_answer(a, m.answer);   // 0.6.0 review: delete the online account
@@ -565,6 +572,7 @@ static void draw_ui(App &a, ImVec2 size)
     // old picture then cross-fades into the new one. (Before 0.3.8: a 0.5 s dip through black - the whole window,
     // window buttons and background included, went black half way, and the switch waited for it.)
     if (a.screen == SCR_FRONT) front_draw(a, size);
+    else if (a.screen == SCR_FABRICATOR) fabricator_draw(a, size);
     else page_draw(a, size);
 
     // the message line
@@ -663,7 +671,8 @@ static void refresh_pads(App &a)
 }
 
 // Test switches (all off for players): COGBOX_SHOT=<file.bmp> saves the window after COGBOX_SHOT_FRAMES frames (90)
-// and exits (COGBOX_SHOT_NOTICES=1 keeps the startup questions); COGBOX_PAGE=<game>[:<tab>] opens on a page; COGBOX_FRONT=<game> turns the carousel there.
+// and exits (COGBOX_SHOT_NOTICES=1 keeps the startup questions); COGBOX_PAGE=<game>[:<tab>] opens on a page; COGBOX_FRONT=<game> turns the carousel there;
+// COGBOX_FABRICATOR=<library|store|creator> opens the FABRICATOR screen on that tab.
 static void test_shot(App &a)
 {
     const char *shot = getenv("COGBOX_SHOT");
@@ -797,11 +806,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     g_ui = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
     if (g_ui <= 0.0f) g_ui = 1.0f;
     g_ui *= 0.78f;   // Shagg 18:31: about 25% smaller than the first build
-    int ww = (int)(1280 * g_ui), wh = (int)(800 * g_ui);
+    // 0.6.5 (Shagg): a bigger window at the same text and button size - 1640 x 1025 UI units (1280 x 800 at 100% Windows
+    // scaling); it was 1280 x 800 units. A screen too small for it gets a smaller window first (down to the old size),
+    // and only below that smaller text.
+    int ww = (int)(1640 * g_ui), wh = (int)(1025 * g_ui);
     const SDL_DisplayMode *dm = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
     if (dm && (ww > dm->w * 0.92f || wh > dm->h * 0.88f)) {
-        float k = std::min(dm->w * 0.92f / ww, dm->h * 0.88f / wh);
-        g_ui *= k; ww = (int)(ww * k); wh = (int)(wh * k);
+        ww = std::min(ww, (int)(dm->w * 0.92f));
+        wh = std::min(wh, (int)(dm->h * 0.88f));
+        const int minW = (int)(1280 * g_ui), minH = (int)(800 * g_ui);
+        if (ww < minW || wh < minH) {
+            float k = std::min((float)ww / minW, (float)wh / minH);
+            g_ui *= k; ww = (int)(minW * k); wh = (int)(minH * k);
+        }
     }
     SDL_Window *win = SDL_CreateWindow(COGBOX_NAME, ww, wh, SDL_WINDOW_RESIZABLE);
     SDL_Renderer *ren = win ? SDL_CreateRenderer(win, nullptr) : nullptr;
@@ -879,6 +896,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         a.tab = c ? std::max(0, std::min(7, atoi(c + 1))) : 0;   // 0-4 gs::Tab, 5 SOCIAL, 6 MODS, 7 ABOUT
         a.screen = a.zoomTo = SCR_PAGE;
     }
+    if (const char *t = getenv("COGBOX_FABRICATOR")) {   // test switch: only picks the screen and its tab
+        const std::string tab = t;
+        a.fabTab = tab == "store" ? 1 : tab == "creator" ? 2 : 0;
+        a.screen = a.zoomTo = SCR_FABRICATOR;
+    }
     covers_load(a);
     // 0.2.0 (GitHub #3 / #7): some unzip tools (KDE's Ark) flatten the release's folders; the ports are then "missing"
     {
@@ -933,12 +955,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         case 3: set_message(a, "The box art couldn't be downloaded - check the internet connection.", true); break;
         }
         install_poll(a);
+        fab_state_poll(a);   // the FABRICATOR's jobs: an install's folder chosen and its final moves made here, on the UI thread
         linux_poll(a);   // proton049
         backup_poll(a);   // GitHub #120: the save backup runs on its own thread
         social_delete_poll(a);   // DELETE ONLINE ACCOUNT runs on its own thread too
         // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
         // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
         // game copy or a title update is searched for DLC packages.
+        if (!a.dropped.empty() && a.screen == SCR_FABRICATOR && !a.modal.open) {   // on the FABRICATOR screen: a mod to add or package
+            const std::vector<std::string> d = a.dropped;
+            a.dropped.clear();
+            for (const std::string &p : d) fabricator_drop(a, p);
+        }
         if (!a.dropped.empty() && !a.modal.open && a.job.state.load() != 1 && !dlc_dupes_running()) {   // r25: after a duplicate check
             std::string p = a.dropped.front();
             a.dropped.erase(a.dropped.begin());
@@ -1010,8 +1038,17 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         const bool quitAskable = !a.run.proc && SDL_GetKeyboardFocus() && a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
                                  !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.job.state.load() != 1 &&
                                  !g_popupLastFrame;   // 0.4.6 review: Dear ImGui closes a popup on Esc before this, so the same Esc must not quit
+        // the FABRICATOR screen: Esc / B go back to the library when nothing else has them (a question, a list, a text box)
+        static bool textLastFrame = false;
+        const bool fabBackable = SDL_GetKeyboardFocus() && a.screen == SCR_FABRICATOR && a.zoomTo == SCR_FABRICATOR && !a.modal.open &&
+                                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !g_popupLastFrame && !textLastFrame && !pad_capturing(a);
         draw_ui(a, io.DisplaySize);
         g_popupLastFrame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+        if (fabBackable && !a.modal.open && !io.WantTextInput &&
+            (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))) {
+            a.zoomTo = SCR_FRONT; a.zoomStart = ImGui::GetTime();
+        }
+        textLastFrame = io.WantTextInput;
         // job 526: Start (Options) or Esc on the library screen asks to close COGBox (asked after this frame's drawing, so
         // the same Esc doesn't also answer it)
         if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
@@ -1029,6 +1066,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (a.job.state.load() == 1) { a.job.cancel = true; }
     if (a.job.th.joinable()) a.job.th.join();
     music_stop();
+    fab_state_shutdown();   // the FABRICATOR: packs cancelled, unfinished installs' .partial folders removed
     for (auto &c : a.cover) if (c.tex) SDL_DestroyTexture(c.tex);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();

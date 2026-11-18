@@ -31,12 +31,16 @@
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
+#include <ue3/auto_cheats.h>
 #include <ue3/console.h>
+#include <ue3/name_tags.h>
+#include <iterator>   // std::size
+#include <ue3/objects.h>  // GitHub #353
 #include <ue3/match_guard.h>
 
 REXCVAR_DEFINE_BOOL(gowj_cheats, false, "Judgment",
-                    "GitHub #264: developer cheats on hotkeys: F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F9 "
-                    "free camera, F10 hide the HUD, F11 all weapons and ammo (keys can be changed with --ue3_hotkeys). Also "
+                    "GitHub #264 / #342: the developers' cheat keys: F9 free camera, F10 freeze the world, F11 hide / show "
+                    "the HUD (keys can be changed with --ue3_hotkeys; god mode, weapons, speed: --ue3_cheat_*). Also "
                     "in a System Link / online game this PC hosts (Judgment's own AllowCheats), but never in a Versus match");
 
 namespace {
@@ -57,8 +61,8 @@ bool OpenObjects() {
   return ue3::obj::Init(kGNamesVar, kGObjectsVar, &layout);
 }
 // F7 / F8 are the in-game menu's (achievements, COGBox social), F1-F4 the SDK's / ours: as Gears 2.
-constexpr const char* kDefaultHotkeys =
-    "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F9=ToggleDebugCamera;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
+// GitHub #342: god mode, weapons and slow motion are the launcher's own options now (ue3/auto_cheats.h).
+constexpr const char* kDefaultHotkeys = "F9=ToggleDebugCamera;F10=PlayersOnly;F11=ToggleHUD";
 }  // namespace
 
 // OnPostSetup. Without --gowj_cheats only what --ue3_hotkeys / --ue3_exec name runs.
@@ -74,6 +78,10 @@ void GowjInstallCheats() {
                          target.players_num_offset, &OpenObjects});
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
+  // GitHub #342: the launcher's cheats - also in a game this PC hosts (Judgment's own AllowCheats returns True)
+  ue3::cheats::Configure({"Judgment", true, false, true, target.engine_global, target.players_data_offset,
+                          target.players_num_offset, "GearPawn"});
+  ue3::cheats::SetKeysOn(REXCVAR_GET(gowj_cheats));   // F11 = ToggleHUD: Hide the HUD leaves it a say
   if (REXCVAR_GET(gowj_cheats)) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
     REXLOG_INFO("gowj_cheats: developer cheats on hotkeys (never in a Versus match)");
@@ -88,6 +96,7 @@ void GowjInstallCheats() {
 // first-person camera.
 void GowjAdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers, --pad_trigger_rumble)
 void GowjFirstPersonTick();        // first_person.cpp (--gowj_first_person)
+bool GowjObjectsReady();           // adaptive_triggers.cpp (GitHub #353)
 void GowjPollLoadingMovie(PPCContext& ctx, uint8_t* base);  // game_patches.cpp (GitHub #318, --gowj_loading_fps)
 extern "C" void __imp__sub_8255E200(PPCContext& __restrict ctx, uint8_t* base);
 extern std::atomic<uint32_t> g_gowj_tick_caller;  // game_patches.cpp (0.6.3 host fps)
@@ -107,6 +116,50 @@ extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
   GowjPollLoadingMovie(ctx, base);
   __imp__sub_8255E200(ctx, base);
   Ue3ConsoleRunQueued(ctx, base);
+  ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   GowjAdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   GowjFirstPersonTick();        // --gowj_first_person (first_person.cpp; off: one flag test)
+  // GitHub #353: COGBox tags after the players' names, grey (Judgment's Flash text fields render <font>, as Gears 3's)
+  Ue3NameTagsTick(&GowjObjectsReady, Ue3NameTagStyle{"<font color='#808080'>", "</font>"});
 }
+
+// GitHub #353, the kill feed: the HUD keeps copies of the names in its DeathData entries and draws them through
+// Canvas's text calls, which draw the text as it is - so the tag's grey markup (rendered by the Flash scenes: lobby,
+// scoreboard) would show as text. These are the
+// engine's text routines under Canvas.DrawText / TextSize / StrLen (exec functions 8275ED00, 8275F540, 8275F2A8 call them with the
+// script's copy of the text): the original gets a copy, without the markup, of any argument holding it - the text itself, or an FString whose
+// data it is - before the original runs.
+namespace {
+// Each text argument through Ue3NameTagsTextArg: a scratch copy without the tag's markup in place of text holding it
+// (the caller's text is never changed); a register is rewritten only when its value is replaced.
+void CleanTextArgs(PPCContext& ctx) {
+  for (PPCRegister* r : {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10})
+    if (const uint32_t v = Ue3NameTagsTextArg(r->u32); v != r->u32) r->u64 = v;
+}
+// The hooks act only once these Canvas natives are found at these addresses (this build's; checked at start-up).
+constexpr Ue3TextHookCheck kTextHookChecks[] = {{"DrawText", 0x8275ED00}, {"TextSize", 0x8275F540}, {"StrLen", 0x8275F2A8}};
+const bool kTextHookChecksSet = (Ue3NameTagsTextHookChecks(kTextHookChecks, std::size(kTextHookChecks)), true);
+}  // namespace
+#define TEXT_HOOK(addr)                                                             \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);     \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {           \
+    CleanTextArgs(ctx);                                                             \
+    __imp__sub_##addr(ctx, base);                                                   \
+  }
+TEXT_HOOK(8275C490)  // DrawText's
+TEXT_HOOK(8275DFF8)  // DrawText's
+TEXT_HOOK(8275DE88)  // TextSize's
+TEXT_HOOK(8275DF28)  // StrLen's
+#undef TEXT_HOOK
+// The Canvas exec natives themselves: the hooks above act only inside one of these (the text routines are shared by
+// much of the engine; only the script's draw calls hold the copy that is cleaned) - review r368b.
+#define CANVAS_EXEC(addr)                                                                  \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);    \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {          \
+    Ue3CanvasTextCall in_canvas;                                                     \
+    __imp__sub_##addr(ctx, base);                                                    \
+  }
+CANVAS_EXEC(8275ED00)  // Canvas.DrawText
+CANVAS_EXEC(8275F540)  // Canvas.TextSize
+CANVAS_EXEC(8275F2A8)  // Canvas.StrLen
+#undef CANVAS_EXEC

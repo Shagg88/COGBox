@@ -107,9 +107,23 @@ namespace modcore
         Manifest m;
         m.dir = dir;
         m.folder = m.name = U8(dir.filename());
+        // review r369 F3 (security audit): a mod.ini is a few lines; a huge one (a mod that would hang the launcher and the
+        // game at every start) is not read - the mod keeps its folder name and no settings, with a warning
+        constexpr std::uintmax_t kMaxModIni = 256u << 10;
+        constexpr int kMaxModIniLines = 4000;
+        {
+            std::error_code size_ec;
+            const std::uintmax_t size = std::filesystem::file_size(dir / "mod.ini", size_ec);
+            if (!size_ec && size > kMaxModIni)
+            {
+                m.warnings.push_back("mod.ini is larger than 256 KB - not read");
+                return m;
+            }
+        }
         std::ifstream in(dir / "mod.ini");
         std::string line;
         bool first = true;
+        int lines = 0;
         // [Campaign] and [Chapter.N] hold the campaign's keys; any other section (or none) the mod's, as before them
         enum { ModKeys, CampaignKeys, ChapterKeys, ClassDefaultKeys, IgnoredKeys } in_section = ModKeys;
         size_t chapter = 0;                          // m.chapters index while in a [Chapter.N]
@@ -125,6 +139,8 @@ namespace modcore
         };
         while (std::getline(in, line))
         {
+            if (++lines > kMaxModIniLines) { m.warnings.push_back("mod.ini has more than 4000 lines - the rest not read"); break; }
+            if (m.warnings.size() > 200) break;   // (a file of nothing but bad lines)
             if (first && line.size() >= 3 && (unsigned char)line[0] == 0xEF && (unsigned char)line[1] == 0xBB) line.erase(0, 3);   // UTF-8 BOM
             first = false;
             line = Trim(line);
@@ -356,6 +372,7 @@ namespace modcore
         for (const auto& e : std::filesystem::directory_iterator(m.dir / "config", ec))
             if (e.is_regular_file(ec) && Lower(U8(e.path().extension())) == ".ini") out.push_back(e.path());
         std::sort(out.begin(), out.end());
+        if (out.size() > 64) out.resize(64);   // review r369 audit F3: a mod has a handful; never an unbounded merge
         return out;
     }
 

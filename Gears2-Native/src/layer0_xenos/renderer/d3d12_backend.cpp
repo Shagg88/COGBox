@@ -3467,6 +3467,11 @@ class D3D12Backend final : public Backend {
       if (pipeline_library_dirty_.load()) SavePipelineLibrary();
       SafeRelease(pipeline_library_);
     }
+    {  // 0.6.5: none left once the final save stored them; released if the save could not run
+      std::lock_guard<std::mutex> q(pending_stores_mutex_);
+      for (auto& [n, pso] : pending_stores_) pso->Release();
+      pending_stores_.clear();
+    }
     for (Pipeline& p : pipelines_) SafeRelease(p.pso);
     for (IndexBuffer& b : index_buffers_) SafeRelease(b.resource);
     for (Readback& r : readbacks_) SafeRelease(r.buffer);
@@ -4730,13 +4735,15 @@ class D3D12Backend final : public Backend {
     // priority built the 2,036 recorded pipelines and the recipe pack beside the game's own threads): on 8 logical
     // processors or fewer, start-up backlog jobs (nothing draws with them yet) run below normal, and while the game is
     // being played at most half the workers take them. A job a draw asks for is moved to the live queue before it is
-    // taken (PromoteBacklogJob) and is never limited. Bigger CPUs: unchanged unless the cvars say otherwise.
-    const bool small_cpu = hw <= 8;
+    // taken (PromoteBacklogJob) and is never limited.
     worker_prio_ = prio;
-    backlog_prio_ = options_.backlog_thread_priority <= -3 ? (small_cpu ? std::min(prio, -1) : prio)
+    // 0.6.5 (job 2021, a cold start on 16 logical processors: 12 normal-priority workers building the backlog beside the
+    // game and the package readers gave 50-70 ms frames for over a minute, and a clean window only once they ran dry):
+    // auto now means below normal and half the workers during play on every CPU, not only on 8 or fewer.
+    backlog_prio_ = options_.backlog_thread_priority <= -3 ? std::min(prio, -1)
                                                            : std::min(prio, std::clamp(options_.backlog_thread_priority, -2, 0));
     const int bw = options_.backlog_play_workers;
-    backlog_play_limit_ = bw < 0 ? (small_cpu && n > 1 ? std::max(1u, n / 2) : 0u) : std::min(uint32_t(bw), n);
+    backlog_play_limit_ = bw < 0 ? (n > 1 ? std::max(1u, n / 2) : 0u) : std::min(uint32_t(bw), n);
     if (backlog_play_limit_ >= n) backlog_play_limit_ = 0;  // no limit at all
     for (uint32_t i = 0; i < n; ++i)
       workers_.emplace_back([this, prio] {
@@ -4923,18 +4930,33 @@ class D3D12Backend final : public Backend {
     std::error_code ec;
     const std::filesystem::path path(options_.pipeline_library_path);
     std::filesystem::create_directories(path.parent_path(), ec);
-    {
-      std::ifstream f(path, std::ios::binary);
-      if (f) pipeline_library_blob_.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    const auto t_read = std::chrono::steady_clock::now();
+    {   // 0.6.5: one read of the whole file (it was read a byte at a time: ~500 MB for Gears 3)
+      std::ifstream f(path, std::ios::binary | std::ios::ate);
+      const std::streamoff size = f ? std::streamoff(f.tellg()) : std::streamoff(0);
+      if (size > 0 && f.seekg(0)) {
+        pipeline_library_blob_.resize(size_t(size));
+        if (!f.read(reinterpret_cast<char*>(pipeline_library_blob_.data()), std::streamsize(size))) pipeline_library_blob_.clear();
+      }
     }
+    const double read_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_read).count();
+    const auto t_open = std::chrono::steady_clock::now();
     HRESULT hr = E_FAIL;
     if (!pipeline_library_blob_.empty())
       hr = device1->CreatePipelineLibrary(pipeline_library_blob_.data(), pipeline_library_blob_.size(),
                                           IID_PPV_ARGS(&pipeline_library_));
+    const double open_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_open).count();
     const size_t had = pipeline_library_blob_.size();
     if (FAILED(hr)) {  // no file yet, another driver / GPU (DRIVER_VERSION_MISMATCH, ADAPTER_NOT_FOUND) or damaged
-      if (had) REXLOG_INFO("gow2_renderer: saved pipelines: {} not usable ({:08X}) - starting a new library",
-                           rex::path_to_utf8(path), uint32_t(hr));
+      if (had && hr == D3D12_ERROR_DRIVER_VERSION_MISMATCH)
+        REXLOG_INFO("gow2_renderer: saved pipelines: {} was made by another graphics driver (driver updated) - starting "
+                    "a new library; the game's pipelines are built again as they are drawn",
+                    rex::path_to_utf8(path));
+      else if (had && hr == D3D12_ERROR_ADAPTER_NOT_FOUND)
+        REXLOG_INFO("gow2_renderer: saved pipelines: {} was made on another graphics card - starting a new library",
+                    rex::path_to_utf8(path));
+      else if (had) REXLOG_INFO("gow2_renderer: saved pipelines: {} not usable ({:08X}) - starting a new library",
+                                rex::path_to_utf8(path), uint32_t(hr));
       pipeline_library_blob_.clear();
       hr = device1->CreatePipelineLibrary(nullptr, 0, IID_PPV_ARGS(&pipeline_library_));
     }
@@ -4945,8 +4967,8 @@ class D3D12Backend final : public Backend {
       return;
     }
     pipeline_library_saved_at_ = std::chrono::steady_clock::now();
-    REXLOG_INFO("gow2_renderer: saved pipelines: {} ({} KB loaded)", rex::path_to_utf8(path),
-                pipeline_library_blob_.empty() ? 0 : had / 1024);
+    REXLOG_INFO("gow2_renderer: saved pipelines: {} ({} KB loaded; read {:.0f} ms, opened {:.0f} ms)", rex::path_to_utf8(path),
+                pipeline_library_blob_.empty() ? 0 : had / 1024, read_ms, open_ms);
   }
   std::wstring PipelineLibraryName(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& pd) const {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC fixed = pd;  // value copy; pointer members cleared below (padding stays zero:
@@ -4970,31 +4992,69 @@ class D3D12Backend final : public Backend {
     swprintf(name, 40, L"gp%016llx%016llx", (unsigned long long)h.high64, (unsigned long long)h.low64);
     return name;
   }
+  // 0.6.5: StorePipeline never waits for a save. A save holds the library's lock while it serialises (366 ms for Gears
+  // 3's ~480 MB library, job 2013), and every pipeline built meanwhile - by a worker, or on the recording thread when a
+  // draw needs one at once - used to wait for it. Now a pipeline that finds the lock taken is kept (AddRef) in a short
+  // list and stored by the next holder of the lock: the next store, or the save itself before it serialises.
   void StorePipeline(const std::wstring& name, ID3D12PipelineState* pso) {
     if (!pipeline_library_ || name.empty() || !pso) return;
-    std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
+    std::unique_lock<std::mutex> lock(pipeline_library_mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+      pso->AddRef();
+      {
+        std::lock_guard<std::mutex> q(pending_stores_mutex_);
+        pending_stores_.emplace_back(name, pso);
+      }
+      deferred_stores_.fetch_add(1, std::memory_order_relaxed);
+      pending_stores_waiting_.store(true, std::memory_order_release);
+      pipeline_library_dirty_.store(true, std::memory_order_relaxed);  // the next save stores and keeps it
+      return;
+    }
+    StorePipelineLocked(name, pso);
+    StorePendingLocked();
+  }
+  void StorePipelineLocked(const std::wstring& name, ID3D12PipelineState* pso) {  // pipeline_library_mutex_ held
     const HRESULT hr = pipeline_library_->StorePipeline(name.c_str(), pso);
     if (SUCCEEDED(hr)) {  // E_INVALIDARG = the name is already there (two creations of one pipeline): fine
       ++stats_.pipelines_stored;
       pipeline_library_dirty_.store(true, std::memory_order_relaxed);
     }
   }
+  void StorePendingLocked() {  // pipeline_library_mutex_ held
+    if (!pending_stores_waiting_.load(std::memory_order_acquire)) return;
+    std::vector<std::pair<std::wstring, ID3D12PipelineState*>> todo;
+    {
+      std::lock_guard<std::mutex> q(pending_stores_mutex_);
+      todo.swap(pending_stores_);
+      pending_stores_waiting_.store(false, std::memory_order_release);
+    }
+    for (auto& [n, pso] : todo) {
+      if (pipeline_library_) StorePipelineLocked(n, pso);
+      pso->Release();
+    }
+  }
   // Patch 0010: also called on the background saver thread (on_recording_thread = false): then it leaves the stats and
   // the save time to the recording thread and reports success by its result.
   bool SavePipelineLibrary(bool on_recording_thread = true) {
     std::vector<uint8_t> out;
+    double serialize_ms = 0;
     {
       // Only the snapshot is taken under the lock (workers store new pipelines meanwhile); the file is written after.
       std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
       if (on_recording_thread) pipeline_library_saved_at_ = std::chrono::steady_clock::now();
-      if (!pipeline_library_ || !pipeline_library_dirty_.exchange(false)) return false;
+      if (!pipeline_library_) return false;
+      StorePendingLocked();  // pipelines that arrived during the last save (before the flag is cleared: they are saved now)
+      if (!pipeline_library_dirty_.exchange(false)) return false;
+      const auto t_ser = std::chrono::steady_clock::now();
       const SIZE_T size = pipeline_library_->GetSerializedSize();
       out.resize(size);
       if (!size || FAILED(pipeline_library_->Serialize(out.data(), size))) {
         REXLOG_WARN("gow2_renderer: saved pipelines: Serialize failed ({} bytes)", size_t(size));
         return false;
       }
+      serialize_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_ser).count();
     }
+    const auto t_write = std::chrono::steady_clock::now();
     const std::filesystem::path path(options_.pipeline_library_path);
     std::filesystem::path tmp = path;
     tmp += L".tmp";
@@ -5010,11 +5070,21 @@ class D3D12Backend final : public Backend {
       return false;
     }
     if (on_recording_thread) ++stats_.pipeline_library_saves;
+    // 0.6.5 (measurement): the workers wait on the library's lock while it is serialised
+    REXLOG_INFO("gow2_renderer: saved pipelines: {} MB saved (serialised under the lock {:.0f} ms, written {:.0f} ms; "
+                "{} pipeline(s) so far built during a save, stored later without waiting)",
+                out.size() >> 20, serialize_ms,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_write).count(),
+                deferred_stores_.load(std::memory_order_relaxed));
     return true;
   }
   ID3D12PipelineLibrary1* pipeline_library_ = nullptr;
   std::vector<uint8_t> pipeline_library_blob_;
   std::mutex pipeline_library_mutex_;
+  std::mutex pending_stores_mutex_;  // 0.6.5: pipelines built during a save (taken after pipeline_library_mutex_)
+  std::vector<std::pair<std::wstring, ID3D12PipelineState*>> pending_stores_;
+  std::atomic<bool> pending_stores_waiting_{false};
+  std::atomic<uint64_t> deferred_stores_{0};  // stores that found a save running (did not wait for it)
   std::atomic<bool> pipeline_library_dirty_{false};
   std::chrono::steady_clock::time_point pipeline_library_saved_at_{};
   // Patch 0010: background saves and asynchronous library loads.
@@ -5039,6 +5109,12 @@ class D3D12Backend final : public Backend {
     std::lock_guard<std::mutex> lock(job_mutex_);
     uint64_t q = jobs_busy_;
     for (const auto& d : jobs_) q += d.size();
+    return q;
+  }
+  uint64_t LiveJobsLeft() override {  // 0.6.5
+    std::lock_guard<std::mutex> lock(job_mutex_);
+    uint64_t q = jobs_busy_ > backlog_busy_ ? jobs_busy_ - backlog_busy_ : 0;
+    for (uint32_t p = kPipelineClasses; p < kPipelinePriorities; ++p) q += jobs_[p].size();
     return q;
   }
   void RefreshWorkerStats() {  // patch 0057 (moved here by 0061: also for the prepare-only report)

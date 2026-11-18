@@ -1,0 +1,173 @@
+diff --git a/include/rex/ui/vulkan/device.h b/include/rex/ui/vulkan/device.h
+index c4fd374..fc9d0fe 100644
+--- a/include/rex/ui/vulkan/device.h
++++ b/include/rex/ui/vulkan/device.h
+@@ -318,6 +318,14 @@ class VulkanDevice {
+   MemoryTypes memory_types_;
+ };
+ 
++// COGBox SDK patch 116: whether VK_EXT_graphics_pipeline_library's graphicsPipelineLibrary feature was enabled on
++// this device (only where links are fast and stages need not agree on interpolation decorations). A free function,
++// so VulkanDevice's layout - read inline by games built against older headers - does not change.
++bool CogboxGraphicsPipelineLibraryEnabled(VkDevice device);
++// COGBox SDK patch 116: whether Vulkan 1.3's pipelineCreationCacheControl was enabled (a pipeline can be asked for
++// from the cache only, VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT).
++bool CogboxPipelineCreationCacheControlEnabled(VkDevice device);
++
+ }  // namespace vulkan
+ }  // namespace ui
+ }  // namespace rex
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 546049d..96be725 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -11,6 +11,8 @@
+ 
+ #include <algorithm>
+ #include <cstring>
++#include <map>
++#include <mutex>
+ #include <string>
+ #include <unordered_map>
+ #include <vector>
+@@ -46,6 +48,24 @@ namespace rex {
+ namespace ui {
+ namespace vulkan {
+ 
++static std::mutex& GplDevicesMutex() {
++  static std::mutex m;
++  return m;
++}
++// COGBox SDK patch 116: per device, what was enabled for our renderer beyond the Properties structure (1 = the
++// graphicsPipelineLibrary feature, 2 = Vulkan 1.3 pipelineCreationCacheControl).
++static std::map<VkDevice, uint32_t>& GplDevices() {
++  static std::map<VkDevice, uint32_t> s;
++  return s;
++}
++static bool CogboxDeviceHas(VkDevice device, uint32_t bit) {
++  std::lock_guard<std::mutex> lock(GplDevicesMutex());
++  const auto it = device ? GplDevices().find(device) : GplDevices().end();
++  return it != GplDevices().end() && (it->second & bit) != 0;
++}
++bool CogboxGraphicsPipelineLibraryEnabled(VkDevice device) { return CogboxDeviceHas(device, 1); }
++bool CogboxPipelineCreationCacheControlEnabled(VkDevice device) { return CogboxDeviceHas(device, 2); }
++
+ template <typename Structure, VkStructureType StructureType>
+ struct VulkanFeatures {
+   Structure supported = {StructureType};
+@@ -211,6 +231,8 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+   bool ext_1_3_EXT_shader_demote_to_helper_invocation = false;
+   bool ext_1_3_KHR_dynamic_rendering = false;
+   bool ext_EXT_non_seamless_cube_map = false;
++  bool ext_KHR_pipeline_library = false;           // COGBox SDK patch 116
++  bool ext_EXT_graphics_pipeline_library = false;  // COGBox SDK patch 116
+   if (with_gpu_emulation) {
+     // #15.
+     XE_UI_VULKAN_LOCAL_PROMOTED_EXTENSION(KHR_sampler_mirror_clamp_to_edge, 1, 2)
+@@ -237,6 +259,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+       XE_UI_VULKAN_STRUCT_EXTENSION(EXT_custom_border_color)
+       // Required for true null descriptors in bindless texture bindings.
+       XE_UI_VULKAN_STRUCT_EXTENSION(EXT_robustness2)
++      // COGBox SDK patch 116: pipeline libraries for our renderer's Vulkan backend (#291, #321).
++      XE_UI_VULKAN_LOCAL_EXTENSION(KHR_pipeline_library)
++      XE_UI_VULKAN_LOCAL_EXTENSION(EXT_graphics_pipeline_library)
+     }
+     if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 1, 0)) {
+       // #237.
+@@ -283,6 +308,16 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+     }
+   }
+ 
++  // COGBox SDK patch 116: VK_EXT_graphics_pipeline_library requires VK_KHR_pipeline_library - never one without it.
++  if (ext_EXT_graphics_pipeline_library && !ext_KHR_pipeline_library) {
++    enabled_extensions.erase(std::remove_if(enabled_extensions.begin(), enabled_extensions.end(),
++                                            [](const char* n) {
++                                              return !std::strcmp(n, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
++                                            }),
++                             enabled_extensions.end());
++    ext_EXT_graphics_pipeline_library = false;
++  }
++
+   if (with_swapchain && !device->extensions_.ext_KHR_swapchain) {
+     REXLOG_WARN("Vulkan device '{}' doesn't support swapchains", properties.deviceName);
+     return nullptr;
+@@ -340,6 +375,14 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+   VulkanFeatures<VkPhysicalDeviceRobustness2FeaturesEXT,
+                  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT>
+       features_EXT_robustness2;
++  // COGBox SDK patch 116.
++  VulkanFeatures<VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
++                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT>
++      features_EXT_graphics_pipeline_library;
++  VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT properties_EXT_graphics_pipeline_library = {
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT};
++  bool gpl_usable = false;
++  bool cache_control = false;  // patch 116: VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT for our renderer
+ 
+   if (get_physical_device_properties2_supported) {
+     if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
+@@ -384,6 +427,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+     if (device->extensions_.ext_EXT_robustness2) {
+       features_EXT_robustness2.Link(supported_features_2, device_create_info);
+     }
++    if (ext_KHR_pipeline_library && ext_EXT_graphics_pipeline_library) {  // patch 116
++      features_EXT_graphics_pipeline_library.Link(supported_features_2, device_create_info);
++      properties_EXT_graphics_pipeline_library.pNext = properties_2.pNext;
++      properties_2.pNext = &properties_EXT_graphics_pipeline_library;
++    }
+     ifn.vkGetPhysicalDeviceProperties2(physical_device, &properties_2);
+     ifn.vkGetPhysicalDeviceFeatures2(physical_device, &supported_features_2);
+   }
+@@ -688,6 +736,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+       XE_UI_VULKAN_FEATURE_2(features_1_3, dynamicRendering);
+     }
+     XE_UI_VULKAN_FEATURE_2(features_1_3, synchronization2);  // Gears2-Native SDK patch 33
++    // COGBox SDK patch 116 (not in Properties, so VulkanDevice's layout is unchanged).
++    features_1_3.enabled.pipelineCreationCacheControl = features_1_3.supported.pipelineCreationCacheControl;
++    cache_control = features_1_3.supported.pipelineCreationCacheControl == VK_TRUE;
+     if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 4, 0)) {  // Gears2-Native SDK patch 33
+       XE_UI_VULKAN_FEATURE_2(features_1_4, pushDescriptor);
+       XE_UI_VULKAN_FEATURE_2(features_1_4, maintenance5);
+@@ -761,6 +812,20 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+     }
+   }
+ 
++  // COGBox SDK patch 116: the feature is turned on only together with both properties our renderer relies on (a link
++  // compiles nothing; libraries of different stages need not agree on interpolation decorations). Otherwise it stays
++  // off and the renderer builds whole pipelines, as before.
++  if (ext_KHR_pipeline_library && ext_EXT_graphics_pipeline_library) {
++    gpl_usable = features_EXT_graphics_pipeline_library.supported.graphicsPipelineLibrary &&
++                 properties_EXT_graphics_pipeline_library.graphicsPipelineLibraryFastLinking &&
++                 properties_EXT_graphics_pipeline_library.graphicsPipelineLibraryIndependentInterpolationDecoration;
++    features_EXT_graphics_pipeline_library.enabled.graphicsPipelineLibrary = gpl_usable ? VK_TRUE : VK_FALSE;
++    REXLOG_INFO("* graphicsPipelineLibrary: {} (supported {}, fast linking {}, independent interpolation decoration {})",
++                gpl_usable, bool(features_EXT_graphics_pipeline_library.supported.graphicsPipelineLibrary),
++                bool(properties_EXT_graphics_pipeline_library.graphicsPipelineLibraryFastLinking),
++                bool(properties_EXT_graphics_pipeline_library.graphicsPipelineLibraryIndependentInterpolationDecoration));
++  }
++
+ #undef XE_UI_VULKAN_LIMIT
+ #undef XE_UI_VULKAN_ENUM_LIMIT
+ #undef XE_UI_VULKAN_FEATURE
+@@ -779,6 +844,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+         properties.deviceName, vk::to_string(vk::Result(device_create_result)));
+     return nullptr;
+   }
++  if (gpl_usable || cache_control) {  // COGBox SDK patch 116
++    std::lock_guard<std::mutex> lock(GplDevicesMutex());
++    GplDevices()[device->device_] = (gpl_usable ? 1u : 0u) | (cache_control ? 2u : 0u);
++  }
+ 
+   // Load device functions.
+ 
+@@ -883,6 +952,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+ 
+ VulkanDevice::~VulkanDevice() {
+   if (device_) {
++    {  // COGBox SDK patch 116
++      std::lock_guard<std::mutex> lock(GplDevicesMutex());
++      GplDevices().erase(device_);
++    }
+     vulkan_instance_->functions().vkDestroyDevice(device_, nullptr);
+   }
+ }

@@ -19,11 +19,11 @@ describe('open matches', () => {
   const claim = async (): Promise<Claimed> =>
     (await app.inject({ method: 'POST', url: '/api/v1/auth/claim', payload: { display_name: `Match ${String.fromCharCode(65 + (n++ % 26))}${n}` } })).json();
   const auth = (c: Claimed) => ({ authorization: `COGBox ${c.uuid}:${c.token}` });
-  const host = async (c: Claimed, opts: { title?: string; isPublic?: boolean; max?: number; players?: number; playlist?: number } = {}) =>
+  const host = async (c: Claimed, opts: { title?: string; isPublic?: boolean; max?: number; players?: number; playlist?: number; map?: number } = {}) =>
     (await app.inject({ method: 'POST', url: '/api/v1/lobbies', headers: auth(c),
       payload: { title_id: opts.title ?? G3, session_info: SESSION_INFO, is_public: opts.isPublic ?? true, region: 'us',
                  max_players: opts.max ?? 10, current_players: opts.players ?? 3,
-                 properties: [{ id: PLAYLIST, value: opts.playlist ?? 15 }], contexts: [{ id: 0x800b, value: 3 }] } })).json() as
+                 properties: [{ id: PLAYLIST, value: opts.playlist ?? 15 }], contexts: [{ id: 0x800b, value: 3 }, ...(opts.map === undefined ? [] : [{ id: 1, value: opts.map }])] } })).json() as
       { lobby_id: string; room_code: string };
   const game = (c: Claimed, title = G3): Promise<WebSocket> => new Promise((resolve, reject) => {
     const ws = new WebSocket(`${address}/ws/signal?uuid=${c.uuid}&token=${c.token}&role=game&title_id=${title}`);
@@ -47,13 +47,24 @@ describe('open matches', () => {
     expect((await app.inject({ method: 'GET', url: '/api/v1/matches' })).statusCode).toBe(401);
   });
 
+  it('names the host map (MapName context 1) for the DLC light, null when none is chosen', async () => {
+    const h = await claim(); const v = await claim();
+    await game(h);
+    const withMap = await host(h, { map: 11 });
+    expect((await list(v)).find((x) => x.lobby_id === withMap.lobby_id)?.map).toBe(11);
+    const h2 = await claim();
+    await game(h2);
+    const noMap = await host(h2);
+    expect((await list(v)).find((x) => x.lobby_id === noMap.lobby_id)?.map).toBeNull();
+  });
+
   it('lists a public match with its game, playlist, players and region, and nothing that names the host', async () => {
     const h = await claim(); const v = await claim();
     await game(h);
     const lobby = await host(h, { playlist: 15, players: 6 });
     const m = (await list(v)).find((x) => x.lobby_id === lobby.lobby_id);
     expect(m).toEqual({ lobby_id: lobby.lobby_id, title_id: G3, region: 'us', max_players: 10, current_players: 6,
-                        playlist: 15, in_progress: false });
+                        playlist: 15, map: null, in_progress: false });
     const text = JSON.stringify(await list(v));
     for (const secret of [h.uuid, h.xuid, h.display_name, lobby.room_code, SESSION_INFO]) expect(text).not.toContain(secret);
   });

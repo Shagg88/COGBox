@@ -1,4 +1,17 @@
 // Layer 0 (game-free): see xenos/renderer/shader_cache.h. Our code (MIT).
+#ifdef _WIN32   // job 1969: GetThreadTimes / GetProcessTimes / GetSystemTimes for the warm-up's CPU line
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#ifndef PSAPI_VERSION
+#define PSAPI_VERSION 2   // GetProcessMemoryInfo from kernel32 (K32...): no psapi.lib
+#endif
+#include <psapi.h>
+#endif
 #include <xenos/renderer/shader_cache.h>
 
 #include <xenos/dev_tools.h>
@@ -327,7 +340,7 @@ ShaderCache::ShaderCache(gpu::Backend& backend, const ShaderCompilerFactory& fac
   tag_ = sync_compiler_ ? sync_compiler_->CacheTag(backend_.GetShaderIL()) : std::string("no-compiler");
   if (!sync_compiler_ || !factory) return;
   if (!threads) {
-    const uint32_t hw = std::thread::hardware_concurrency();
+    const uint32_t hw = XenosUsableProcessors();  // 0.6.5: the processors this process may use (affinity)
     threads = hw > 3 ? hw - 2 : 1;
   }
   for (uint32_t i = 0; i < threads; ++i) {
@@ -901,6 +914,11 @@ struct SpvStore {
   std::unordered_map<uint64_t, std::pair<uint64_t, uint32_t>> index;  // key -> (offset of the words, count)
   uint64_t end = 0;
   std::atomic<uint64_t> hits{0}, misses{0}, stored{0};
+  // 0.6.5 (Gears 3 Vulkan start, on by default now): one append stream for the run (each record was an open + write +
+  // flush + close under the lock, thousands of them on a first start) and a read stream per thread (each hit opened the
+  // file again). The bumped `generation` makes the readers reopen after SetSpirvStore.
+  std::ofstream out;
+  std::atomic<uint32_t> generation{0};
 };
 SpvStore g_spv_store;
 constexpr char kSpvMagic[8] = {'G', 'N', 'S', 'P', 'V', 'S', 'T', '1'};
@@ -934,12 +952,24 @@ bool SpvStoreGet(uint64_t key, std::vector<uint32_t>& words) {
     }
     at = it->second;
   }
-  std::ifstream f(path, std::ios::binary);
+  // a read stream per thread, reopened when the store changes (SetSpirvStore) or after a failed read
+  thread_local struct Reader { std::ifstream f; fs::path path; uint32_t generation = ~0u; } reader;
+  const uint32_t gen = g_spv_store.generation.load(std::memory_order_acquire);
+  if (!reader.f.is_open() || reader.generation != gen || reader.path != path) {
+    reader.f.close();
+    reader.f.clear();
+    reader.f.open(path, std::ios::binary);
+    reader.path = path;
+    reader.generation = gen;
+  }
+  std::ifstream& f = reader.f;
+  f.clear();  // an earlier read past the end (a record written after this stream's view) must not stick
   std::vector<uint32_t> w(at.second);
   uint32_t sum = 0;
   if (!f || !f.seekg(std::streamoff(at.first - 4)) || !f.read(reinterpret_cast<char*>(&sum), 4) ||
       !f.read(reinterpret_cast<char*>(w.data()), std::streamsize(w.size()) * 4) || SpvSum(w) != sum) {
     // review: a damaged record leaves the index, so the module converted now is stored again (a new record)
+    reader.f.close();  // reopened next time (a stream in a failed state, or one opened before the record was flushed)
     std::lock_guard<std::mutex> lock(g_spv_store.mutex);
     auto it = g_spv_store.index.find(key);
     if (it != g_spv_store.index.end() && it->second == at) g_spv_store.index.erase(it);
@@ -953,12 +983,13 @@ bool SpvStoreGet(uint64_t key, std::vector<uint32_t>& words) {
 void SpvStorePut(uint64_t key, const std::vector<uint32_t>& words) {
   std::lock_guard<std::mutex> lock(g_spv_store.mutex);
   if (g_spv_store.path.empty() || words.empty() || g_spv_store.index.count(key)) return;
-  std::ofstream f(g_spv_store.path, std::ios::binary | std::ios::app);
+  std::ofstream& f = g_spv_store.out;
   const uint32_t n = uint32_t(words.size()), sum = SpvSum(words);
-  if (!f || !f.write(reinterpret_cast<const char*>(&key), 8) || !f.write(reinterpret_cast<const char*>(&n), 4) ||
+  if (!f.is_open() || !f.write(reinterpret_cast<const char*>(&key), 8) || !f.write(reinterpret_cast<const char*>(&n), 4) ||
       !f.write(reinterpret_cast<const char*>(&sum), 4) ||
       !f.write(reinterpret_cast<const char*>(words.data()), std::streamsize(n) * 4) || !f.flush()) {
     g_spv_store.path.clear();  // disk full or not writable: no store for the rest of this run
+    f.close();
     return;
   }
   g_spv_store.index[key] = {g_spv_store.end + 16, n};
@@ -970,6 +1001,9 @@ void ShaderCache::SetSpirvStore(const std::filesystem::path& dir, uint32_t switc
   std::lock_guard<std::mutex> lock(g_spv_store.mutex);
   g_spv_store.index.clear();
   g_spv_store.path.clear();
+  g_spv_store.out.close();
+  g_spv_store.out.clear();
+  g_spv_store.generation.fetch_add(1, std::memory_order_release);
   g_spv_store.switches = switches;
   if (dir.empty()) return;
   const fs::path p = dir / "spirv-store.bin";
@@ -1004,20 +1038,393 @@ void ShaderCache::SetSpirvStore(const std::filesystem::path& dir, uint32_t switc
     fs::resize_file(p, good, ec);  // a torn last record
     if (ec) return;
   }
+  g_spv_store.out.open(p, std::ios::binary | std::ios::app);   // stays open for the run (SpvStorePut)
+  if (!g_spv_store.out.is_open()) return;
   g_spv_store.end = good;
   g_spv_store.path = p;
   REXLOG_INFO("gow2_renderer: SPIR-V store {}: {} modules, {:.1f} MB", p.string(), g_spv_store.index.size(), double(good) / 1048576.0);
+}
+// 0.6.5: the DXBC store. The warm-up translated every recorded shader at every start (Gears 3: 9,296 shaders, 14 s of
+// CPU on 14 threads, ~1.0 s before the first frame - job 2006). Each translation is a pure function of the ucode, the
+// decode options, the translation options and this build's translator, so it is kept in <dir>\dxbc-store.bin and read
+// back at the next start. One append-only file: "GNDXBST1", u64 this executable's identity (its size and write time;
+// another executable - an update, a rebuild - starts the file again, so a changed translator never meets an old record
+// and the file never holds more than one build's), then records { u64 key, u32 bytes, u32 0, u64 sum } + the
+// payload (the bytecode and the metadata the renderer reads, DxbcPayload). Key: DxbcStoreKey - the ucode words, the
+// stage, every decode and translation option (and the executable's identity again). Only an index is held in memory; a torn tail is cut off
+// at open; a record whose sum is wrong is not used (and is translated again).
+namespace {
+struct DxbcStore {
+  std::mutex mutex;
+  fs::path path;
+  uint64_t build = 0;  // this executable's identity (size, write time), part of every key
+  std::unordered_map<uint64_t, std::pair<uint64_t, uint32_t>> index;  // key -> (offset of the payload, bytes)
+  uint64_t end = 0;
+  std::atomic<uint64_t> hits{0}, misses{0}, stored{0};
+  std::ofstream out;
+  std::atomic<uint32_t> generation{0};
+};
+DxbcStore g_dxbc_store;
+constexpr char kDxbcMagic[8] = {'G', 'N', 'D', 'X', 'B', 'S', 'T', '1'};
+constexpr uint32_t kDxbcRecordHeader = 24;  // u64 key, u32 bytes, u32 0, u64 sum
+uint64_t DxbcSum(const uint8_t* p, size_t n) {
+  uint64_t h = 0x9E3779B97F4A7C15ull ^ n;
+  size_t i = 0;
+  for (; i + 8 <= n; i += 8) {
+    uint64_t w;
+    std::memcpy(&w, p + i, 8);
+    h = (h ^ w) * 0x100000001B3ull;
+    h ^= h >> 29;
+  }
+  for (; i < n; ++i) h = (h ^ p[i]) * 0x100000001B3ull;
+  return h ^ (h >> 32);
+}
+struct KeyMix {
+  uint64_t h = 1469598103934665603ull;
+  void u8(uint8_t b) { h = (h ^ b) * 1099511628211ull; }
+  void u32(uint32_t v) { for (int i = 0; i < 4; ++i) u8(uint8_t(v >> (8 * i))); }
+  void u64(uint64_t v) { u32(uint32_t(v)); u32(uint32_t(v >> 32)); }
+  void b(bool v) { u8(v ? 1 : 0); }
+  void str(const std::string& s) { u32(uint32_t(s.size())); for (char c : s) u8(uint8_t(c)); }
+};
+// The payload: what the renderer reads from a DxbcTranslation (AdoptDxbc / ApplyMeta), little-endian.
+struct Writer {
+  std::vector<uint8_t> b;
+  void u8(uint8_t v) { b.push_back(v); }
+  void u32(uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(v >> (8 * i))); }
+  void u64(uint64_t v) { u32(uint32_t(v)); u32(uint32_t(v >> 32)); }
+  void words(const std::vector<uint32_t>& w) { u32(uint32_t(w.size())); for (uint32_t x : w) u32(x); }
+};
+struct Reader {
+  const uint8_t* p;
+  size_t n, at = 0;
+  bool ok = true;
+  bool need(size_t k) { if (!ok || n - at < k) ok = false; return ok; }
+  uint8_t u8() { return need(1) ? p[at++] : 0; }
+  uint32_t u32() { uint32_t v = 0; if (need(4)) { for (int i = 0; i < 4; ++i) v |= uint32_t(p[at + i]) << (8 * i); at += 4; } return v; }
+  uint64_t u64() { const uint64_t lo = u32(); return lo | (uint64_t(u32()) << 32); }
+  bool words(std::vector<uint32_t>& w) {
+    const uint32_t c = u32();
+    if (!need(size_t(c) * 4)) return false;
+    w.resize(c);
+    for (uint32_t& x : w) x = u32();
+    return ok;
+  }
+};
+std::vector<uint8_t> DxbcPayload(const dxbc_gen::DxbcTranslation& dt) {
+  Writer w;
+  const hlsl::Translation& m = dt.meta;
+  w.u8(dt.writes_depth ? 1 : 0);
+  w.u8(m.uses_pc_loop ? 1 : 0);
+  w.u8(m.uses_shared_memory ? 1 : 0);
+  w.u8(m.float_constants_relative ? 1 : 0);
+  w.u8(m.memexport ? 1 : 0);
+  w.u32(m.texture_slots_2d);
+  w.u32(m.texture_slots_3d);
+  w.u32(m.texture_slots_cube);
+  w.u32(m.float_constants);
+  w.u32(m.float_constants_low);
+  w.u32(m.float_constants_high);
+  for (uint64_t r : m.float_constants_read) w.u64(r);
+  w.words(m.memexport_stream_constants);
+  w.u32(uint32_t(m.simplifications.size()));  // only the count is used (GuestShader::simplifications)
+  w.words(dt.srv_registers);
+  w.words(dt.sampler_registers);
+  w.u32(uint32_t(dt.bytecode.size()));
+  w.b.insert(w.b.end(), dt.bytecode.begin(), dt.bytecode.end());
+  return std::move(w.b);
+}
+bool DxbcFromPayload(const uint8_t* p, size_t n, dxbc_gen::DxbcTranslation& dt) {
+  Reader r{p, n};
+  hlsl::Translation& m = dt.meta;
+  dt.writes_depth = r.u8() != 0;
+  m.uses_pc_loop = r.u8() != 0;
+  m.uses_shared_memory = r.u8() != 0;
+  m.float_constants_relative = r.u8() != 0;
+  m.memexport = r.u8() != 0;
+  m.texture_slots_2d = r.u32();
+  m.texture_slots_3d = r.u32();
+  m.texture_slots_cube = r.u32();
+  m.float_constants = r.u32();
+  m.float_constants_low = r.u32();
+  m.float_constants_high = r.u32();
+  for (uint64_t& x : m.float_constants_read) x = r.u64();
+  if (!r.words(m.memexport_stream_constants)) return false;
+  const uint32_t simplifications = r.u32();
+  if (!r.ok || simplifications > 4096) return false;
+  m.simplifications.assign(simplifications, hlsl::Simplification{"stored", ""});
+  if (!r.words(dt.srv_registers) || !r.words(dt.sampler_registers)) return false;
+  const uint32_t bytes = r.u32();
+  if (!r.need(bytes) || bytes < 32) return false;
+  dt.bytecode.assign(p + r.at, p + r.at + bytes);
+  r.at += bytes;
+  if (r.at != n) return false;  // the whole payload, nothing left over
+  dt.ok = true;
+  return true;
+}
+bool DxbcStoreGet(uint64_t key, dxbc_gen::DxbcTranslation& dt) {
+  std::pair<uint64_t, uint32_t> at;
+  fs::path path;
+  {
+    std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
+    if (g_dxbc_store.path.empty()) return false;
+    path = g_dxbc_store.path;
+    auto it = g_dxbc_store.index.find(key);
+    if (it == g_dxbc_store.index.end()) {
+      ++g_dxbc_store.misses;
+      return false;
+    }
+    at = it->second;
+  }
+  thread_local struct StoreReader { std::ifstream f; fs::path path; uint32_t generation = ~0u; std::vector<uint8_t> buf; } reader;
+  const uint32_t gen = g_dxbc_store.generation.load(std::memory_order_acquire);
+  if (!reader.f.is_open() || reader.generation != gen || reader.path != path) {
+    reader.f.close();
+    reader.f.clear();
+    reader.f.open(path, std::ios::binary);
+    reader.path = path;
+    reader.generation = gen;
+  }
+  std::ifstream& f = reader.f;
+  f.clear();
+  uint64_t sum = 0;
+  reader.buf.resize(at.second);
+  if (!f || !f.seekg(std::streamoff(at.first - 8)) || !f.read(reinterpret_cast<char*>(&sum), 8) ||
+      !f.read(reinterpret_cast<char*>(reader.buf.data()), std::streamsize(at.second)) ||
+      DxbcSum(reader.buf.data(), reader.buf.size()) != sum ||
+      !DxbcFromPayload(reader.buf.data(), reader.buf.size(), dt)) {
+    reader.f.close();
+    std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
+    auto it = g_dxbc_store.index.find(key);
+    if (it != g_dxbc_store.index.end() && it->second == at) g_dxbc_store.index.erase(it);
+    ++g_dxbc_store.misses;
+    dt = dxbc_gen::DxbcTranslation{};
+    return false;
+  }
+  ++g_dxbc_store.hits;
+  return true;
+}
+void DxbcStorePut(uint64_t key, const dxbc_gen::DxbcTranslation& dt) {
+  if (!dt.ok || dt.bytecode.empty() || dt.bytecode.size() > (32u << 20)) return;  // only good translations (a failure takes the HLSL path each time)
+  {
+    std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
+    if (g_dxbc_store.path.empty() || g_dxbc_store.index.count(key)) return;
+  }
+  const std::vector<uint8_t> payload = DxbcPayload(dt);  // built outside the lock
+  const uint64_t sum = DxbcSum(payload.data(), payload.size());
+  const uint32_t bytes = uint32_t(payload.size()), zero = 0;
+  std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
+  if (g_dxbc_store.path.empty() || g_dxbc_store.index.count(key)) return;
+  std::ofstream& f = g_dxbc_store.out;
+  if (!f.is_open() || !f.write(reinterpret_cast<const char*>(&key), 8) || !f.write(reinterpret_cast<const char*>(&bytes), 4) ||
+      !f.write(reinterpret_cast<const char*>(&zero), 4) || !f.write(reinterpret_cast<const char*>(&sum), 8) ||
+      !f.write(reinterpret_cast<const char*>(payload.data()), std::streamsize(bytes)) || !f.flush()) {
+    g_dxbc_store.path.clear();  // disk full or not writable: no store for the rest of this run
+    f.close();
+    return;
+  }
+  g_dxbc_store.index[key] = {g_dxbc_store.end + kDxbcRecordHeader, bytes};
+  g_dxbc_store.end += kDxbcRecordHeader + bytes;
+  ++g_dxbc_store.stored;
+}
+// This executable's size and last write time: a rebuilt (or updated) game gets new keys.
+uint64_t ExecutableIdentity() {
+  KeyMix k;
+#ifdef _WIN32
+  wchar_t name[32768];
+  const DWORD n = GetModuleFileNameW(nullptr, name, DWORD(std::size(name)));
+  if (n == 0 || n >= std::size(name)) return 0;
+  std::error_code ec;
+  const fs::path exe(std::wstring(name, n));
+  const uint64_t size = uint64_t(fs::file_size(exe, ec));
+  if (ec) return 0;
+  const auto when = fs::last_write_time(exe, ec);
+  if (ec) return 0;
+  k.u64(size);
+  k.u64(uint64_t(when.time_since_epoch().count()));
+  return k.h | 1;  // never 0 (0 = unknown: no store)
+#else
+  return 0;
+#endif
+}
+}  // namespace
+void ShaderCache::SetDxbcStore(const std::filesystem::path& dir) {
+  std::lock_guard<std::mutex> lock(g_dxbc_store.mutex);
+  g_dxbc_store.index.clear();
+  g_dxbc_store.path.clear();
+  g_dxbc_store.out.close();
+  g_dxbc_store.out.clear();
+  g_dxbc_store.generation.fetch_add(1, std::memory_order_release);
+  if (dir.empty()) return;
+  g_dxbc_store.build = ExecutableIdentity();
+  if (!g_dxbc_store.build) {
+    REXLOG_WARN("gow2_renderer: DXBC store off (this executable's size / time could not be read)");
+    return;
+  }
+  const fs::path p = dir / "dxbc-store.bin";
+  std::error_code ec;
+  uint64_t size = fs::exists(p, ec) ? uint64_t(fs::file_size(p, ec)) : 0;
+  uint64_t good = 0;
+  bool other_build = false;
+  if (size >= 16) {
+    std::ifstream f(p, std::ios::binary);
+    char magic[8] = {};
+    uint64_t build = 0;
+    if (f.read(magic, 8) && std::memcmp(magic, kDxbcMagic, 8) == 0 && f.read(reinterpret_cast<char*>(&build), 8) &&
+        build != g_dxbc_store.build) {
+      other_build = true;  // an earlier version's translations: none of them can be asked for
+    } else if (f && std::memcmp(magic, kDxbcMagic, 8) == 0) {
+      good = 16;
+      for (;;) {
+        uint64_t key = 0, sum = 0;
+        uint32_t bytes = 0, zero = 0;
+        if (!f.read(reinterpret_cast<char*>(&key), 8) || !f.read(reinterpret_cast<char*>(&bytes), 4) ||
+            !f.read(reinterpret_cast<char*>(&zero), 4) || !f.read(reinterpret_cast<char*>(&sum), 8))
+          break;
+        const uint64_t next = good + kDxbcRecordHeader + bytes;
+        if (zero != 0 || bytes < 64 || bytes > (64u << 20) || next > size) break;
+        g_dxbc_store.index[key] = {good + kDxbcRecordHeader, bytes};
+        good = next;
+        if (!f.seekg(std::streamoff(good))) break;
+      }
+    }
+  }
+  if (good == 0) {  // new, another build's, or not ours (an unreadable one is kept beside it)
+    if (size && !other_build) fs::rename(p, dir / "dxbc-store.unreadable.bin", ec);
+    g_dxbc_store.index.clear();
+    std::ofstream f(p, std::ios::binary | std::ios::trunc);
+    if (!f.write(kDxbcMagic, 8) || !f.write(reinterpret_cast<const char*>(&g_dxbc_store.build), 8)) {
+      REXLOG_WARN("gow2_renderer: DXBC store off: {} could not be written", rex::path_to_utf8(p));
+      return;
+    }
+    good = 16;
+  } else if (good < size) {
+    fs::resize_file(p, good, ec);  // a torn last record
+    if (ec) {
+      REXLOG_WARN("gow2_renderer: DXBC store off: {} could not be cut to its last whole record", rex::path_to_utf8(p));
+      return;
+    }
+  }
+  g_dxbc_store.out.open(p, std::ios::binary | std::ios::app);
+  if (!g_dxbc_store.out.is_open()) {
+    REXLOG_WARN("gow2_renderer: DXBC store off: {} could not be opened for writing", rex::path_to_utf8(p));
+    return;
+  }
+  g_dxbc_store.end = good;
+  g_dxbc_store.path = p;
+  REXLOG_INFO("gow2_renderer: DXBC store {}: {} records, {:.1f} MB{}", rex::path_to_utf8(p), g_dxbc_store.index.size(),
+              double(good) / 1048576.0, other_build ? " (started again: the last one was another build's)" : "");
+}
+uint64_t ShaderCache::DxbcStoreKey(const uint32_t* dwords, size_t dword_count, bool is_vertex,
+                                   const ucode::DecodeOptions& d, const hlsl::HlslOptions& o) {
+  if (!dwords || !dword_count || !g_dxbc_store.build) return 0;
+  KeyMix k;
+  k.u32(1);  // the key's own layout (bump when the list below changes)
+  k.u64(g_dxbc_store.build);
+  k.b(is_vertex);
+  k.b(d.canary_tfetch1d_two_components);
+  k.b(d.canary_scalar_operand_z);
+  // every HlslOptions field (hlsl.h: a new field must be added here too)
+  k.u32(uint32_t(sizeof(hlsl::HlslOptions)));
+  k.b(o.dxbc_loop_only_if_needed); k.b(o.dxbc_canary_minmax); k.u32(o.dxbc_salt); k.b(o.dxbc_direct_operands);
+  k.b(o.dxbc_slim_prologue); k.b(o.kill_as_demote); k.str(o.entry); k.u32(o.tess_quad_segments);
+  k.b(o.compact_float_constants); k.b(o.tex_sign_by_swizzle); k.b(o.canary_r21); k.b(o.tex_num_format);
+  k.b(o.vertex_index_clamp); k.b(o.canary_tfetch1d_xy); k.b(o.mulsc_round_toward_zero); k.b(o.memexport_f16_nan_zero);
+  k.b(o.spirv_precise); k.b(o.ps_refactoring_allowed); k.b(o.tex_post_constants); k.b(o.tex_post_affine);
+  k.b(o.dxbc_mul_min_abs); k.b(o.dxbc_structured_jumps); k.b(o.dxbc_mul_movc); k.b(o.dxbc_short_r21);
+  k.b(o.dxbc_short_swap); k.b(o.dxbc_short_degamma); k.b(o.dxbc_coalesce_moves); k.b(o.dxbc_dead_stores);
+  k.b(o.dxbc_vertex_words_vector); k.b(o.dxbc_fold_modifiers); k.b(o.dxbc_merge_movs); k.b(o.clamp_ui_output);
+  k.b(o.native_hdr_linear); k.b(o.native_hdr_ui); k.b(o.native_hdr_modulation); k.b(o.native_hdr_modulation_x2);
+  k.b(o.native_hdr_premultiplied); k.b(o.native_hdr_filter);
+  k.u64(uint64_t(dword_count));
+  for (size_t i = 0; i < dword_count; ++i) k.u32(dwords[i]);
+  return k.h | 1;  // never 0 (0 = not stored)
+}
+void ShaderCache::DxbcStoreCounts(uint64_t* hits, uint64_t* misses, uint64_t* stored) {
+  if (hits) *hits = g_dxbc_store.hits.load();
+  if (misses) *misses = g_dxbc_store.misses.load();
+  if (stored) *stored = g_dxbc_store.stored.load();
 }
 static std::atomic<bool> g_spv_async{false};
 void ShaderCache::SetSpirvAsync(bool on) { g_spv_async.store(on); }
 bool ShaderCache::SpirvAsync() { return g_spv_async.load(); }
 // (spv_pending, 0.6.2: given and async on -> a store miss is NOT converted here; the bytecode stays DXBC and
 // *spv_pending is set, for AdoptDxbc to queue the conversion. Null = convert here, as always.)
+// Job 1962 (Gears 3 Vulkan warm-up 34 s with every module a store hit, D3D12 8.4 s for the same shaders): where the time
+// goes, summed over all threads (thread time, not wall time), logged at the end of the warm-up.
+struct WarmSplit {
+  std::atomic<uint64_t> decode_ns{0}, dxbc_ns{0}, key_ns{0}, get_ns{0}, convert_ns{0}, optimise_ns{0}, put_ns{0}, copy_ns{0};
+  std::atomic<uint64_t> dxbc_bytes{0}, spv_bytes{0}, items{0}, hits{0}, converted{0};
+  std::atomic<uint64_t> dxbc_key_ns{0}, dxbc_read_ns{0}, dxbc_put_ns{0}, dxbc_hits{0};  // 0.6.5: the DXBC store
+  void Reset() {
+    for (auto* a : {&decode_ns, &dxbc_ns, &key_ns, &get_ns, &convert_ns, &optimise_ns, &put_ns, &copy_ns, &dxbc_bytes, &spv_bytes,
+                    &items, &hits, &converted, &dxbc_key_ns, &dxbc_read_ns, &dxbc_put_ns, &dxbc_hits})
+      a->store(0);
+  }
+};
+static WarmSplit g_warm_split;
+// Job 1969: the same DXBC work took 457 s of thread time on Vulkan and 118 s on D3D12 (same 233 MB out). These tell
+// "slower" from "starved": the workers' own CPU time, the whole process's and the whole system's busy time, over the
+// warm-up's translation (FILETIME = 100 ns units; windows.h is included at the top of the file for these).
+#ifdef _WIN32
+static uint64_t Ft(const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; }
+static uint64_t ThreadCpu100ns(uint64_t* kernel = nullptr) {
+  FILETIME c, e, k, u;
+  if (!GetThreadTimes(GetCurrentThread(), &c, &e, &k, &u)) return 0;
+  if (kernel) *kernel = Ft(k);
+  return Ft(k) + Ft(u);
+}
+// page faults so far / peak working set / private bytes, MB (0 when unknown)
+static void ProcessMemory(uint64_t* faults, double* peak_ws_mb, double* private_mb) {
+  PROCESS_MEMORY_COUNTERS_EX m{};
+  m.cb = sizeof(m);
+  if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&m), sizeof(m))) return;
+  *faults = m.PageFaultCount, *peak_ws_mb = double(m.PeakWorkingSetSize) / 1048576.0, *private_mb = double(m.PrivateUsage) / 1048576.0;
+}
+static uint64_t ProcessCpu100ns() {
+  FILETIME c, e, k, u;
+  return GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u) ? Ft(k) + Ft(u) : 0;
+}
+static bool SystemTimes100ns(uint64_t* idle, uint64_t* total) {   // total = kernel (includes idle) + user
+  FILETIME i, k, u;
+  if (!GetSystemTimes(&i, &k, &u)) return false;
+  *idle = Ft(i), *total = Ft(k) + Ft(u);
+  return true;
+}
+#else
+static uint64_t ThreadCpu100ns(uint64_t* kernel = nullptr) { if (kernel) *kernel = 0; return 0; }
+static void ProcessMemory(uint64_t*, double*, double*) {}
+static uint64_t ProcessCpu100ns() { return 0; }
+static bool SystemTimes100ns(uint64_t*, uint64_t*) { return false; }
+#endif
+static std::atomic<uint64_t> g_warm_worker_cpu{0}, g_warm_worker_kernel{0};
+static thread_local bool t_warm_split = false;   // set by the warm-up's workers only
+static uint64_t NsSince(std::chrono::steady_clock::time_point t0) {
+  return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+}
+// dxbc_key != 0 (ShaderCache::DxbcStoreKey): the translation comes from the DXBC store when it holds it, and a new one
+// goes into it (0.6.5).
 static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program, const hlsl::HlslOptions& options,
-                                                  bool spirv, bool* spv_pending = nullptr) {
-  dxbc_gen::DxbcTranslation dt = dxbc_gen::TranslateToDxbc(program, options);
+                                                  bool spirv, bool* spv_pending = nullptr, uint64_t dxbc_key = 0) {
+  const bool split = t_warm_split;
+  auto tq = std::chrono::steady_clock::now();
+  dxbc_gen::DxbcTranslation dt;
+  const bool from_store = dxbc_key && DxbcStoreGet(dxbc_key, dt);
+  if (from_store) {
+    if (split) g_warm_split.dxbc_read_ns += NsSince(tq), ++g_warm_split.dxbc_hits, g_warm_split.dxbc_bytes += dt.bytecode.size();
+  } else {
+    dt = dxbc_gen::TranslateToDxbc(program, options);
+    if (split) g_warm_split.dxbc_ns += NsSince(tq), g_warm_split.dxbc_bytes += dt.bytecode.size();
+    if (dxbc_key && dt.ok) {
+      tq = std::chrono::steady_clock::now();
+      DxbcStorePut(dxbc_key, dt);
+      if (split) g_warm_split.dxbc_put_ns += NsSince(tq);
+    }
+  }
   if (dt.ok && spirv) {
+    tq = std::chrono::steady_clock::now();
     const uint64_t store_key = SpvKey(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise, g_spv_store.switches);
+    if (split) g_warm_split.key_ns += NsSince(tq);
     dxbc_spirv::SpirvResult sv;
     if (spv_pending && g_spv_async.load()) {
       if (SpvStoreGet(store_key, sv.words)) {
@@ -1029,16 +1436,29 @@ static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program,
       return dt;
     }
     // (A store hit skips the conversion, so patch 0102's discard counts only cover shaders converted in this run.)
+    tq = std::chrono::steady_clock::now();
     const bool stored = SpvStoreGet(store_key, sv.words);  // 0.6.1: converted in an earlier run
+    if (split) g_warm_split.get_ns += NsSince(tq), g_warm_split.hits += stored ? 1 : 0;
     if (stored) sv.ok = true;
-    else sv = dxbc_spirv::ConvertDxbcToSpirv(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise);
+    else {
+      tq = std::chrono::steady_clock::now();
+      sv = dxbc_spirv::ConvertDxbcToSpirv(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise);
+      if (split) g_warm_split.convert_ns += NsSince(tq), ++g_warm_split.converted;
+    }
     if (sv.ok) {
       if (!stored) {
+        tq = std::chrono::steady_clock::now();
         OptimiseSpirv(sv.words);  // 0.6.1
+        if (split) g_warm_split.optimise_ns += NsSince(tq);
+        tq = std::chrono::steady_clock::now();
         SpvStorePut(store_key, sv.words);
+        if (split) g_warm_split.put_ns += NsSince(tq);
       }
+      if (split) g_warm_split.spv_bytes += sv.words.size() * 4;
+      tq = std::chrono::steady_clock::now();
       dt.bytecode.resize(sv.words.size() * 4);
       std::memcpy(dt.bytecode.data(), sv.words.data(), dt.bytecode.size());
+      if (split) g_warm_split.copy_ns += NsSince(tq);
     } else {
       dt.ok = false;
       dt.unsupported = "SPIR-V conversion: " + sv.error;
@@ -1148,14 +1568,16 @@ void ShaderCache::QueueSpirv(GuestShader& s, const std::vector<uint8_t>& dxbc, b
   {
     std::lock_guard<std::mutex> lock(mutex_);
     (warm ? spv_warm_queue_ : spv_queue_).push_back(std::move(job));
-    if (spv_workers_.empty()) {
-      const uint32_t hw = std::thread::hardware_concurrency();
-      const uint32_t n = hw > 3 ? hw - 2 : 1;
-      for (uint32_t i = 0; i < n; ++i) spv_workers_.emplace_back([this] { SpvWorker(); });
-      REXLOG_INFO("gow2_renderer: SPIR-V conversion on {} background thread(s)", n);
-    }
+    if (!warm || !spv_hold_) StartSpvWorkersLocked();   // job 1991: warm jobs wait while the warm-up runs
   }
   spv_wake_.notify_one();
+}
+void ShaderCache::StartSpvWorkersLocked() {
+  if (!spv_workers_.empty()) return;
+  const uint32_t hw = XenosUsableProcessors();  // 0.6.5 (affinity)
+  const uint32_t n = hw > 3 ? hw - 2 : 1;
+  for (uint32_t i = 0; i < n; ++i) spv_workers_.emplace_back([this] { SpvWorker(); });
+  REXLOG_INFO("gow2_renderer: SPIR-V conversion on {} background thread(s)", n);
 }
 void ShaderCache::Promote(const GuestShader& s) {
   if (s.state != ShaderState::kPending || s.spv_promoted) return;
@@ -1167,6 +1589,7 @@ void ShaderCache::Promote(const GuestShader& s) {
       std::unique_ptr<Job> job = std::move(*it);
       q->erase(it);
       spv_queue_.push_front(std::move(job));
+      StartSpvWorkersLocked();   // review r1991: a promoted job never waits for the warm-up's hold
       spv_wake_.notify_one();
       return;
     }
@@ -1272,7 +1695,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
   r.list_ms = MsSince(t0);
   const auto t1 = std::chrono::steady_clock::now();
   {
-    const uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
+    const uint32_t hw = std::max(1u, XenosUsableProcessors());  // 0.6.5 (affinity)
     const uint32_t n = uint32_t(std::min<size_t>(std::min(8u, hw), std::max<size_t>(1, (items.size() - first_file_item) / 64)));
     std::atomic<size_t> next{first_file_item};
     auto reader = [&]() {
@@ -1324,15 +1747,39 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     uint32_t spv_flags = 0;  // 0.6.2: bit 2 = SPIR-V still to be made (async), bit 0 precise, bit 1 warm
   };
   std::vector<Made> made(dxbc_path ? items.size() : 0);
+  // 0.6.5 (job 1975, Vulkan 4x slower): with the SPIR-V store every result (1.2 GB of SPIR-V for Gears 3) was held until
+  // all workers finished; the PC sat 29% busy, the workers' kernel time doubled and their DXBC time grew 3.5x while the
+  // same work without SPIR-V (D3D12, or async) took 8.4 s. Now this thread takes each result into the cache, in file
+  // order, as soon as it is ready (the driver's module is made and the SPIR-V freed at once) while the workers go on.
+  std::unique_ptr<std::atomic<uint8_t>[]> ready(dxbc_path ? new std::atomic<uint8_t>[items.size()]() : nullptr);
+  std::vector<uint8_t> adopted(dxbc_path ? items.size() : 0, 0);
+  double stream_make_ms = 0.0;
   const auto t2 = std::chrono::steady_clock::now();
   if (dxbc_path) {
-    const uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
+    const uint32_t hw = std::max(1u, XenosUsableProcessors());  // 0.6.5 (affinity)
     const uint32_t n = uint32_t(std::min<size_t>(std::max(1u, hw > 2 ? hw - 2 : 1u), std::max<size_t>(1, items.size() / 32)));
     const ucode::DecodeOptions decode_options = DecodeOptions();
     std::atomic<size_t> next{0};
+    g_warm_split.Reset();
+    g_warm_worker_cpu = 0;
+    g_warm_worker_kernel = 0;
+    uint64_t faults0 = 0;
+    double peak0 = 0, priv0 = 0;
+    ProcessMemory(&faults0, &peak0, &priv0);
+    const uint64_t proc0 = ProcessCpu100ns();
+    uint64_t sys_idle0 = 0, sys_total0 = 0;
+    const bool sys_ok = SystemTimes100ns(&sys_idle0, &sys_total0);
+    const auto wall0 = std::chrono::steady_clock::now();
     auto worker = [&]() {
+      uint64_t kern0 = 0;
+      const uint64_t cpu0 = ThreadCpu100ns(&kern0);
+      t_warm_split = true;
       for (size_t i; (i = next.fetch_add(1)) < items.size();) {
         const Item& it = items[i];
+        struct Done {   // every path marks the item ready for the adopting thread
+          std::atomic<uint8_t>& r;
+          ~Done() { r.store(1, std::memory_order_release); r.notify_one(); }
+        } done{ready[i]};
         if (it.dwords.empty()) continue;
         if (!HlslOverride(it.hash, it.is_vertex).empty()) continue;  // built on first use, from its replacement
         if (!it.is_vertex && PcssOn() && PcssShader(it.hash)) continue;  // built on first use, with the PCSS patch
@@ -1341,20 +1788,87 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
         s->ucode_hash = it.hash;
         s->is_vertex = it.is_vertex;
         s->drawn = true;  // patch 0045: recorded in an earlier session = drawn before
+        const auto td = std::chrono::steady_clock::now();
         const ucode::Program program = ucode::Decode(it.dwords.data(), it.dwords.size(), it.is_vertex, decode_options);
         Analyse(program, *s);
+        g_warm_split.decode_ns += NsSince(td);
+        ++g_warm_split.items;
         const hlsl::HlslOptions wo = TranslateOptions(it.is_vertex, 0, it.dwords.data(), it.dwords.size());
+        const auto tk = std::chrono::steady_clock::now();
+        const uint64_t dxbc_key = DxbcStoreKey(it.dwords.data(), it.dwords.size(), it.is_vertex, decode_options, wo);
+        g_warm_split.dxbc_key_ns += NsSince(tk);
         bool pending = false;
-        made[i].dt = TranslateDxbcFor(program, wo, spirv, &pending);
+        made[i].dt = TranslateDxbcFor(program, wo, spirv, &pending, dxbc_key);
         made[i].spv_flags = (pending ? 4u : 0u) | (wo.spirv_precise ? 1u : 0u) | 2u;
         made[i].s = std::move(s);
         made[i].ms = MsSince(tm);
       }
+      uint64_t kern1 = 0;
+      g_warm_worker_cpu += ThreadCpu100ns(&kern1) - cpu0;
+      g_warm_worker_kernel += kern1 - kern0;
     };
     std::vector<std::thread> threads;
-    for (uint32_t i = 1; i < n; ++i) threads.emplace_back(worker);
-    worker();
+    {   // job 1991: async mode's background SPIR-V threads started during this adoption and ran beside the warm-up's
+        // workers (PC 100% busy, 40 s of game CPU outside them, 9.0 s vs 8.4 s) - they wait for the warm-up now
+      std::lock_guard<std::mutex> lock(mutex_);
+      spv_hold_ = true;
+    }
+    for (uint32_t i = 0; i < n; ++i) threads.emplace_back(worker);
+    {   // this thread: adopt in file order as results arrive (only the DXBC results; the rest after the join, as before)
+      const auto tm0 = std::chrono::steady_clock::now();
+      for (size_t i = 0; i < items.size(); ++i) {
+        ready[i].wait(0, std::memory_order_acquire);
+        Item& it = items[i];
+        if (it.dwords.empty() || !made[i].s || !made[i].dt.ok || shaders_[it.is_vertex ? 1 : 0].count(it.hash)) continue;
+        ++stats_.lookups;
+        ++stats_.translated;
+        stats_.translate_ms += made[i].ms;
+        const GuestShader& gs = AdoptDxbc(it.hash, std::move(made[i].s), made[i].dt.bytecode, made[i].dt.meta,
+                                          (made[i].spv_flags & 4u) != 0, made[i].spv_flags & 3u);
+        if (gs.state == ShaderState::kFailed) ++r.failed;
+        if (gs.state == ShaderState::kPending) ++r.queued;
+        made[i] = Made{};
+        adopted[i] = 1;
+      }
+      stream_make_ms = MsSince(tm0);
+    }
     for (auto& t : threads) t.join();
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      spv_hold_ = false;
+      if (!spv_warm_queue_.empty() || !spv_queue_.empty()) StartSpvWorkersLocked();
+    }
+    spv_wake_.notify_all();
+    t_warm_split = false;
+    REXLOG_INFO("gow2_renderer: shader warm-up: adopted while translating, {:.0f} ms", stream_make_ms);
+    {
+      const double wall_ms = MsSince(wall0);
+      const double proc_ms = double(ProcessCpu100ns() - proc0) / 1e4;
+      uint64_t sys_idle1 = 0, sys_total1 = 0;
+      double busy_pct = -1.0;
+      if (sys_ok && SystemTimes100ns(&sys_idle1, &sys_total1) && sys_total1 > sys_total0)
+        busy_pct = 100.0 * (1.0 - double(sys_idle1 - sys_idle0) / double(sys_total1 - sys_total0));
+      uint64_t faults1 = 0;
+      double peak1 = 0, priv1 = 0;
+      ProcessMemory(&faults1, &peak1, &priv1);
+      REXLOG_INFO("gow2_renderer: shader warm-up CPU: {:.0f} ms wall, the {} workers {:.0f} ms CPU ({:.0f} ms of it in the "
+                  "kernel), the whole game {:.0f} ms CPU ({:.0f} ms outside the workers), the PC {:.0f}% busy ({} logical "
+                  "CPUs) | page faults {} | private memory {:.0f} -> {:.0f} MB, peak working set {:.0f} MB",
+                  wall_ms, n, double(g_warm_worker_cpu.load()) / 1e4, double(g_warm_worker_kernel.load()) / 1e4, proc_ms,
+                  proc_ms - double(g_warm_worker_cpu.load()) / 1e4, busy_pct, std::thread::hardware_concurrency(),
+                  faults1 - faults0, priv0, priv1, peak1);
+    }
+    const auto ms = [](const std::atomic<uint64_t>& a) { return double(a.load()) / 1e6; };
+    REXLOG_INFO("gow2_renderer: shader warm-up split ({} threads, {} shaders, thread ms summed): decode+analyse {:.0f}, "
+                "DXBC {:.0f} ({:.1f} MB), store key {:.0f}, store read {:.0f} ({} hits), SPIR-V convert {:.0f} ({}), "
+                "optimise {:.0f}, store write {:.0f}, SPIR-V copy {:.0f}; SPIR-V {:.1f} MB | DXBC store: key {:.0f}, "
+                "read {:.0f} ({} hits), write {:.0f}",
+                n, g_warm_split.items.load(), ms(g_warm_split.decode_ns), ms(g_warm_split.dxbc_ns),
+                double(g_warm_split.dxbc_bytes.load()) / 1048576.0, ms(g_warm_split.key_ns), ms(g_warm_split.get_ns),
+                g_warm_split.hits.load(), ms(g_warm_split.convert_ns), g_warm_split.converted.load(),
+                ms(g_warm_split.optimise_ns), ms(g_warm_split.put_ns), ms(g_warm_split.copy_ns),
+                double(g_warm_split.spv_bytes.load()) / 1048576.0, ms(g_warm_split.dxbc_key_ns), ms(g_warm_split.dxbc_read_ns),
+                g_warm_split.dxbc_hits.load(), ms(g_warm_split.dxbc_put_ns));
   }
   r.translate_ms = MsSince(t2);
   const auto t3 = std::chrono::steady_clock::now();
@@ -1380,7 +1894,9 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kFilterLinear,true);
       GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kFilterPremultiplied,true);
     }
-    if (dxbc_path && made[i].s && made[i].dt.ok && !shaders_[it.is_vertex ? 1 : 0].count(it.hash)) {
+    if (dxbc_path && adopted[i]) {
+      // taken while the workers ran (above)
+    } else if (dxbc_path && made[i].s && made[i].dt.ok && !shaders_[it.is_vertex ? 1 : 0].count(it.hash)) {
       ++stats_.lookups;
       ++stats_.translated;
       stats_.translate_ms += made[i].ms;
@@ -1398,7 +1914,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     }
     std::vector<uint32_t>().swap(it.dwords);
   }
-  r.make_ms = MsSince(t3);
+  r.make_ms = MsSince(t3);  // (the streaming adoption is inside translate_ms; its own time is logged above)
   r.ms = MsSince(t0);
   return r;
 }
@@ -1674,7 +2190,8 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
   const bool spirv = backend_.GetShaderIL() == gpu::ShaderIL::kSpirv;
   if (dxbc_ && override_hlsl.empty() && !pcss && !hlsl_path && (backend_.GetShaderIL() == gpu::ShaderIL::kDxil || spirv)) {
     bool spv_pending = false;  // 0.6.2: on Vulkan a store miss is converted on a background thread, not here
-    dxbc_gen::DxbcTranslation dt = TranslateDxbcFor(program, options, spirv, &spv_pending);  // patch 0084: shared with the warm-up
+    dxbc_gen::DxbcTranslation dt = TranslateDxbcFor(program, options, spirv, &spv_pending,   // patch 0084: shared with the warm-up
+        DxbcStoreKey(dwords, dword_count, is_vertex, decode_options, options));             // 0.6.5: the DXBC store
     stats_.translate_ms += MsSince(t0);
     ++stats_.translated;
     if (dt.ok) return AdoptDxbc(key, std::move(s), dt.bytecode, dt.meta, spv_pending, options.spirv_precise ? 1u : 0u);

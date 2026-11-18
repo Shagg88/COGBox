@@ -373,3 +373,121 @@ TEST_CASE("pm4: own swap (5C-2) - XE_SWAP not handed back, front buffer and size
   CHECK(host_regs[0x2000] == 0x1234u);
   CHECK(p.GetStats().swaps == 1);
 }
+
+TEST_CASE("pm4: a memory wait for a value this stream wrote passes once the write has landed, even if a late write "
+          "replaced it (Judgment's freeze back to the main menu)", "[pm4]") {
+  std::fill(g_mem.begin(), g_mem.end(), 0);
+  uint32_t host_regs[0x5003] = {};
+  std::vector<std::pair<uint32_t, std::vector<uint8_t>>> queued;
+  auto run_queued = [&] {
+    for (auto& [a, b] : queued) std::memcpy(g_mem.data() + a, b.data(), b.size());
+    queued.clear();
+  };
+  pm::Environment env;
+  env.translate = [](uint32_t a) -> uint8_t* { return a < g_mem.size() ? g_mem.data() + a : nullptr; };
+  env.write_register = [&](uint32_t i, uint32_t v) { if (i < 0x5003) host_regs[i] = v; };
+  env.read_register = [&](uint32_t i) { return i < 0x5003 ? host_regs[i] : 0u; };
+  env.execute_packet = [&](const uint32_t*, uint32_t) {};
+  env.running = [] { return true; };
+  env.vsync = [] { return false; };
+  env.memory_wait_limit_ms = 50;  // bounds the test if the wait spins
+  // The renderer thread: lands the queued marker, then an older occlusion query's late answer (126 samples, little-endian)
+  // overwrites the report's ZPass lane, as our strict queries could.
+  env.release = [&] {
+    run_queued();
+    const uint8_t answer[4] = {126, 0, 0, 0};
+    std::memcpy(g_mem.data() + 0x5000, answer, 4);
+  };
+  env.defer_write = [&](uint32_t a, const void* b, uint32_t n) {
+    auto* p = static_cast<const uint8_t*>(b);
+    queued.push_back({a, std::vector<uint8_t>(p, p + n)});
+    return true;
+  };
+  pm::Processor p(std::move(env), pm::Callbacks{});
+  // D3D re-marks the report pending (0xFFFFFEED, 8in32 swap) and waits for the marker before its next ZPD.
+  const uint32_t ring[] = {Type3(pm::kMemWrite, 2), 0x5002, 0xFFFFFEED,
+                           Type3(pm::kWaitRegMem, 5), 0x13, 0x5002, 0xFFFFFEED, 0xFFFFFFFF, 0x100};
+  for (size_t i = 0; i < std::size(ring); ++i) Put(0x7000 + uint32_t(i) * 4, ring[i]);
+  p.ExecutePrimary(0x7000, 64, 0, uint32_t(std::size(ring)));
+  CHECK(p.GetStats().wait_timeouts == 0);
+  CHECK(p.GetStats().waits_met_by_own_write == 1);
+  CHECK(g_mem[0x5000] == 126);  // the answer stays: the game reads what it would have read before
+
+  // A wait for a value this stream never wrote there still spins (and here gives up at the limit).
+  const uint32_t ring2[] = {Type3(pm::kWaitRegMem, 5), 0x13, 0x5002, 0x12345678, 0xFFFFFFFF, 0x100};
+  for (size_t i = 0; i < std::size(ring2); ++i) Put(0x7000 + uint32_t(i) * 4, ring2[i]);
+  p.ExecutePrimary(0x7000, 64, 0, uint32_t(std::size(ring2)));
+  CHECK(p.GetStats().wait_timeouts == 1);
+  CHECK(p.GetStats().waits_met_by_own_write == 1);
+}
+
+TEST_CASE("pm4: the own-write pass is Judgment's only (memory wait limit set), and only for the stream's last write there",
+          "[pm4]") {
+  uint32_t host_regs[0x5003] = {};
+  std::vector<std::pair<uint32_t, std::vector<uint8_t>>> queued;
+  const auto make = [&](uint32_t limit_ms, int spins_allowed, int* spins) {
+    pm::Environment env;
+    env.translate = [](uint32_t a) -> uint8_t* { return a < g_mem.size() ? g_mem.data() + a : nullptr; };
+    env.write_register = [&](uint32_t i, uint32_t v) { if (i < 0x5003) host_regs[i] = v; };
+    env.read_register = [&](uint32_t i) { return i < 0x5003 ? host_regs[i] : 0u; };
+    env.execute_packet = [&](const uint32_t*, uint32_t) {};
+    env.running = [spins, spins_allowed] { return ++*spins <= spins_allowed; };  // ends a wait that would spin forever
+    env.vsync = [] { return false; };
+    env.memory_wait_limit_ms = limit_ms;
+    env.release = [&] {
+      for (auto& [a, b] : queued) std::memcpy(g_mem.data() + a, b.data(), b.size());
+      queued.clear();
+      const uint8_t answer[4] = {126, 0, 0, 0};  // a late write replaces the marker
+      std::memcpy(g_mem.data() + 0x5000, answer, 4);
+    };
+    env.defer_write = [&](uint32_t a, const void* b, uint32_t n) {
+      auto* p = static_cast<const uint8_t*>(b);
+      queued.push_back({a, std::vector<uint8_t>(p, p + n)});
+      return true;
+    };
+    return pm::Processor(std::move(env), pm::Callbacks{});
+  };
+  const auto run = [](pm::Processor& p, std::vector<uint32_t> ring) {
+    for (size_t i = 0; i < ring.size(); ++i) Put(0x7000 + uint32_t(i) * 4, ring[i]);
+    p.ExecutePrimary(0x7000, 64, 0, uint32_t(ring.size()));
+  };
+  const uint32_t wait_feed[] = {Type3(pm::kWaitRegMem, 5), 0x13, 0x5002, 0xFFFFFEED, 0xFFFFFFFF, 0x100};
+  {  // no limit (Gears 1 / 2 / 3): the wait is left to spin, as before
+    std::fill(g_mem.begin(), g_mem.end(), 0);
+    int spins = 0;
+    pm::Processor p = make(0, 50, &spins);
+    run(p, {Type3(pm::kMemWrite, 2), 0x5002, 0xFFFFFEED, wait_feed[0], wait_feed[1], wait_feed[2], wait_feed[3],
+            wait_feed[4], wait_feed[5]});
+    CHECK(p.GetStats().waits_met_by_own_write == 0);
+    CHECK(spins > 1);
+  }
+  {  // a newer own write of another value to the same word: the old value no longer counts
+    std::fill(g_mem.begin(), g_mem.end(), 0);
+    int spins = 0;
+    pm::Processor p = make(30, 1000000, &spins);
+    run(p, {Type3(pm::kMemWrite, 2), 0x5002, 0xFFFFFEED, Type3(pm::kMemWrite, 2), 0x5002, 0x00000001, wait_feed[0],
+            wait_feed[1], wait_feed[2], wait_feed[3], wait_feed[4], wait_feed[5]});
+    CHECK(p.GetStats().waits_met_by_own_write == 0);
+    CHECK(p.GetStats().wait_timeouts == 1);
+  }
+  {  // the marker written, then 16 other words: it has left the record, and the wait spins to the limit as before
+    std::fill(g_mem.begin(), g_mem.end(), 0);
+    int spins = 0;
+    pm::Processor p = make(30, 1000000, &spins);
+    std::vector<uint32_t> ring = {Type3(pm::kMemWrite, 2), 0x5002, 0xFFFFFEED};
+    for (uint32_t k = 0; k < 16; ++k) ring.insert(ring.end(), {Type3(pm::kMemWrite, 2), 0x6002 + 4 * k, k});
+    ring.insert(ring.end(), std::begin(wait_feed), std::end(wait_feed));
+    run(p, ring);
+    CHECK(p.GetStats().waits_met_by_own_write == 0);
+    CHECK(p.GetStats().wait_timeouts == 1);
+  }
+  {  // only the query marker: a wait for another value the stream wrote is left to spin, as before
+    std::fill(g_mem.begin(), g_mem.end(), 0);
+    int spins = 0;
+    pm::Processor p = make(30, 1000000, &spins);
+    run(p, {Type3(pm::kMemWrite, 2), 0x5002, 0x12345678, Type3(pm::kWaitRegMem, 5), 0x13, 0x5002, 0x12345678, 0xFFFFFFFF,
+            0x100});
+    CHECK(p.GetStats().waits_met_by_own_write == 0);
+    CHECK(p.GetStats().wait_timeouts == 1);
+  }
+}

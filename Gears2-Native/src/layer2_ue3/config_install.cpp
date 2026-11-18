@@ -836,7 +836,7 @@ std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, s
         continue;
       }
       if (key.find('\\') == std::string::npos) continue;   // files at the mod's top (mod.ini, readme) are its own
-      const std::string ext = ModLower(it->path().extension().string());
+      const std::string ext = ModLower(rex::path_to_utf8(it->path().extension()));   // review r369 F5: string() throws on a name outside the code page
       if (ext == ".xex" || ext == ".xexp" || ext == ".dll" || ext == ".exe") {
         REXLOG_WARN("ue3_mods: {}: programs are not taken from mods - skipped", rex::path_to_utf8(it->path()));
         continue;
@@ -923,7 +923,7 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
           listed.insert(k);
           auto it = files.find(k);
           if (it != files.end()) {
-            line = std::to_string(fs::file_size(it->second, ec)) + " 0 " + sector + " " + path + " " + Md5Hex(it->second);
+            line = std::to_string(fs::file_size(it->second, ec)) + " " + std::to_string(ue3::WholeCompressedSize(it->second)) + " " + sector + " " + path + " " + Md5Hex(it->second);  // 0.6.5 (#367): its own uncompressed size
             ++changed;
           }
         }
@@ -934,7 +934,8 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
         std::string rel = rex::path_to_utf8(host.filename());
         std::string guest = "..\\" + rex::path_to_utf8(topdir.filename()) + "\\" + k.substr(top.size() + 1);
         guest = guest.substr(0, guest.size() - rel.size()) + rel;   // keep the mod file's own name casing
-        outText += std::to_string(fs::file_size(host, ec)) + " 0 0 " + guest + " " + Md5Hex(host) + "\r\n";
+        outText += std::to_string(fs::file_size(host, ec)) + " " + std::to_string(ue3::WholeCompressedSize(host)) + " 0 " + guest + " " +  // 0.6.5 (#367)
+                   Md5Hex(host) + "\r\n";
         ++changed;
       }
       if (!changed) continue;

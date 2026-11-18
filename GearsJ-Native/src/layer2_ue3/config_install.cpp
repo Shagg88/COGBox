@@ -43,6 +43,7 @@
 // game's include folder (CMakeLists.txt), declared here so this game's own ue3/ headers are not shadowed.
 namespace ue3 {
 bool ReadPackageExportPaths(const std::filesystem::path& file, std::set<std::string>* out);
+uint64_t WholeCompressedSize(const std::filesystem::path& file);  // 0.6.5 (#367): Gears 2's package_exports.cpp
 std::string DescribePackageSummary(const std::filesystem::path& file);  // Gears 2's package_exports.cpp (to-do 2)
 }  // namespace ue3
 
@@ -562,7 +563,7 @@ std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, s
         continue;
       }
       if (key.find('\\') == std::string::npos) continue;   // files at the mod's top (mod.ini, readme) are its own
-      const std::string ext = ModLower(it->path().extension().string());
+      const std::string ext = ModLower(rex::path_to_utf8(it->path().extension()));   // review r369 F5: string() throws on a name outside the code page
       if (ext == ".xex" || ext == ".xexp" || ext == ".dll" || ext == ".exe") {
         REXLOG_WARN("ue3_mods: {}: programs are not taken from mods - skipped", rex::path_to_utf8(it->path()));
         continue;
@@ -652,7 +653,8 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
           listed.insert(k);
           auto it = files.find(k);
           if (it != files.end()) {
-            line = std::to_string(fs::file_size(it->second, ec)) + " 0 " + (tok.size() == 5 ? tok[2] + " " : std::string()) + path + " " +
+            line = std::to_string(fs::file_size(it->second, ec)) + " " + std::to_string(ue3::WholeCompressedSize(it->second)) + " " +  // 0.6.5 (#367): its own uncompressed size
+                   (tok.size() == 5 ? tok[2] + " " : std::string()) + path + " " +
                    Md5Hex(it->second);
             ++changed;
           }
@@ -668,7 +670,8 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
         std::string rel = rex::path_to_utf8(host.filename());
         std::string guest = "..\\" + rex::path_to_utf8(topdir.filename()) + "\\" + k.substr(top.size() + 1);
         guest = guest.substr(0, guest.size() - rel.size()) + rel;   // keep the mod file's own name casing
-        added += std::to_string(fs::file_size(host, ec)) + (fields_seen == 5 ? " 0 0 " : " 0 ") + guest + " " + Md5Hex(host) + "\r\n";
+        added += std::to_string(fs::file_size(host, ec)) + " " + std::to_string(ue3::WholeCompressedSize(host)) +  // 0.6.5 (#367)
+                 (fields_seen == 5 ? " 0 " : " ") + guest + " " + Md5Hex(host) + "\r\n";
         ++changed;
       }
       outText = added + outText;

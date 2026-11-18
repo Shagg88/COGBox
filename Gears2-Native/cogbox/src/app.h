@@ -19,7 +19,7 @@
 #include "util.h"
 #include "proton.h"   // proton049
 
-#define COGBOX_VERSION "0.6.4"
+#define COGBOX_VERSION "0.6.5"
 #define COGBOX_NAME "COGBox"
 
 namespace gs = cogbox::gears;
@@ -53,7 +53,7 @@ struct Running {
     std::shared_ptr<CrashDumpStatus> crashDump;   // GitHub #286: the crash minidump watcher (crash_dump.h)
 };
 
-enum Screen { SCR_FRONT, SCR_PAGE };
+enum Screen { SCR_FRONT, SCR_PAGE, SCR_FABRICATOR };   // SCR_FABRICATOR: the local mod manager (fabricator_ui.cpp)
 
 struct Modal {                       // one message box at a time, drawn by main.cpp
     bool open = false;
@@ -85,12 +85,13 @@ struct App {
     // front screen
     float carPos = 0;                 // the carousel: which box is in front (fractional while turning)
     int front = 0;                    // the box it is turning to
-    int frontSel = 0;                 // the controller's choice under the box: 0 Play / Add your copy, 1 Settings (LB / RB)
+    int frontSel = 0;                 // the controller's choice under the box: 0 Play / Add your copy, 1 Settings (LB / RB), 2 Achievements, 3 Social, 4 Fabricator
     double restSince = 0;             // when the carousel stopped turning
     // pages
     Screen screen = SCR_FRONT;
     int page = 0;                     // the game whose page is shown
     int tab = 0;
+    int fabTab = 0;                   // the FABRICATOR screen's tab: 0 Library, 1 Store, 2 Creator
     int barSel = -1;                  // a page's bottom bar chosen with the controller: -1 none (in the rows), 0 Library, 1 Save, 2 Play
     double zoomStart = -10;           // the front <-> page transition
     Screen zoomTo = SCR_FRONT;
@@ -106,6 +107,8 @@ struct App {
     bool padConnected = false;
     bool lastPad = true;              // 0.2.0: the last input came from a controller (hints follow it), else keyboard / mouse
     std::string joinLobby[G_COUNT];   // social step 3: the next start of this game joins that room code (Join friend)
+    bool coldPrepOk[G_COUNT] = {};      // 0.6.5: "Play now" chosen at the cold-start question (until the launcher closes)
+    bool prepThenPlay[G_COUNT] = {};    // 0.6.5: a Prepare all shaders run started from that question - play when it ends
     bool misplacedAsked[G_COUNT] = {};  // 0.6.4: the hand-copied saves question was asked for this Play (play.cpp)
     bool tuMismatchOk[G_COUNT] = {};  // TU preflight: "Play anyway" chosen for this game (until the launcher closes)
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
@@ -165,6 +168,10 @@ void art_download_start();
 int art_download_poll();
 // page.cpp
 void page_draw(App &a, ImVec2 size);
+// fabricator_ui.cpp: the FABRICATOR screen (LIBRARY, STORE, CREATOR), and a file or folder dropped on it (the CREATOR
+// tab takes a folder as the mod to package; anything else is a mod to add)
+void fabricator_draw(App &a, ImVec2 size);
+void fabricator_drop(App &a, const std::string &path);
 // achievements_tab.cpp (achievements part 4): the ACHIEVEMENTS tab below its option rows (the rows' label / control
 // widths and right edge, as page.cpp lays them out); read again after a game closed; the front button's "open on All";
 // the reveal question answered (ask tag "achreveal", 1 = yes).
@@ -218,13 +225,32 @@ struct ModItem {
     // and what in its mod.ini the game does not understand
     std::string problem, campaign;
     std::vector<std::string> notes;
+    bool fab = false;         // installed by the Fabricator: its folder has COGBox's fabricator.json
+    std::string fab_source;   // ... and the record's source kind ("file", "nexus"); "" when not
     uint32_t textures = 0;   // KiltedKernel: texture pack - the DDS files named by texture hash in its folder
 };
 std::string mods_dir(int game);
 std::vector<ModItem> mods_list(App &a, int game);         // in load order
 void mods_set_enabled(App &a, int game, const std::string &folder, bool on);
 void mods_move(App &a, int game, const std::string &folder, int dir);   // -1 up (earlier), +1 down (later, wins)
-bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err);
+// "Close the game first." while it runs; left_out (may be null) gets the program files left out (mods_unpack_zip)
+bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err, std::vector<std::string> *left_out = nullptr);
+// Unpacks a mod zip into folder (made if missing): the zip's paths as Windows reads them, never outside folder, the
+// real inflated bytes counted against the limits (8 GiB, 50 000 files); stripTop takes off a single top folder that
+// isn't one of the game's own. Program files (mod_file_rules.h) are left out, their paths in folder added to left_out
+// (may be null); a fabricator.json at any depth is left out too (only COGBox writes one). false + err (no file paths in
+// it) on a problem; files already written stay.
+bool mods_unpack_zip(App &a, int game, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err,
+                     std::vector<std::string> *left_out = nullptr);
+// The same without App, for a worker thread: dataDir is the game's data folder (App::st[game].dataDir, read on the UI
+// thread), which decides whether a single top folder is the game's own.
+bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err,
+                        std::vector<std::string> *left_out = nullptr);
+void mods_store(App &a, int game, const std::vector<ModItem> &v);   // the order and on/off state, as listed
+void mods_turn_on_last(App &a, int game, const std::string &folder);   // a new mod: on, last in the order
+void mods_remove_tree(const std::wstring &dir);   // only a folder COGBox made itself (a .partial unpacking, a backup)
+void cogbox_remove_tree(const std::wstring &dir);   // a folder of COGBox's own outside the mods (fabricator\work): never through a link
+// (real_path / is_plain_child, review r369 F1: util.h)
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);
 // play.cpp

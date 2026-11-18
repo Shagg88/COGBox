@@ -164,13 +164,13 @@ REXCVAR_DEFINE_INT32(gow2_renderer_backlog_priority, -3, "Gears2",
                      "0.6.3 (4-core laptop stuttering while the start-up backlog built): Windows priority of a pipeline "
                      "worker while it builds a start-up backlog pipeline (recorded pipelines, the recipe pack; a pipeline "
                      "a draw asks for is moved to the live queue first and keeps the workers' own priority): -3 = auto "
-                     "(below normal on 8 logical processors or fewer, else the workers' own), -2 = lowest, -1 = below "
+                     "(below normal; 0.6.5 - was only on 8 logical processors or fewer), -2 = lowest, -1 = below "
                      "normal, 0 = the workers' own (gow2_renderer_pipeline_thread_priority). D3D12");
 REXCVAR_DEFINE_INT32(gow2_renderer_backlog_play_workers, -1, "Gears2",
                      "0.6.3: the most pipeline workers on start-up backlog pipelines at once while the game is being "
                      "played (frames of 64+ draws); loading screens, menus and videos keep every worker, and pipelines a "
-                     "draw asks for are never limited. -1 = auto (half the workers on 8 logical processors or fewer, "
-                     "else no limit), 0 = no limit, N = N. D3D12");
+                     "draw asks for are never limited. -1 = auto (half the workers; 0.6.5 - "
+                     "was only on 8 logical processors or fewer), 0 = no limit, N = N. D3D12");
 REXCVAR_DEFINE_INT32(gow2_renderer_pipeline_save_seconds, 15, "Gears2",
                      "Patch 0056: seconds between saves of the pipeline library while it grows (was 60; a quit or a "
                      "hard exit lost everything since the last save). Minimum 5");
@@ -460,6 +460,20 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_dedicated_images, false, "Gears2",
                     "Patch 0097 (Vulkan): images the driver prefers in an allocation of their own (NVIDIA: render "
                     "targets) get one, as D3D12's committed resources are. A measurement switch first (job 403): "
                     "Vulkan colour targets draw in ~2x D3D12's GPU time even with DXC-compiled shaders (job 402)");
+#if GN_SDK_VULKAN
+// 0.6.5: SDK patch 116 (runtime 066) - whether the SDK's Vulkan device was made with graphicsPipelineLibrary enabled
+// (only where links are fast and stages need not agree on interpolation decorations). Declared here as in the patched
+// SDK's rex/ui/vulkan/device.h, so this builds with either header (it links against runtime 066).
+namespace rex::ui::vulkan {
+bool CogboxGraphicsPipelineLibraryEnabled(VkDevice device);
+bool CogboxPipelineCreationCacheControlEnabled(VkDevice device);
+}
+#endif
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_pipeline_libraries, false, "Gears2",
+                    "0.6.5 (Vulkan): build each new pipeline from per-stage pipeline libraries "
+                    "(VK_EXT_graphics_pipeline_library, SDK patch 116 / runtime 066): each shader is compiled once, and a "
+                    "new state combination is a link of a few microseconds instead of a whole build (bench 1755: 87 ms "
+                    "mean). Used only where the driver offers fast linking; else pipelines are built whole");
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_count_pixels, false, "Gears2",
                     "Patch 0098 (Vulkan, a measurement; with --gow2_renderer_gpu_by_target): the samples that pass depth "
                     "/ stencil per render target, from occlusion queries - whether Vulkan's ~2x colour-target GPU time "
@@ -520,7 +534,14 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_optimise, false, "Gears2",
                     "the driver builds it - about a third of the size and a third less driver time per new pipeline "
                     "(303 -> 193 ms on an RTX 3080 Ti; D3D12 158 ms). Same values (NoContraction and the float controls "
                     "are kept). false = the modules as converted, as 0.6.0");
-REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_store, false, "Gears2",
+// 0.6.5 (Shagg 16 Nov, "5"): on by default. Jobs 1957b / 1958: Gears 3 on Vulkan converted every recorded shader again at
+// EVERY start (18 s for 5,698, 48 s for 8,978) - the store had been switched off together with the optimiser after the
+// 0.6.1 candidate's slow first start (the optimiser's cost; the optimiser stays off).
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_store, true, "Gears2",
+                    "0.6.5: translated shaders (DXBC) are kept in <shader cache dir>\\dxbc-store.bin, so each recorded "
+                    "shader is translated once per COGBox version and not at every start (Gears 3: 9,296 shaders, 14 s "
+                    "of CPU). false = translate at every start, as 0.6.4");
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_store, true, "Gears2",
                     "0.6.1 (Vulkan): converted shaders are kept in <shader cache dir>\\spirv-store.bin, so each shader is "
                     "converted to SPIR-V (and optimised) once and not at every start (Gears 3: half a minute before the "
                     "first frame). false = convert at every start, as 0.6.0");
@@ -1233,6 +1254,10 @@ REXCVAR_DEFINE_STRING(gow2_renderer_queries, "off", "Gears2",
                       "--gow2_pm4_split; the launcher's \"Real occlusion (experimental)\", D3D12) | "
                       "answer (also write our answers into the game's query reports: the last real count for that "
                       "report, 1 if none; corrected when our count lands)");
+REXCVAR_DEFINE_BOOL(gow2_upscale_scene_after_fog, false, "Gears2",
+                    "With --gow2_upscale_scene_last_copy: the scene copy is one made after the fog pass (--gow2_ao_fog_ps) "
+                    "once a frame has drawn it - Judgment adds a mid-frame scene copy before its fog on some frames, which "
+                    "moved the taken copy before the fog (XeGTAO's AO left out of that frame: a one-frame flash)");
 REXCVAR_DEFINE_DOUBLE(gow2_renderer_occlusion_slope_bias, 1.0, "Gears2",
                       "Occlusion boxes (query draws that write nothing) get this slope-scaled depth bias toward passing. "
                       "Gears 3 tests them against a half-size depth that keeps the nearest of each 2x2: a flat object's box, "
@@ -1587,6 +1612,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       options.vk_suballoc_textures = REXCVAR_GET(gow2_renderer_vulkan_suballoc_textures);  // 0.5.1
       options.vk_dedicated_images = REXCVAR_GET(gow2_renderer_vulkan_dedicated_images);                    // 0097
       options.vk_count_pixels = REXCVAR_GET(gow2_renderer_vulkan_count_pixels);                            // 0098
+      options.vk_pipeline_libraries = REXCVAR_GET(gow2_renderer_vulkan_pipeline_libraries);                 // 0.6.5
       options.vk_attachment_layouts = REXCVAR_GET(gow2_renderer_vulkan_attachment_layouts) == "optimal";   // 0100
       options.vk_barrier_src_stages = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "work";          // 0107
       options.vk_skip_memory_barriers = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "skip_memory";  // 0108
@@ -1629,6 +1655,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           vk_external_.anisotropy = pr.samplerAnisotropy;
           vk_external_.texture_compression_bc = pr.textureCompressionBC;
           vk_external_.occlusion_query_precise = pr.occlusionQueryPrecise;  // 0.6.1
+          vk_external_.graphics_pipeline_library =  // 0.6.5: SDK patch 116 (runtime 066)
+              rex::ui::vulkan::CogboxGraphicsPipelineLibraryEnabled(dev->device());
+          vk_external_.pipeline_cache_control = rex::ui::vulkan::CogboxPipelineCreationCacheControlEnabled(dev->device());
           options.vulkan_external = &vk_external_;
           presenter_ = presenter;
           presenter_vulkan_ = true;
@@ -1709,6 +1738,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
                           (REXCVAR_GET(gow2_renderer_vulkan_float_controls) ? 4u : 0u);
       const bool vk = backend_ && backend_->GetShaderIL() == gpu::ShaderIL::kSpirv;
       xenos::renderer::ShaderCache::SetSpirvStore(vk && REXCVAR_GET(gow2_renderer_vulkan_spirv_store) ? cache_->Dir() : std::filesystem::path(), sw);
+      xenos::renderer::ShaderCache::SetDxbcStore(REXCVAR_GET(gow2_renderer_dxbc_store) ? cache_->Dir() : std::filesystem::path());  // 0.6.5
       // (not in the old "prepare only" mode: it counts the start-up backlog once, right after the warm-up)
       const bool async = vk && REXCVAR_GET(gow2_renderer_vulkan_async_shaders) && !REXCVAR_GET(gow2_renderer_prepare_only);
       xenos::renderer::ShaderCache::SetSpirvAsync(async);
@@ -6099,6 +6129,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       up_camera_reg_ = cr > 0 && cr <= 255 ? uint32_t(cr) : 0u;
       up_scene_formats_ = uint32_t(std::clamp(REXCVAR_GET(gow2_upscale_scene_formats), 1, 3));
       up_scene_copy_.last_only = REXCVAR_GET(gow2_upscale_scene_last_copy);
+      up_scene_copy_.anchored = up_scene_copy_.last_only && REXCVAR_GET(gow2_upscale_scene_after_fog);
+      up_fog_ps_ = "," + REXCVAR_GET(gow2_ao_fog_ps) + ",";
       up_jitter_scope_ = uint32_t(std::clamp(REXCVAR_GET(gow2_upscale_jitter_scope), 0, 3));
       REXLOG_INFO("gow2_upscaler: object rows c{}-c{}, camera position {}, scene formats {}", up_object_base_,
                   up_object_base_ + 3, up_camera_reg_ ? "c" + std::to_string(up_camera_reg_) : std::string("not used"),
@@ -6432,6 +6464,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Gears 3 chat, 21:15), as --gow2_upscale_scene_formats says.
   uint32_t up_scene_formats_ = 1;
   rr::upscale::SceneCopyPicker up_scene_copy_;  // --gow2_upscale_scene_last_copy: notes/80 s.11
+  bool up_fog_seen_ = false;  // --gow2_upscale_scene_after_fog: this frame drew the fog pass
+  std::string up_fog_ps_;     // its shader hashes, ",A,B,"
   uint32_t up_jitter_scope_ = 0;         // --gow2_upscale_jitter_scope
   uint64_t up_jittered_scope_ = 0;       // draws jittered only because of the scope (log window)
   bool up_jitter_late_ = false;          // --gow2_upscale_jitter_late (Gears 3 job 120)
@@ -9150,7 +9184,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     hl_frame_logged_ = hl_frame_takes_ = 0;
     hl_armed_ = hl_taken_ = false;  // patch 0148 (hl_sources_ is cleared by RequestDisplay, which runs after this)
     hl_format_ = fg_wanted_ ? XenosFrameGenerationHudlessFormat() : 0u;  // notes/83: Vulkan too
-    up_scene_copy_.EndFrame();  // notes/80 s.11
+    up_scene_copy_.EndFrame(up_fog_seen_);  // notes/80 s.11
+    up_fog_seen_ = false;
     up_depth_saved_ = false;  // notes/80 s.6
     if (up_prev_camera_) vel_prev_objs_.swap(vel_objs_);  // notes/80 s.6 (up_camera_ is already reset): this frame's characters, for the camera position
     else vel_prev_objs_.clear();
@@ -10081,6 +10116,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const rr::GuestShader& vsg = dxil_twin ? cache_->GetDxilTwin(vs_hash, vs_.dwords, vs_.count, tess_n) : vsg0;
     if (dxil_twin) ++stats_.dxil_twins;
     if (rcp_on_ && ps_.dwords && ps_hash != rcp_last_ps_) MarkRecipeChapterHot(ps_hash);  // job 634
+    // --gow2_upscale_scene_after_fog: the anchor pass, by its pixel shader (a fog draw skipped before this point is not
+    // seen: that frame counts as one without the anchor - no copy taken - and the picker lets go after two)
+    if (up_scene_copy_.anchored && !up_fog_seen_ && psg) {
+      char fog_hex[20];
+      std::snprintf(fog_hex, sizeof(fog_hex), ",%016llX,", static_cast<unsigned long long>(ps_hash));
+      up_fog_seen_ = up_fog_ps_.find(fog_hex) != std::string::npos;
+    }
 
     // Patch 0025 (Canary render_target_cache.cc Update, 9da693480; Gears 3 review 01-g): a depth target at the same
     // guest EDRAM base as a colour target this draw writes is not bound - the colour target owns those tiles - unless
@@ -10568,8 +10610,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->SetTextures(nullptr, nullptr);
       native_hdr_ui_views_current_=false;
       if (scene_ui_bind || native_ui_bind) native_hdr_ui_view_count_ = native_hdr_ui_sampler_count_ = 0;
-      if (report_on_ || StatsTexturesNow()) RepNoteTextures(nullptr, nullptr, 0, 0);  // patch 0101, 0124
-      if (scene_ui_bind) native_hdr_ui_view_count_ = 0;
       if (report_on_) RepNoteTextures(nullptr, nullptr, 0, 0);  // patch 0101
       if (t2d | tcube | t3d) stand_ins = uint32_t(std::popcount(t2d | tcube | t3d));  // texture cache switched off
     }
@@ -11009,28 +11049,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (uint32_t i = 0; i < 4; ++i) rts[i] = colour_rt[i] ? colour_rt[i]->texture : 0;
       if (hdr_target) rts[0] = hdr_target;
       if (hdr_second) rts[1] = hdr_second;
-      if (!hdr_target && stats_frame_ && frame_ == uint64_t(stats_frame_)) {  // patch 0121
-        std::vector<const rr::RenderTarget*> now;
-        for (uint32_t i = 0; i < 4; ++i) if (colour_rt[i]) now.push_back(colour_rt[i]);
-        // Patch 0122: after each of the first N draws too (the previous draw's targets, before this one is issued).
-        // Patch 0123: the readouts can start later (each_from) and be spaced out (each_step): after draw
-        // from + k*step for k = 1..N. Draws with no colour target are counted too (0123 logs how many).
-        const uint32_t d = stats_draws_, from = uint32_t(stats_from_), step = uint32_t(stats_step_);
-        const bool each = stats_each_ > 0 && d > from && (d - from) % step == 0 && (d - from) / step <= uint32_t(stats_each_);
-        if (now != stats_prev_ || each) {
-          TargetStats(stats_prev_);
-          if (stats_textures_) SampledStats();  // patch 0124: the previous draw's sampled textures
-        }
-        stats_prev_ = now;
-        if (stats_textures_) {  // patch 0124: this draw's textures, read at the next readout
-          // Patch 0125: only the 2D slots (t0-31). 0124 copied all of rep_view_count_ (up to 96, with the cube and 3D
-          // slots) into this 32-entry array and wrote past its end (Gears 2 job 434: crash in the stats frame).
-          stats_view_count_ = std::min<uint32_t>(rep_view_count_, 32);
-          for (uint32_t i = 0; i < stats_view_count_; ++i) stats_views_[i] = rep_views_[i];
-        }
-        if (now.empty()) ++stats_no_colour_;
-        ++stats_draws_;
-      }
       backend_->SetRenderTargets(hdr_second ? 2 : d.color_count, rts, depth ? depth->texture : 0);
       if (gpu_by_target_) NoteDrawTarget(colour_rt[0] ? colour_rt[0] : depth);
       if (report_on_)  // patch 0101: this draw's own GPU timestamp and its description
@@ -12596,6 +12614,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (!left) break;
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
+    // 0.6.5: with Vulkan pipeline libraries, the pipelines above were linked; their optimised whole builds go into the
+    // pipeline cache in the background - prepared means those too, so the next start takes them from the cache.
+    if (const uint64_t fills = backend_->PipelineFillsLeft()) {
+      REXLOG_INFO("gow2_renderer: preparing shaders: {} optimised pipeline builds for the cache still to go", fills);
+      write(queued, "optimising");
+      while (backend_->PipelineFillsLeft()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
     write(queued, "saving");
     backend_->SavePipelinesNow();
     const gpu::BackendStats& bs = backend_->Stats();
@@ -12920,6 +12945,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         // workers' queue, so the cap below never let a wanted record through): a wanted record is limited only by the
         // wanted jobs still being built, and goes to the workers' live queue, ahead of every backlog.
         const bool wanted = chapter_hold_on_ && rcp_rec_want_[i];
+        // 0.6.5 (job 2025: a fully cold start queued 0 of 14,076 - every ready record waited for the 6,769-job start-up
+        // backlog to fall below the cap, minutes at ~200 ms a driver build): a record of the area being played is
+        // limited only by the live jobs and goes to the live queue, ahead of the backlog.
+        const bool hot = !wanted && rcp_hot_chapters_ && rcp_rec_hot_[i];
         bool blocked = false;
         if (shaders_ready && wanted) {
           // (review) In a hold enough to keep every worker busy (the hold refills every slice, ~2 ms) - a deep live queue
@@ -12931,7 +12960,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           }
           blocked = want_pending >= want_cap;
         } else if (shaders_ready) {
-          blocked = backend_->PipelineJobsLeft() >= cap;
+          // (review) In play half the cap, so the draws' own live requests wait behind few hot jobs.
+          blocked = hot ? backend_->LiveJobsLeft() >= (loading ? cap : (cap + 1) / 2)
+                        : backend_->PipelineJobsLeft() >= cap;
         }
         if (!shaders_ready || blocked) {
           // 0.6.1 (job 1752: with background conversion the wanted records' shaders sat behind the whole backlog and
@@ -12957,9 +12988,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ++rcp_n_.no_gs;
           continue;
         }
-        if (backlog == wanted) {  // backlog for the others, the live queue for wanted records (0.6.1)
-          backend_->SetPipelineBacklog(!wanted);
-          backlog = !wanted;
+        const bool live = wanted || hot;  // 0.6.5: hot records too
+        if (backlog == live) {  // backlog for the others, the live queue for wanted records (0.6.1)
+          backend_->SetPipelineBacklog(!live);
+          backlog = !live;
         }
         const uint64_t m = backend_->PipelineMisses();
         backend_->GetGraphicsPipeline(d, true, nullptr);
@@ -14190,7 +14222,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint32_t source_scale = rt->scale;  // patch 0141: the upscaler's output is at the output scale
     // Every scene copy is counted, also after the one that was taken (notes/80 s.11).
     bool scene_taken = false;  // --gow2_ssil: this is the frame's scene copy
-    if (up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt) && up_scene_copy_.Take(uint32_t(rt->format) + 1u) && !up_scene_done_) {
+    if (up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt) && up_scene_copy_.Take(uint32_t(rt->format) + 1u, up_fog_seen_) && !up_scene_done_) {
       up_scene_done_ = true;
       scene_taken = true;
       up_output_upscaled_ = false;
@@ -14513,7 +14545,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const xenos::dxbc_gen::RuleHits rh = xenos::dxbc_gen::CanaryRuleHits();  // patch 0087
       REXLOG_INFO("gow2_renderer: DXBC back end: {} shaders made as DXBC so far ({:.1f} ms translating in all), {} left "
                   "to the HLSL path | {} draws in these frames paired DXBC with DXIL, {} drawn with a DXIL twin of the vertex "
-                  "shader | newer Canary rules (patch 0087), shaders changed: tfetch1D XY {}, mulsc toward zero {}, float16 "
+                  "shader | newer Canary rules (patch 0087), shaders translated this run (not read from the DXBC store) changed: tfetch1D XY {}, mulsc toward zero {}, float16 "
                   "export NaN {}",
                   cs.dxbc, cs.translate_ms, cs.dxbc_fallbacks, stats_.dxbc_mixed, stats_.dxil_twins, rh.tfetch1d_xy,
                   rh.mulsc_round_toward_zero, rh.memexport_f16_nan_zero);
@@ -14754,6 +14786,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     bs.pipelines_built_by_priority[0] - b0.pipelines_built_by_priority[0], bs.pipeline_jobs_queued,
                     stats_.pipelines_recorded, pipeline_list_ ? pipeline_list_->Errors() : 0,
                     bs.pipelines_promoted - b0.pipelines_promoted);
+      }
+      {  // 0.6.5: Vulkan pipeline libraries (the counts were kept since 0.6.2 but never logged); when they change
+        static std::string last_gpl_report;  // (one renderer per process)
+        std::string gpl = backend_->PipelineLibraryReport();
+        if (!gpl.empty() && gpl != "pipeline libraries: off" && gpl != last_gpl_report) {
+          REXLOG_INFO("gow2_renderer: frames {}-{}: {}", frame_ - uint64_t(log_every_) + 1, frame_, gpl);
+          last_gpl_report = std::move(gpl);
+        }
       }
       if (prebuild_on_ && (pb_.prebuild_offered != prebuild_logged_offered_ ||
                            pb_.new_ps_pipelines != prebuild_logged_new_ps_)) {  // patch 0068

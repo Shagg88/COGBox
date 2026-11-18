@@ -1,10 +1,11 @@
 // CogBox - the SOCIAL tab's model (see social_model.h)
-#include <algorithm>
 #include "social_model.h"
 
 #include "../third_party/nlohmann/json.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <iterator>
 
 using json = nlohmann::json;
 
@@ -298,11 +299,38 @@ std::vector<SocialMatch> parse_matches(const std::string& body) {
         m.players = num(e, "current_players", 0);
         m.max = num(e, "max_players", 0);
         m.playlist = num(e, "playlist", -1);
+        m.map = !e.contains("map") ? -1 : std::max(0, num(e, "map", 0));   // null (no map yet) = 0
         m.in_progress = e.is_object() && e.contains("in_progress") && e["in_progress"].is_boolean() && e["in_progress"].get<bool>();
         if (!plain_id(m.lobby_id) || m.game < 0 || m.game > 2) continue;   // Gears 2, Gears 3, Judgment
         out.push_back(m);
     }
     return out;
+}
+
+const char* match_map_package(int game, int map) {
+    // GearPlaylist.ini MapNamesToContextValues (Gears 2: GearLeaderboardSettings, its live 1-10; Gears 3 / Judgment:
+    // GearLeaderboardSettingsBase). Index = ContextValue.
+    static const char* const g2[] = { nullptr, "MP_Avalanche", "MP_BloodDrive", "MP_DayOne", "MP_Hail", "MP_Jacinto",
+                                      "MP_Pavilion", "MP_River", "MP_Ruins", "MP_Security", "MP_Stasis" };
+    static const char* const g3[] = { nullptr, "MP_Checkout", "MP_DryDock", "MP_GridlockG3", "MP_Hotel", "MP_Mercy",
+                                      "MP_OldTown", "MP_Overpass", "MP_Sandbar", "MP_Thrashball", "MP_Trenches",
+                                      "MP_Azura", "MP_BloodDriveG3", "MP_Rustlung" };
+    static const char* const gj[] = { nullptr, "MP_skyline", "MP_Island", "MP_GridlockG3", "MP_Hotel", "MP_Mercy",
+                                      "MP_OldTown", "MP_Overpass", "MP_Sandbar", "MP_Thrashball", "MP_Trenches",
+                                      "MP_Azura", "MP_BloodDriveG3", "MP_Rustlung", "MP_Estate", "MP_junkyard",
+                                      "MP_Gondola_FFA", "MP_Library_FFA", "MP_streets_FFA", "MP_Rig_FFA", "MP_Haven_ALT" };
+    auto at = [map](const char* const* t, size_t n) -> const char* { return map > 0 && size_t(map) < n ? t[map] : nullptr; };
+    return game == 0 ? at(g2, std::size(g2)) : game == 1 ? at(g3, std::size(g3)) : game == 2 ? at(gj, std::size(gj)) : nullptr;
+}
+
+MapLight match_map_light(const SocialMatch& m, const std::function<bool(const std::string&)>& has_package) {
+    if (m.map < 0 || m.game == 0) return MapLight::Unknown;
+    if (m.map == 0) return MapLight::None;
+    const char* p = match_map_package(m.game, m.map);
+    if (!p) return MapLight::Missing;
+    std::string low(p);
+    for (char& c : low) c = char(std::tolower(static_cast<unsigned char>(c)));
+    return has_package && has_package(low) ? MapLight::Have : MapLight::Missing;
 }
 
 const char* match_mode(const SocialMatch& m) {
@@ -325,4 +353,32 @@ std::string match_label(const SocialMatch& m) {
     if (m.game >= 0 && m.game <= 2) s += std::string(dot) + kShort[m.game];
     if (!region.empty()) s += dot + region;
     return s;
+}
+
+std::vector<SocialRecent> parse_recent(const std::string& body) {
+    std::vector<SocialRecent> out;
+    const json j = json::parse(body, nullptr, false);
+    if (!j.is_object() || !j.contains("recent") || !j["recent"].is_array()) return out;
+    for (const json& e : j["recent"]) {
+        SocialRecent r;
+        r.uuid = str(e, "uuid");
+        const std::string name = str(e, "display_name"), disc = str(e, "discriminator");
+        if (!plain_id(r.uuid) || name.empty() || disc.empty()) continue;
+        r.tag = name + "#" + disc;
+        r.icon = str(e, "icon");
+        r.title_id = upper(str(e, "title_id"));
+        r.relation = str(e, "relation");
+        r.seen_at = e.is_object() && e.contains("seen_at") && e["seen_at"].is_number() ? e["seen_at"].get<long long>() : 0;
+        out.push_back(r);
+    }
+    return out;
+}
+
+std::string recent_when(long long when_ms, long long now_ms) {
+    const long long s = std::max(0LL, (now_ms - when_ms) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return std::to_string(s / 60) + " min ago";
+    if (s < 86400) return std::to_string(s / 3600) + " h ago";
+    if (s < 2 * 86400) return "yesterday";
+    return std::to_string(s / 86400) + " days ago";
 }

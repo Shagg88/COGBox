@@ -20,6 +20,8 @@
 
 namespace xenos::hlsl {
 
+// 0.6.5: every field is part of the DXBC store's key - a new field must also go into ShaderCache::DxbcStoreKey
+// (shader_cache.cpp), or a stored translation made with the other value could be used.
 struct HlslOptions {
   // Patch 0059 (DXBC back end only - the HLSL path ignores these; all off = the 0055 output, unchanged):
   // dxbc_loop_only_if_needed: a straight-line shader is wrapped in a one-pass loop only when it has a conditional

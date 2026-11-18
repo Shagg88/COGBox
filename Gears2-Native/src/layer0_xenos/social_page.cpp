@@ -4,6 +4,7 @@
 #include <xenos/social_page.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cctype>
 #include <cstdio>
@@ -29,6 +30,7 @@ bool g_bad_tag = false;
 bool g_keyboard = false;          // the on-screen keyboard is open (controller)
 std::string g_remove_uuid;        // the friend REMOVE asks about
 std::string g_note;               // a line for the player (a join they can't do from here)
+int g_right = -1;                 // 0.6.5: the right half: 0 invites, 1 open matches, 2 recent players (-1 not chosen)
 
 // the Achievements page's colours
 const ImU32 kCrimson = IM_COL32(200, 34, 26, 255);
@@ -65,9 +67,10 @@ struct SlotButton {
 // Layout A: one line per entry - a presence dot, the tag, its state, and small buttons on the right. Returns the
 // index of the button pressed, or -1.
 int Row(const char* id, const std::string& tag, const std::string& state, ImU32 state_col, ImU32 lamp,
-        const std::vector<SlotButton>& buttons, float s, const std::string& icon = std::string()) {
+        const std::vector<SlotButton>& buttons, float s, const std::string& icon = std::string(), bool two = false) {
+  // two (0.6.5): the tag on top and the state under it, each the row's whole width up to the buttons
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  const float w = ImGui::GetContentRegionAvail().x, bh = ImGui::GetFrameHeight(), h = bh + 10.f * s, pad = 10.f * s;
+  const float w = ImGui::GetContentRegionAvail().x, bh = ImGui::GetFrameHeight(), h = bh + (two ? 22.f : 10.f) * s, pad = 10.f * s;
   const ImVec2 p = ImGui::GetCursorScreenPos(), q(p.x + w, p.y + h);
   const bool hot = ImGui::IsMouseHoveringRect(p, q);
   dl->AddRectFilled(p, q, kPanel, 3.f * s);
@@ -88,9 +91,15 @@ int Row(const char* id, const std::string& tag, const std::string& state, ImU32 
   for (const SlotButton& b : buttons) buttons_w += ButtonWidth(b.label, s) + 6.f * s;
   const float tx = c.x + r + 12.f * s, name_w = std::min(190.f * s, (q.x - pad - buttons_w - tx) * 0.45f);
   const float ty = p.y + (h - 17.f * s) * 0.5f - 2.f * s;
-  popup::Text(dl, true, 16.f * s, ImVec2(tx, ty), kText, tag, name_w);
-  popup::Text(dl, false, 15.f * s, ImVec2(tx + name_w + 12.f * s, ty + 1.f * s), state_col, state,
-              std::max(10.f, q.x - pad - buttons_w - tx - name_w - 16.f * s));
+  if (two) {
+    const float all_w = std::max(10.f, q.x - pad - buttons_w - tx - 6.f * s), y1 = p.y + (h - 36.f * s) * 0.5f;
+    popup::Text(dl, true, 16.f * s, ImVec2(tx, y1), kText, tag, all_w);
+    popup::Text(dl, false, 15.f * s, ImVec2(tx, y1 + 19.f * s), state_col, state, all_w);
+  } else {
+    popup::Text(dl, true, 16.f * s, ImVec2(tx, ty), kText, tag, name_w);
+    popup::Text(dl, false, 15.f * s, ImVec2(tx + name_w + 12.f * s, ty + 1.f * s), state_col, state,
+                std::max(10.f, q.x - pad - buttons_w - tx - name_w - 16.f * s));
+  }
   int pressed = -1;
   bool focused = false;
   float bx = q.x - pad;
@@ -247,8 +256,10 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
   if (!v.error.empty()) Line(v.error, kAmber, s);
   if (!g_note.empty()) Line(g_note, kAmber, s);
 
+  // 0.6.5 (Shagg): two even halves - friends on the left; on the right INVITES / MATCHES / RECENT, one at a time
+  // (click, or LT / RT on a controller)
   const ImVec2 avail = ImGui::GetContentRegionAvail();
-  const float gap = 24.f * s, left_w = std::floor((avail.x - gap) * 0.6f);
+  const float gap = 24.f * s, left_w = std::floor((avail.x - gap) * 0.5f);
   if (ImGui::BeginChild("##social", ImVec2(left_w, avail.y), ImGuiChildFlags_NavFlattened) && v.have_account) {
     const size_t nreq = v.lists.incoming.size();
     std::string head = std::string(XenosTr("FRIENDS")) + " (" + std::to_string(v.lists.friends.size()) + ")";
@@ -256,16 +267,15 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
     Section(head.c_str(), s);
     for (const SocialRequest& r : v.lists.incoming) {
       const int b = Row(("req" + r.uuid).c_str(), r.tag, XenosTr("wants to be your friend"), kAmber, kAmber,
-                        {{"ACCEPT", true, true}, {"DECLINE"}, {"BLOCK"}}, s, r.icon);
+                        {{"ACCEPT", true, true}, {"DECLINE"}, {"BLOCK"}}, s, r.icon, true);
       if (b == 0) social_do(SocialAction::Accept, r.uuid);
       if (b == 1) social_do(SocialAction::Decline, r.uuid);
       if (b == 2) social_do(SocialAction::Block, r.uuid);
     }
     for (const SocialRequest& r : v.lists.outgoing)   // GitHub #332: CANCEL takes the request back (the server's remove)
-      if (Row(("out" + r.uuid).c_str(), r.tag, XenosTr("Waiting for them to accept"), kDim, kDim, {{"CANCEL"}}, s, r.icon) == 0)
+      if (Row(("out" + r.uuid).c_str(), r.tag, XenosTr("Waiting for them to accept"), kDim, kDim, {{"CANCEL"}}, s, r.icon, true) == 0)
         social_do(SocialAction::Remove, r.uuid);
     if (v.lists.friends.empty()) Line(XenosTr("No friends yet - add one by their tag."), kDim, s);
-    // online friends first, then offline; each group as the server sorts it
     std::vector<const SocialFriend*> order;
     for (const SocialFriend& f : v.lists.friends) if (f.state != "offline") order.push_back(&f);
     for (const SocialFriend& f : v.lists.friends) if (f.state == "offline") order.push_back(&f);
@@ -281,7 +291,7 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
       const ImU32 col = offline ? kDim : joinable ? kAmber : kGreen;
       const std::string id = "fr" + f.uuid;
       if (g_remove_uuid == f.uuid) {
-        const int b = Row(id.c_str(), f.tag, XenosTr("Remove this friend?"), kAmber, col, {{"YES, REMOVE", true, true}, {"NO"}}, s, f.icon);
+        const int b = Row(id.c_str(), f.tag, XenosTr("Remove this friend?"), kAmber, col, {{"YES, REMOVE", true, true}, {"NO"}}, s, f.icon, true);
         if (b == 0) {
           social_do(SocialAction::Remove, f.uuid);
           g_remove_uuid.clear();
@@ -289,12 +299,11 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
         if (b == 1) g_remove_uuid.clear();
         continue;
       }
-      // only the buttons that do something here: Join when joinable, Invite when online, Remove (asks first)
       std::vector<SlotButton> buttons;
       if (joinable) buttons.push_back({"JOIN", true, true});
       if (!offline) buttons.push_back({"INVITE"});
       buttons.push_back({"REMOVE"});
-      const int b = Row(id.c_str(), f.tag, XenosTr(presence.c_str()), col, col, buttons, s, f.icon);
+      const int b = Row(id.c_str(), f.tag, XenosTr(presence.c_str()), col, col, buttons, s, f.icon, true);
       if (b < 0) continue;
       const std::string what = buttons[size_t(b)].label;
       if (what == "JOIN") {
@@ -311,51 +320,82 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
   }
   ImGui::EndChild();
   ImGui::SameLine(0, gap);
-  if (ImGui::BeginChild("##social_invites", ImVec2(0, avail.y), ImGuiChildFlags_NavFlattened)) {
-    Section("PARTY AND MATCH INVITES", s);
-    if (!v.have_account) {
-      Line(XenosTr("Invites show here once you're signed in."), kDim, s);
-    } else {
-      if (v.invites.empty()) Line(XenosTr("No invites right now."), kDim, s);
-      for (const SocialInvite& i : v.invites) {
-        const int b = Row(("inv" + i.id).c_str(), i.from_tag, GameName(i.title_id), kAmber, kGreen,
-                          {{"ACCEPT", true, true}, {"DECLINE"}}, s, i.from_icon);
-        if (b == 0) {
-          social_do(SocialAction::InviteAccept, i.id);
-          result = PageResult::CloseMenu;
-        }
-        if (b == 1) social_do(SocialAction::InviteDecline, i.id);
-      }
+  if (ImGui::BeginChild("##social_right", ImVec2(0, avail.y), ImGuiChildFlags_NavFlattened)) {
+    std::vector<SocialMatch> here;   // this game's open matches
+    {
+      rex::Runtime* rt = rex::Runtime::instance();
+      char tid[9] = {};
+      if (rt && rt->kernel_state()) std::snprintf(tid, sizeof tid, "%08X", rt->kernel_state()->title_id());
+      const int game = game_for_title(tid);
+      for (const SocialMatch& m : v.matches) if (game >= 0 && m.game == game) here.push_back(m);
     }
-    Line(XenosTr("You can invite friends while you host a lobby or match."), kDim, s);
-    // open matches: public matches with real players in them (no names); Join drops you in (join in progress)
-    if (v.have_account) {
-      ImGui::Dummy(ImVec2(0, 10.f * s));
-      Section("OPEN MATCHES", s);
-      // only this game's matches: another game's can't be joined from inside this one (the launcher lists them all)
-      std::vector<SocialMatch> here;
-      {
-        rex::Runtime* rt = rex::Runtime::instance();
-        char tid[9] = {};
-        if (rt && rt->kernel_state()) std::snprintf(tid, sizeof tid, "%08X", rt->kernel_state()->title_id());
-        const int game = game_for_title(tid);
-        for (const SocialMatch& m : v.matches) if (game >= 0 && m.game == game) here.push_back(m);
+    if (g_right < 0) g_right = v.invites.empty() ? 1 : 0;   // invites first when there are some
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false)) g_right = (g_right + 2) % 3;
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false)) g_right = (g_right + 1) % 3;
+    {
+      const std::string labels[3] = {
+          std::string(XenosTr("INVITES")) + (v.invites.empty() ? std::string() : " (" + std::to_string(v.invites.size()) + ")"),
+          std::string(XenosTr("MATCHES")) + (here.empty() ? std::string() : " (" + std::to_string(here.size()) + ")"),
+          std::string(XenosTr("RECENT"))};
+      const float tw = std::floor((ImGui::GetContentRegionAvail().x - 8.f * s) / 3.f);
+      for (int i = 0; i < 3; ++i) {
+        if (i) ImGui::SameLine(0, 4.f * s);
+        if (g_right == i) ImGui::PushStyleColor(ImGuiCol_Button, kRedButton);
+        if (ImGui::Button((labels[i] + "##sw" + std::to_string(i)).c_str(), ImVec2(tw, 0))) g_right = i;
+        if (g_right == i) ImGui::PopStyleColor();
       }
+      ImGui::Dummy(ImVec2(0, 6.f * s));
+    }
+    if (g_right == 0) {
+      if (!v.have_account) {
+        Line(XenosTr("Invites show here once you're signed in."), kDim, s);
+      } else {
+        if (v.invites.empty()) Line(XenosTr("No invites right now."), kDim, s);
+        for (const SocialInvite& i : v.invites) {
+          const int b = Row(("inv" + i.id).c_str(), i.from_tag, GameName(i.title_id), kAmber, kGreen,
+                            {{"ACCEPT", true, true}, {"DECLINE"}}, s, i.from_icon, true);
+          if (b == 0) {
+            social_do(SocialAction::InviteAccept, i.id);
+            result = PageResult::CloseMenu;
+          }
+          if (b == 1) social_do(SocialAction::InviteDecline, i.id);
+        }
+      }
+      Line(XenosTr("You can invite friends while you host a lobby or match."), kDim, s);
+    } else if (g_right == 1 && v.have_account) {
       if (!v.matches_known) Line(XenosTr("Looking for open matches..."), kDim, s);
       else if (here.empty()) Line(XenosTr("No open matches right now - host a public match and it shows up here."), kDim, s);
       for (const SocialMatch& m : here) {
         const std::string mode = match_mode(m), label = match_label(m);
         std::string details = label.size() > mode.size() + 4 ? label.substr(mode.size() + 4) : label;   // after "<mode> · "
-        // "In progress" only when the host says so (patch 84): a host without it never reports a start
         if (m.full() || m.in_progress) details += std::string(" \xC2\xB7 ") + XenosTr(m.full() ? "Full" : "In progress");
         const ImU32 col = m.full() ? kDim : m.in_progress ? kAmber : kGreen;
-        const int b = Row(("om" + m.lobby_id).c_str(), XenosTr(mode.c_str()), details, col, col, {{"JOIN", !m.full(), true}}, s, "");
+        const int b = Row(("om" + m.lobby_id).c_str(), XenosTr(mode.c_str()), details, col, col, {{"JOIN", !m.full(), true}}, s, "", true);
         if (b == 0) {
           g_note.clear();
           g_match_join = true;
           social_do(SocialAction::JoinMatch, m.lobby_id);
           result = PageResult::CloseMenu;
         }
+      }
+    } else if (g_right == 2 && v.have_account) {
+      if (!v.recent_known) Line(XenosTr("Looking for the players you met..."), kDim, s);
+      else if (v.recent.empty())
+        Line(XenosTr("Players with a COGBox tag you play online with show up here, so you can add them as friends."), kDim, s);
+      const long long now_ms = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch()).count();
+      for (const SocialRecent& r : v.recent) {
+        std::string where = GameName(r.title_id);
+        where += std::string(" \xC2\xB7 ") + XenosTr(recent_when(r.seen_at, now_ms).c_str());
+        std::vector<SlotButton> bs;
+        ImU32 col = kDim;
+        if (r.relation == "friend") { where += std::string(" \xC2\xB7 ") + XenosTr("Friend"); col = kGreen; }
+        else if (r.relation == "sent") { where += std::string(" \xC2\xB7 ") + XenosTr("Request sent"); col = kAmber; }
+        else if (r.relation == "incoming") bs.push_back({"ACCEPT", true, true});
+        else bs.push_back({"ADD FRIEND", true, true});
+        const int b = Row(("rp" + r.uuid).c_str(), r.tag, where, col, kDim, bs, s, r.icon, true);
+        if (b == 0 && r.relation == "incoming") social_do(SocialAction::Accept, r.uuid);
+        else if (b == 0) social_do(SocialAction::Add, r.tag);
       }
     }
   }

@@ -47,6 +47,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <xenos/window_icon.h>
 #include <atomic>
 #include <bit>
 #include <cstring>
@@ -734,7 +735,10 @@ namespace {
 std::atomic<void*> g_window{nullptr};
 std::atomic<uint64_t> g_surface{0};  // width << 32 | height
 }  // namespace
-void SetWindow(void* native_handle) { g_window.store(native_handle); }
+void SetWindow(void* native_handle) {
+  g_window.store(native_handle);
+  xenos::window_icon::SetWindow(native_handle);  // GitHub #355: the game's own icon
+}
 void SetSurfaceSize(uint32_t width, uint32_t height) {
   if (width && height) g_surface.store(uint64_t(width) << 32 | height);
 }

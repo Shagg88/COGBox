@@ -141,18 +141,36 @@ namespace
     // one fragment onto the parsed files; returns the number of key lines applied (problems are logged)
     int Apply(std::vector<File>& files, const std::filesystem::path& fragment, const std::string& modName, const Log& log)
     {
+        // review r369 F3 (security audit): a config fragment is a few hundred lines at most; a huge one (it would hang the
+        // launcher and the game at every start) is left out, with a line in the log
+        constexpr std::uintmax_t kMaxFragment = 256u << 10;
+        constexpr int kMaxFragmentLines = 4000;
+        {
+            std::error_code size_ec;
+            const std::uintmax_t size = std::filesystem::file_size(fragment, size_ec);
+            if (size_ec || size > kMaxFragment)
+            {
+                if (log) log(modName + " " + U8(fragment.filename()) + ": larger than 256 KB (or unreadable) - left out");
+                return 0;
+            }
+        }
         std::ifstream in(fragment, std::ios::binary);
         std::string line;
         File* file = nullptr; Section* sec = nullptr;
-        std::vector<std::u16string> replaced;
-        int applied = 0, lineNo = 0;
+        std::set<std::u16string> replaced;
+        int applied = 0, lineNo = 0, problems = 0;
         while (std::getline(in, line))
         {
             lineNo++;
+            if (lineNo > kMaxFragmentLines)
+            {
+                if (log) log(modName + " " + U8(fragment.filename()) + ": more than 4000 lines - the rest left out");
+                break;
+            }
             if (lineNo == 1 && line.size() >= 3 && (uint8_t)line[0] == 0xEF && (uint8_t)line[1] == 0xBB && (uint8_t)line[2] == 0xBF) line.erase(0, 3);
             line = Trim(line);
             if (line.empty() || line[0] == ';' || (line[0] == '#' && line.rfind("#####", 0) != 0)) continue;
-            auto bad = [&](const char* why) { if (log) log(modName + " " + U8(fragment.filename()) + ":" + std::to_string(lineNo) + ": " + why); };
+            auto bad = [&](const char* why) { if (log && ++problems <= 50) log(modName + " " + U8(fragment.filename()) + ":" + std::to_string(lineNo) + ": " + why); };
             if (line.rfind("#####", 0) == 0)
             {
                 const std::u16string want = LowerW(Widen(Trim(line.substr(5))));
@@ -197,11 +215,8 @@ namespace
             }
             else
             {
-                if (std::find(replaced.begin(), replaced.end(), lowKey) == replaced.end())
-                {
+                if (replaced.insert(lowKey).second)
                     keys.erase(std::remove_if(keys.begin(), keys.end(), same), keys.end());
-                    replaced.push_back(lowKey);
-                }
                 keys.emplace_back(key, value);
             }
             applied++;
@@ -215,9 +230,18 @@ std::vector<uint8_t> MergeConfig(const std::vector<uint8_t>& base, const std::ve
 {
     std::vector<File> files;
     if (base.empty() || !Parse(base, files)) return {};
+    // review r369 audit F3: a bound on the whole merge too (each key line can scan its section), far above real mods
+    constexpr long kMaxMergedLines = 20000;
+    long merged = 0;
     for (const auto& [mod, frag] : fragments)
     {
+        if (merged > kMaxMergedLines)
+        {
+            if (log) log("config " + U8(frag.filename()) + " from " + mod + ": left out (the mods' config fragments add up to more than 20,000 lines)");
+            continue;
+        }
         const int n = Apply(files, frag, mod, log);
+        merged += n;
         if (log) log("config " + U8(frag.filename()) + " from " + mod + ": " + std::to_string(n) + " lines");
     }
     return Write(files);

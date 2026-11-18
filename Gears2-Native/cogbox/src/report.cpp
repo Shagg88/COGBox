@@ -109,6 +109,15 @@ static std::vector<std::string> adapters_text()
     return out;
 }
 
+std::string report_graphics_fingerprint()
+{
+    std::vector<std::string> ads = adapters_text();
+    std::sort(ads.begin(), ads.end());   // (review r91897: DXGI lists the adapter driving the main display first - that changes)
+    std::string s;
+    for (const std::string &a : ads) s += a + "; ";
+    return s;
+}
+
 std::vector<std::string> report_gpu_names()
 {
     std::vector<std::string> out;

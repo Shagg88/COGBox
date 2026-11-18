@@ -102,7 +102,7 @@ REXCVAR_DEFINE_INT32(ue3_shader_prebuild_play_pace, -1, "Gears2",
                      "0.6.3: while the game is being played, how much of each reader thread's time goes to the start-up "
                      "list (percent; it reads a file, then rests 3x as long at 25). Packages the game opens itself are "
                      "never paced; loading screens, menus and videos read at full speed. -1 = auto (25 on 8 logical "
-                     "processors or fewer; else 100 = as before)");
+                     "processors or fewer; else 50 - 0.6.5, was 100)");
 REXCVAR_DEFINE_BOOL(ue3_shader_prebuild_done_list, true, "Gears2",
                     "0.6.3: remember packages read to the end (<shader cache>\\prebuild-done.bin: path, size, date, and "
                     "the recipe pack's shaders found in them) so the next start does not read them again; a changed or "
@@ -1091,7 +1091,9 @@ void Ue3InstallShaderPrebuildIfRequested() {
   const bool small_cpu = hw <= 8;
   {
     const int pace = REXCVAR_GET(ue3_shader_prebuild_play_pace);
-    g_prebuild->pace = pace < 0 ? (small_cpu ? 25 : 100) : std::clamp(pace, 1, 100);
+    // 0.6.5 (job 2021: on 16 logical processors the readers read at full speed during play and kept handing new shaders
+    // to translation while frames spiked): auto paces every CPU - 25 on 8 or fewer, 50 above.
+    g_prebuild->pace = pace < 0 ? (small_cpu ? 25 : 50) : std::clamp(pace, 1, 100);
   }
   const std::string cache = rex::cvar::GetFlagByName("gow2_shader_cache_dir");
   if (REXCVAR_GET(ue3_shader_prebuild_done_list) && !cache.empty()) {  // 0.6.3

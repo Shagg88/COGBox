@@ -42,11 +42,42 @@ struct Ini {
     void remove_section(const std::string &sec);   // 0.6.3: the [sec] line too, and everything under it
 };
 
+// Review r369 F1: a file's or folder's real path (links followed; "" if it can't be opened), and whether child_path is
+// really inside real_parent (its real path is real_parent\\name) rather than a link to somewhere else - also a Wine Unix
+// symlink, which has no reparse-point attribute.
+std::wstring real_path(const std::wstring &p);
+bool is_plain_child(const std::wstring &real_parent, const std::wstring &child_path, const std::wstring &name);
+
+// Review r369 audit F1: folders COGBox made itself. dir_claim writes a random token into <dir>\.cogbox-owned and keeps it
+// in <COGBox>\fabricator\owned.txt; dir_owned is true only for a folder holding a token from that list (a mod or a
+// hand-made folder can't know one). mods_remove_tree removes only such folders. The token moves with the folder.
+// The registry line also holds the folder's identity (volume, file index), and the marker must be a plain, single-link
+// file really inside the folder, so a marker copied, hard-linked or symlinked from another folder counts for nothing.
+bool dir_claim(const std::string &dir);
+bool dir_owned(const std::string &dir);
+std::string dir_owned_token(const std::string &dir);   // "" none
+void dir_disown_token(const std::string &tok);         // after the folder is gone
+// After an unpack into an owned folder: its files and folders with their identities, kept in the marker; a removal
+// deletes only entries whose identity still matches (a link or a swapped-in name is a different file).
+struct OwnedEntry { bool folder = false; uint64_t volume = 0, index = 0; std::string rel; };
+bool dir_record_contents(const std::string &dir);
+bool dir_recorded_contents(const std::string &dir, std::vector<OwnedEntry> &out);
+bool file_identity(const std::string &path, uint64_t *volume, uint64_t *index, uint32_t *links);
+bool running_under_wine();
+
+// Review r369: a game program (gow1.exe, gow2.exe, gow3.exe, gowj.exe) is running, started by COGBox or not (Steam,
+// a shortcut, the exe itself) - what the mods folder's writers check besides the launcher's own a.run.proc. Looked up
+// at most once a second (the answer is kept); any thread.
+bool any_game_exe_running();
+
 // Opens a folder or a web page with Windows' own handler.
 void shell_open(const std::string &target);
 void shell_select(const std::string &file);   // Explorer opens the folder with that file selected
 // Windows' folder / file pickers (empty = cancelled). filter is like L"Disc images\0*.iso\0All files\0*.*\0".
 std::string pick_folder(const wchar_t *title);
 std::string pick_file(const wchar_t *title, const wchar_t *filter);
+// The save box (the Fabricator's "Make a zip"): default_name filled in, default_ext (L"zip") added when the name has
+// none; it asks before replacing a file. Empty = cancelled.
+std::string pick_save_file(const wchar_t *title, const wchar_t *filter, const std::string &default_name, const wchar_t *default_ext);
 // Known folders
 std::string desktop_dir();

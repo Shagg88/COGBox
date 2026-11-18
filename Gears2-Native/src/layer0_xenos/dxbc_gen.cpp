@@ -9,7 +9,10 @@
 #include <cmath>
 #include <cstring>
 #include <format>
+#include <memory>
 #include <set>
+#include <type_traits>
+#include <utility>
 
 #include <rex/graphics/format/dxbc.h>
 
@@ -23,48 +26,96 @@ namespace {
 // fewer than 8 bytes are left), and the last dword is (bits >> 2) | 1. Written here from that description (the SDK's
 // copy, thirdparty/dxbc/DXBCChecksum.cpp, lives inside its GPU plug-in DLL and is not exported); the local tests check
 // it against that copy on every shader of the corpus.
+// Shader warm-up speed (17 Nov): the 64 MD5 steps written out (the same function as the loop it replaces - RFC 1321's
+// reference form; the loop's per-step round test and table look-ups were about 8% of the translation in a profile).
+#define MD5_F(x, y, z) (((x) & (y)) | (~(x) & (z)))
+#define MD5_G(x, y, z) (((z) & (x)) | (~(z) & (y)))
+#define MD5_H(x, y, z) ((x) ^ (y) ^ (z))
+#define MD5_I(x, y, z) ((y) ^ ((x) | ~(z)))
+#define MD5_STEP(f, a, b, c, d, x, k, r)          \
+  do {                                            \
+    const uint32_t t_ = a + MD5_##f(b, c, d) + (x) + (k); \
+    a = b + ((t_ << (r)) | (t_ >> (32 - (r))));    \
+  } while (0)
 void Md5Block(uint32_t st[4], const uint8_t* p) {
-  static constexpr uint32_t kK[64] = {
-      0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-      0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-      0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-      0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-      0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-      0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-      0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-      0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391};
-  static constexpr uint32_t kR[16] = {7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21};
   uint32_t m[16];
   for (int i = 0; i < 16; ++i)
     m[i] = uint32_t(p[4 * i]) | (uint32_t(p[4 * i + 1]) << 8) | (uint32_t(p[4 * i + 2]) << 16) | (uint32_t(p[4 * i + 3]) << 24);
   uint32_t a = st[0], b = st[1], c = st[2], d = st[3];
-  for (uint32_t i = 0; i < 64; ++i) {
-    uint32_t f, g;
-    if (i < 16) {
-      f = (b & c) | (~b & d);
-      g = i;
-    } else if (i < 32) {
-      f = (d & b) | (~d & c);
-      g = (5 * i + 1) & 15;
-    } else if (i < 48) {
-      f = b ^ c ^ d;
-      g = (3 * i + 5) & 15;
-    } else {
-      f = c ^ (b | ~d);
-      g = (7 * i) & 15;
-    }
-    const uint32_t r = kR[(i >> 4) * 4 + (i & 3)];
-    const uint32_t t = a + f + kK[i] + m[g];
-    a = d;
-    d = c;
-    c = b;
-    b = b + ((t << r) | (t >> (32 - r)));
-  }
+  MD5_STEP(F, a, b, c, d, m[0], 0xd76aa478u, 7);
+  MD5_STEP(F, d, a, b, c, m[1], 0xe8c7b756u, 12);
+  MD5_STEP(F, c, d, a, b, m[2], 0x242070dbu, 17);
+  MD5_STEP(F, b, c, d, a, m[3], 0xc1bdceeeu, 22);
+  MD5_STEP(F, a, b, c, d, m[4], 0xf57c0fafu, 7);
+  MD5_STEP(F, d, a, b, c, m[5], 0x4787c62au, 12);
+  MD5_STEP(F, c, d, a, b, m[6], 0xa8304613u, 17);
+  MD5_STEP(F, b, c, d, a, m[7], 0xfd469501u, 22);
+  MD5_STEP(F, a, b, c, d, m[8], 0x698098d8u, 7);
+  MD5_STEP(F, d, a, b, c, m[9], 0x8b44f7afu, 12);
+  MD5_STEP(F, c, d, a, b, m[10], 0xffff5bb1u, 17);
+  MD5_STEP(F, b, c, d, a, m[11], 0x895cd7beu, 22);
+  MD5_STEP(F, a, b, c, d, m[12], 0x6b901122u, 7);
+  MD5_STEP(F, d, a, b, c, m[13], 0xfd987193u, 12);
+  MD5_STEP(F, c, d, a, b, m[14], 0xa679438eu, 17);
+  MD5_STEP(F, b, c, d, a, m[15], 0x49b40821u, 22);
+  MD5_STEP(G, a, b, c, d, m[1], 0xf61e2562u, 5);
+  MD5_STEP(G, d, a, b, c, m[6], 0xc040b340u, 9);
+  MD5_STEP(G, c, d, a, b, m[11], 0x265e5a51u, 14);
+  MD5_STEP(G, b, c, d, a, m[0], 0xe9b6c7aau, 20);
+  MD5_STEP(G, a, b, c, d, m[5], 0xd62f105du, 5);
+  MD5_STEP(G, d, a, b, c, m[10], 0x02441453u, 9);
+  MD5_STEP(G, c, d, a, b, m[15], 0xd8a1e681u, 14);
+  MD5_STEP(G, b, c, d, a, m[4], 0xe7d3fbc8u, 20);
+  MD5_STEP(G, a, b, c, d, m[9], 0x21e1cde6u, 5);
+  MD5_STEP(G, d, a, b, c, m[14], 0xc33707d6u, 9);
+  MD5_STEP(G, c, d, a, b, m[3], 0xf4d50d87u, 14);
+  MD5_STEP(G, b, c, d, a, m[8], 0x455a14edu, 20);
+  MD5_STEP(G, a, b, c, d, m[13], 0xa9e3e905u, 5);
+  MD5_STEP(G, d, a, b, c, m[2], 0xfcefa3f8u, 9);
+  MD5_STEP(G, c, d, a, b, m[7], 0x676f02d9u, 14);
+  MD5_STEP(G, b, c, d, a, m[12], 0x8d2a4c8au, 20);
+  MD5_STEP(H, a, b, c, d, m[5], 0xfffa3942u, 4);
+  MD5_STEP(H, d, a, b, c, m[8], 0x8771f681u, 11);
+  MD5_STEP(H, c, d, a, b, m[11], 0x6d9d6122u, 16);
+  MD5_STEP(H, b, c, d, a, m[14], 0xfde5380cu, 23);
+  MD5_STEP(H, a, b, c, d, m[1], 0xa4beea44u, 4);
+  MD5_STEP(H, d, a, b, c, m[4], 0x4bdecfa9u, 11);
+  MD5_STEP(H, c, d, a, b, m[7], 0xf6bb4b60u, 16);
+  MD5_STEP(H, b, c, d, a, m[10], 0xbebfbc70u, 23);
+  MD5_STEP(H, a, b, c, d, m[13], 0x289b7ec6u, 4);
+  MD5_STEP(H, d, a, b, c, m[0], 0xeaa127fau, 11);
+  MD5_STEP(H, c, d, a, b, m[3], 0xd4ef3085u, 16);
+  MD5_STEP(H, b, c, d, a, m[6], 0x04881d05u, 23);
+  MD5_STEP(H, a, b, c, d, m[9], 0xd9d4d039u, 4);
+  MD5_STEP(H, d, a, b, c, m[12], 0xe6db99e5u, 11);
+  MD5_STEP(H, c, d, a, b, m[15], 0x1fa27cf8u, 16);
+  MD5_STEP(H, b, c, d, a, m[2], 0xc4ac5665u, 23);
+  MD5_STEP(I, a, b, c, d, m[0], 0xf4292244u, 6);
+  MD5_STEP(I, d, a, b, c, m[7], 0x432aff97u, 10);
+  MD5_STEP(I, c, d, a, b, m[14], 0xab9423a7u, 15);
+  MD5_STEP(I, b, c, d, a, m[5], 0xfc93a039u, 21);
+  MD5_STEP(I, a, b, c, d, m[12], 0x655b59c3u, 6);
+  MD5_STEP(I, d, a, b, c, m[3], 0x8f0ccc92u, 10);
+  MD5_STEP(I, c, d, a, b, m[10], 0xffeff47du, 15);
+  MD5_STEP(I, b, c, d, a, m[1], 0x85845dd1u, 21);
+  MD5_STEP(I, a, b, c, d, m[8], 0x6fa87e4fu, 6);
+  MD5_STEP(I, d, a, b, c, m[15], 0xfe2ce6e0u, 10);
+  MD5_STEP(I, c, d, a, b, m[6], 0xa3014314u, 15);
+  MD5_STEP(I, b, c, d, a, m[13], 0x4e0811a1u, 21);
+  MD5_STEP(I, a, b, c, d, m[4], 0xf7537e82u, 6);
+  MD5_STEP(I, d, a, b, c, m[11], 0xbd3af235u, 10);
+  MD5_STEP(I, c, d, a, b, m[2], 0x2ad7d2bbu, 15);
+  MD5_STEP(I, b, c, d, a, m[9], 0xeb86d391u, 21);
   st[0] += a;
   st[1] += b;
   st[2] += c;
   st[3] += d;
 }
+#undef MD5_STEP
+#undef MD5_F
+#undef MD5_G
+#undef MD5_H
+#undef MD5_I
 void DxbcChecksum(const uint8_t* container, uint32_t size_bytes, uint32_t hash[4]) {
   uint32_t st[4] = {0x67452301u, 0xefcdab89u, 0x98badcfeu, 0x10325476u};
   const uint8_t* p = container + 20;
@@ -117,7 +168,9 @@ std::atomic<uint64_t> g_rule_hits[3];  // patch 0087 (CanaryRuleHits)
 
 struct Gen {
   Gen(const Program& program, const hlsl::HlslOptions& options, bool final_pass)
-      : p(program), opt(options), final(final_pass) {}
+      : p(program), opt(options), final(final_pass) {
+    code.reserve(kCodeRoom * 4);  // see Room()
+  }
   const Program& p;
   const hlsl::HlslOptions& opt;
   const bool final;  // the second pass: the first only gathers the facts below
@@ -147,6 +200,18 @@ struct Gen {
   std::vector<uint32_t> code;
   dx::Statistics stat{};
   dx::Assembler a{code, stat};
+  // Shader warm-up speed (Shagg 17 Nov; job 1993: 124-133 s of thread time translating Gears 3's 9,303 shaders, 30 s of
+  // it in the kernel, 2.2 million page faults): the SDK's Assembler reserves exactly size + n words before EVERY
+  // instruction (rex/graphics/format/dxbc.h EmitAluOp), which defeats std::vector's doubling - each instruction moved
+  // the whole shader so far to a new block (quadratic; 41% of the translation in a profile, and on Windows the big
+  // blocks come from the OS each time). Room() keeps at least kCodeRoom words spare, doubling the block when it runs
+  // low, so the SDK's reserve never moves anything. Called before each guest instruction and each larger block; one
+  // guest instruction makes far fewer words than this. Missing a call only costs speed (the SDK's reserve still
+  // works); the code produced is the same either way.
+  static constexpr size_t kCodeRoom = 4096;
+  void Room() {
+    if (code.capacity() - code.size() < kCodeRoom) code.reserve(std::max(code.capacity() * 2, code.size() + kCodeRoom * 2));
+  }
 
   // Temps: the Xenos registers (r0..regs-1, unless in x0), then fixed system temps, then a scratch stack.
   uint32_t base = 0;
@@ -2010,6 +2075,7 @@ struct Gen {
   // ---- Control flow (hlsl.cpp EmitStraightLine / EmitPcLoop) ----
   void EmitExecBody(const ControlFlow& cf) {
     for (const Instruction& ins : cf.instructions) {
+      Room();
       switch (ins.kind) {
         case Instruction::Kind::kAlu: EmitAlu(ins.alu); break;
         case Instruction::Kind::kVertexFetch: EmitVertexFetch(ins.vfetch); break;
@@ -2418,6 +2484,7 @@ struct Gen {
   }
 
   void EmitMemexportFlush() {
+    Room();
     Scope sc(*this);
     const uint32_t w = Push(), c = Push(), ea = Push(), m = Push(), bic = Push(), i = Push(), v = Push(), d = Push(),
                    sz = Push(), t = Push(), u = Push();
@@ -2597,6 +2664,7 @@ struct Gen {
 
   // ---- Shader body: prologue, translated program, epilogue (hlsl.cpp TranslateToHlsl) ----
   void EmitMain() {
+    Room();
     const bool vs = p.is_vertex_shader;
     // Every register and system temp starts at 0.
     for (uint32_t i = 0; i < regs; ++i) a.OpMov(RegDest(i, UINT32_MAX, kXYZW), LF(0.0f));
@@ -2886,14 +2954,29 @@ struct Small {
   const T* end() const { return a + n; }
 };
 struct Op {  // no member defaults (cheap to hold in arrays): ParseOp sets every field
-  size_t at, len;       // whole operand tokens [at, at + len)
-  uint32_t type, mask, sel, comps, dim;
+  // 17 Nov: narrow fields (20 bytes, was 48) - every pass copies 12 per instruction. Each holds its whole range: a
+  // shader is far below 4G words, type is 8 bits of the token, mask / read_comps 4, sel / comps / dim 2.
+  uint32_t at, len;     // whole operand tokens [at, at + len)
+  uint8_t type, mask, sel, comps, dim;
   bool mod, rel;
   uint32_t index0;
-  uint32_t read_comps;  // components a read of it can touch (from the swizzle / select)
+  uint8_t read_comps;   // components a read of it can touch (from the swizzle / select)
 };
+static_assert(sizeof(Op) <= 24);
+// 17 Nov: the components a 4-component swizzle (8 bits) reads, as a table made from the loop it replaces.
+struct SwizzleReads {
+  uint8_t v[256];
+  constexpr SwizzleReads() : v() {
+    for (uint32_t s = 0; s < 256; ++s) {
+      uint32_t r = 0;
+      for (int i = 0; i < 4; ++i) r |= 1u << ((s >> (2 * i)) & 3);
+      v[s] = uint8_t(r);
+    }
+  }
+};
+inline constexpr SwizzleReads kSwizzleReads{};
 inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, Small<Op, 4>* nested) {
-  o.at = p;
+  o.at = uint32_t(p);
   o.len = 0;
   o.mask = 0xF;
   o.read_comps = 0xF;
@@ -2908,8 +2991,7 @@ inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, Small<Op,
   if (o.comps == 2) {
     if (o.sel == 0) o.mask = cdata & 0xF;
     else if (o.sel == 1) {
-      o.read_comps = 0;
-      for (int i = 0; i < 4; ++i) o.read_comps |= 1u << ((cdata >> (2 * i)) & 3);
+      o.read_comps = kSwizzleReads.v[cdata];
     } else o.read_comps = 1u << (cdata & 3);
   } else if (o.comps == 1) {
     o.read_comps = 1;
@@ -2925,7 +3007,7 @@ inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, Small<Op,
   if (o.type == 4 || o.type == 5) {  // immediates
     const size_t n = (o.comps == 1 ? 1 : 4) * (o.type == 5 ? 2 : 1);
     p += n;
-    o.len = p - o.at;
+    o.len = uint32_t(p - o.at);
     return p;
   }
   for (uint32_t i = 0; i < o.dim; ++i) {
@@ -2943,7 +3025,7 @@ inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, Small<Op,
       if (nested) nested->push_back(inner);
     }
   }
-  o.len = p - o.at;
+  o.len = uint32_t(p - o.at);
   return p;
 }
 struct Ins {
@@ -2979,8 +3061,21 @@ inline bool ParseIns(const std::vector<uint32_t>& c, size_t p, Ins& in) {
   }
   return q == p + in.len && !in.ops.overflow && !in.rel_ops.overflow;
 }
+// Shader warm-up speed (17 Nov): the parsed instruction lists. emplace_back() value-initialises, and an Ins (with member
+// defaults) is then zero-filled whole first - 650 bytes of operand slots that ParseIns overwrites anyway (about 10% of
+// the translation in a profile). This allocator default-initialises instead: the member defaults still apply, the
+// operand arrays are left for ParseIns, which sets every field it reads (Small: only [0, n) is read).
+template <class T>
+struct DefaultInit : std::allocator<T> {
+  template <class U> struct rebind { using other = DefaultInit<U>; };
+  DefaultInit() = default;
+  template <class U> DefaultInit(const DefaultInit<U>&) noexcept {}
+  template <class U> void construct(U* p) noexcept(std::is_nothrow_default_constructible_v<U>) { ::new (static_cast<void*>(p)) U; }
+  template <class U, class... A> void construct(U* p, A&&... a) { ::new (static_cast<void*>(p)) U(std::forward<A>(a)...); }
+};
+using InsList = std::vector<Ins, DefaultInit<Ins>>;
 // Opcodes that write their first operand and work per component (or replicate one value): the ones I may be.
-inline bool PerComponent(uint32_t op) {
+constexpr bool PerComponentSwitch(uint32_t op) {
   switch (op) {
     case 0: case 1: case 14: case 15: case 16: case 17: case 24: case 25: case 26: case 27: case 28: case 29: case 30:
     case 32: case 33: case 34: case 35: case 36: case 37: case 39: case 41: case 42: case 43: case 47: case 49:
@@ -2992,8 +3087,8 @@ inline bool PerComponent(uint32_t op) {
   }
 }
 // Opcodes whose first operand is a destination (others: every operand is read).
-inline uint32_t DestCount(uint32_t op) {
-  if (PerComponent(op)) return 1;
+constexpr uint32_t DestCountSwitch(uint32_t op) {
+  if (PerComponentSwitch(op)) return 1;
   switch (op) {
     case 77: case 38: case 78: case 81:  // sincos, imul, udiv, umul: two destinations
       return 2;
@@ -3003,6 +3098,17 @@ inline uint32_t DestCount(uint32_t op) {
     default: return 0;
   }
 }
+// 17 Nov: the two above as tables made from them at compile time (an opcode is 11 bits) - they are asked for every
+// operand of every instruction in every pass; the switches stay the single source.
+struct OpClass {
+  uint8_t per_component[2048], dests[2048];
+  constexpr OpClass() : per_component(), dests() {
+    for (uint32_t o = 0; o < 2048; ++o) per_component[o] = PerComponentSwitch(o) ? 1 : 0, dests[o] = uint8_t(DestCountSwitch(o));
+  }
+};
+inline constexpr OpClass kOpClass{};
+inline bool PerComponent(uint32_t op) { return op < 2048 ? kOpClass.per_component[op] != 0 : PerComponentSwitch(op); }
+inline uint32_t DestCount(uint32_t op) { return op < 2048 ? kOpClass.dests[op] : DestCountSwitch(op); }
 inline bool FlowOut(uint32_t op) {  // leaves the block backwards / sideways: endloop, continue(c), break(c), case, default
   return op == 22 || op == 7 || op == 8 || op == 2 || op == 3 || op == 6 || op == 10 || op == 23;
 }
@@ -3015,8 +3121,8 @@ inline bool FlowOut(uint32_t op) {  // leaves the block backwards / sideways: en
 struct TouchIndex {
   std::vector<std::vector<uint32_t>> by_temp;
   std::vector<uint32_t> flow;
-  void Build(const std::vector<Ins>& v) {
-    by_temp.clear();
+  void Build(const InsList& v) {
+    for (auto& l : by_temp) l.clear();  // kept for the next pass (an empty list reads the same as no list)
     flow.clear();
     for (uint32_t i = 0; i < uint32_t(v.size()); ++i) {
       const Ins& in = v[i];
@@ -3039,7 +3145,7 @@ struct TouchIndex {
   }
 };
 inline thread_local const TouchIndex* g_touch = nullptr;
-inline bool LiveAfterScan(const std::vector<Ins>& v, const std::vector<uint32_t>& c, size_t k, uint32_t t, uint32_t live);
+inline bool LiveAfterScan(const InsList& v, const std::vector<uint32_t>& c, size_t k, uint32_t t, uint32_t live);
 // Job 637: backward liveness of every temp component after every instruction, for programs with no loop or switch
 // (all but a handful once forward jumps are if / else): at an endif both parts start from what is live after it, at
 // the if the two are joined (a component written on one path only stays live). With a loop or switch, the forward
@@ -3047,9 +3153,11 @@ inline bool LiveAfterScan(const std::vector<Ins>& v, const std::vector<uint32_t>
 struct Liveness {
   bool ok = false;
   uint32_t temps = 0;
-  std::vector<uint8_t> after;  // [instruction * temps + temp] = live components after it
+  // [instruction * temps + temp] = live components after it. Not zero-filled (17 Nov): Build copies every
+  // instruction's row in before anything reads it, and when Build stops early `ok` stays false and nothing reads it.
+  std::vector<uint8_t, DefaultInit<uint8_t>> after;
   uint8_t At(size_t i, uint32_t t) const { return t < temps ? after[i * temps + t] : 0; }
-  void Build(const std::vector<Ins>& v, const std::vector<uint32_t>& c) {
+  void Build(const InsList& v, const std::vector<uint32_t>& c) {
     ok = false;
     temps = 0;
     for (const Ins& in : v) {
@@ -3061,7 +3169,7 @@ struct Liveness {
       for (const Op& o : in.rel_ops)
         if (o.type == 0 && o.dim == 1) temps = std::max(temps, o.index0 + 1);
     }
-    after.assign(v.size() * size_t(temps), 0);
+    after.resize(v.size() * size_t(temps));
     std::vector<uint8_t> live(temps, 0);
     struct Frame {
       std::vector<uint8_t> at_end, else_start;
@@ -3122,11 +3230,11 @@ struct Liveness {
   }
 };
 inline thread_local const Liveness* g_live = nullptr;
-inline bool LiveAfter(const std::vector<Ins>& v, const std::vector<uint32_t>& c, size_t k, uint32_t t, uint32_t live) {
+inline bool LiveAfter(const InsList& v, const std::vector<uint32_t>& c, size_t k, uint32_t t, uint32_t live) {
   if (g_live && g_live->ok) return (g_live->At(k, t) & live) != 0;
   return LiveAfterScan(v, c, k, t, live);
 }
-inline bool LiveAfterScan(const std::vector<Ins>& v, const std::vector<uint32_t>& c, size_t k, uint32_t t, uint32_t live) {
+inline bool LiveAfterScan(const InsList& v, const std::vector<uint32_t>& c, size_t k, uint32_t t, uint32_t live) {
   // Per open block: the live set, its kind (0 base, 1 if, 2 loop / switch, 3 the other part of an outer if) and the
   // live set when it opened. Deeper than 32: say live (conservative).
   struct Stack {
@@ -3244,7 +3352,7 @@ inline bool LiveAfterScan(const std::vector<Ins>& v, const std::vector<uint32_t>
 // plain temps / outputs with immediate indices and no modifiers; when source and destination are the same register,
 // only if each component reads itself (otherwise a later mov would read an updated component).
 inline uint32_t MergeComponentMovs(std::vector<uint32_t>& c) {
-  std::vector<Ins> v;
+  InsList v;
   v.reserve(c.size() / 6);
   for (size_t p = 0; p < c.size();) {
     v.emplace_back();
@@ -3312,17 +3420,87 @@ inline uint32_t MergeComponentMovs(std::vector<uint32_t>& c) {
 }
 inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
   uint32_t removed = 0;
+  // Shader warm-up speed (17 Nov): the lists are made once and reused by every pass (cleared, capacity kept) - fewer
+  // heap calls from the warm-up's many threads at once. The same code comes out.
+  InsList v, v_next;
+  std::vector<uint32_t> out;
+  TouchIndex touch;
+  Liveness liveness;
+  // 17 Nov: each pass also builds the next pass's parse of its output (v_next): an instruction copied unchanged keeps
+  // its parse with every offset moved to where it now is, a new (fused) one is parsed as it is written. Only the first
+  // pass parses the whole shader. ParseIns depends only on the instruction's own words, so this is the parse the next
+  // pass would make; one it can't parse (next_bad) ends the run where the full parse would have.
+  bool have_next = false, next_bad = false;
   for (int pass = 0; pass < 8; ++pass) {
-    std::vector<Ins> v;
-    v.reserve(c.size() / 6);
-    for (size_t p = 0; p < c.size();) {
-      v.emplace_back();
-      if (!ParseIns(c, p, v.back())) return removed;  // something we don't parse: leave the code as it is
-      p += v.back().len;
+    if (have_next) {
+      v.swap(v_next);
+    } else {
+      v.clear();
+      v.reserve(c.size() / 6);
+      for (size_t p = 0; p < c.size();) {
+        v.emplace_back();
+        if (!ParseIns(c, p, v.back())) return removed;  // something we don't parse: leave the code as it is
+        p += v.back().len;
+      }
     }
-    TouchIndex touch;  // job 637
-    touch.Build(v);
-    Liveness liveness;
+#ifdef COGBOX_COALESCE_VERIFY
+    {  // test builds: the carried parse must equal a fresh one, field by field
+      InsList f;
+      size_t p = 0;
+      for (; p < c.size();) {
+        f.emplace_back();
+        if (!ParseIns(c, p, f.back())) break;
+        p += f.back().len;
+      }
+      bool same = p >= c.size() && f.size() == v.size();
+      auto op_eq = [](const Op& x, const Op& y) {
+        return x.at == y.at && x.len == y.len && x.type == y.type && x.mask == y.mask && x.sel == y.sel &&
+               x.comps == y.comps && x.dim == y.dim && x.mod == y.mod && x.rel == y.rel && x.index0 == y.index0 &&
+               x.read_comps == y.read_comps;
+      };
+      for (size_t k = 0; same && k < f.size(); ++k) {
+        const Ins& x = f[k];
+        const Ins& y = v[k];
+        same = x.at == y.at && x.len == y.len && x.ops_at == y.ops_at && x.op == y.op && x.sat == y.sat &&
+               x.ext == y.ext && x.ops.n == y.ops.n && x.rel_ops.n == y.rel_ops.n;
+        for (size_t o = 0; same && o < x.ops.n; ++o) same = op_eq(x.ops[o], y.ops[o]);
+        for (size_t o = 0; same && o < x.rel_ops.n; ++o) same = op_eq(x.rel_ops[o], y.rel_ops[o]);
+      }
+      if (!same) std::abort();
+    }
+#endif
+    v_next.clear();
+    v_next.reserve(v.size());
+    next_bad = false;
+    // I copied unchanged to the end of `out`: its parse moves with it
+    auto keep = [&](const Ins& I) {
+      const size_t na = out.size();
+      out.insert(out.end(), c.begin() + I.at, c.begin() + I.at + I.len);
+      v_next.emplace_back();  // default-initialised (InsList): only the used operand slots are copied
+      Ins& m = v_next.back();
+      m.at = na;
+      m.len = I.len;
+      m.ops_at = I.ops_at ? I.ops_at - I.at + na : 0;
+      m.op = I.op;
+      m.sat = I.sat;
+      m.ext = I.ext;
+      m.ops.n = I.ops.n;
+      m.ops.overflow = I.ops.overflow;
+      m.rel_ops.n = I.rel_ops.n;
+      m.rel_ops.overflow = I.rel_ops.overflow;
+      for (size_t o = 0; o < I.ops.n; ++o) m.ops.a[o] = I.ops.a[o], m.ops.a[o].at = uint32_t(I.ops.a[o].at - I.at + na);
+      for (size_t o = 0; o < I.rel_ops.n; ++o)
+        m.rel_ops.a[o] = I.rel_ops.a[o], m.rel_ops.a[o].at = uint32_t(I.rel_ops.a[o].at - I.at + na);
+    };
+    // a new instruction written to the end of `out`, parsed there
+    auto add_new = [&](const std::vector<uint32_t>& ni) {
+      const size_t na = out.size();
+      out.insert(out.end(), ni.begin(), ni.end());
+      if (next_bad) return;
+      v_next.emplace_back();
+      if (!ParseIns(out, na, v_next.back()) || v_next.back().len != ni.size()) next_bad = true;
+    };
+    touch.Build(v);  // job 637
     liveness.Build(v, c);
     struct LiveScope {
       LiveScope(const Liveness* l) { g_live = l; }
@@ -3332,7 +3510,7 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
       TouchScope(const TouchIndex* t) { g_touch = t; }
       ~TouchScope() { g_touch = nullptr; }
     } touch_scope(&touch);
-    std::vector<uint32_t> out;
+    out.clear();
     out.reserve(c.size());
     uint32_t here = 0;
     for (size_t i = 0; i < v.size(); ++i) {
@@ -3393,7 +3571,7 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
             ni.insert(ni.end(), c.begin() + is.at, c.begin() + is.at + is.len);
             ni[sp] = (ni[sp] & ~((3u << 2) | (0xFFu << 4))) | (1u << 2) | (swz << 4);
             ni[0] = (ni[0] & ~(0x7Fu << 24)) | (uint32_t(ni.size()) << 24);
-            out.insert(out.end(), ni.begin(), ni.end());
+            add_new(ni);
             ++i;
             ++here;
             continue;
@@ -3435,7 +3613,7 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
             ni.insert(ni.end(), c.begin() + i_dest_end, c.begin() + I.at + I.len);
             ni[0] = (ni[0] & ~(0x7Fu << 24)) | (uint32_t(ni.size()) << 24);
             if (ni.size() <= 0x7F) {
-              out.insert(out.end(), ni.begin(), ni.end());
+              add_new(ni);
               ++i;
               ++here;
               fused = true;
@@ -3454,12 +3632,14 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
             continue;
           }
         }
-        out.insert(out.end(), c.begin() + I.at, c.begin() + I.at + I.len);
+        keep(I);
       }
     }
     c.swap(out);
     removed += here;
     if (!here) break;
+    if (next_bad) return removed;  // the full parse of `c` would stop here too
+    have_next = true;
   }
   return removed;
 }

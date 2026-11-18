@@ -262,6 +262,8 @@ struct VulkanExternal {
   // 0.6.2: VK_KHR_pipeline_library + VK_EXT_graphics_pipeline_library enabled, with the graphicsPipelineLibrary feature,
   // on a device whose graphicsPipelineLibraryFastLinking and ...IndependentInterpolationDecoration properties are true.
   bool graphics_pipeline_library = false;
+  // 0.6.5 (SDK patch 116): Vulkan 1.3 pipelineCreationCacheControl enabled (a pipeline asked for from the cache only).
+  bool pipeline_cache_control = false;
 };
 // Notes/68 V3: the presenter's guest-output image for Backend::PresentPacked (Vulkan: VkImage + VkImageView, format
 // A2B10G10R10_UNORM_PACK32, usable as a colour attachment). It is left in SHADER_READ_ONLY_OPTIMAL, visible to
@@ -542,6 +544,11 @@ class Backend {
   // Patch 0061 ("Preparing shaders"): asynchronous pipeline jobs not finished yet (queued + being built), and a save of
   // the saved-pipeline library now (on this thread) if it has new entries.
   virtual uint64_t PipelineJobsLeft() { return 0; }
+  // 0.6.5 (cold starts: the recipe pack's current-level records were held back by the whole start-up backlog): live
+  // (non-backlog) jobs queued or being built - what a new live request waits behind.
+  virtual uint64_t LiveJobsLeft() { return PipelineJobsLeft(); }
+  // 0.6.5 (Vulkan pipeline libraries): optimised whole builds still queued or running, for the pipeline cache.
+  virtual uint64_t PipelineFillsLeft() { return 0; }
   // Patch 0063: true while the asynchronous pipeline for this description is still being built (a waiting start-up
   // backlog job is moved to the front, as for a draw); false when ready, failed or never asked for.
   virtual bool PipelinePending(const GraphicsPipelineDesc& d) { (void)d; return false; }

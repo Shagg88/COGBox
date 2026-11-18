@@ -253,6 +253,15 @@ static bool apply_menu_changes(App &a, int g, const std::string &logDir)
     return file_exists(join(logDir, "menu-restart.flag"));
 }
 
+// 0.6.5: what the shaders were prepared for - the graphics API this game starts with and the adapters' drivers
+// (prepared-for.txt in the game's shader cache, written when Prepare all shaders finishes)
+static std::string prepared_key(App &a, int g)
+{
+    const std::string fp = report_graphics_fingerprint();
+    if (fp.empty()) return std::string();
+    return std::string(gs::runs_vulkan(a.cur[g], a.env[g]) ? "vulkan: " : "d3d12: ") + fp;
+}
+
 void play_start(App &a, int g, bool prepare)
 {
     if (a.run.proc) return;
@@ -328,6 +337,25 @@ void play_start(App &a, int g, bool prepare)
                 return;
             }
         }
+        // 0.6.5 (job 2025: a start with nothing built - a new graphics driver, a new card or a first play - spends minutes
+        // compiling pipelines while the game is played, ~200 ms each): when this PC's graphics driver isn't the one the
+        // shaders were last prepared with, offer Prepare all shaders first (then the game starts by itself). Not for a
+        // Join (the lobby would be gone), not when the game can't prepare, and never again after "Don't ask again".
+        const bool canPrepare = a.env[g].cap.exe_has && a.env[g].cap.exe_has("gow2_renderer_prepare_all") && !a.env[g].recipe_pack.empty();
+        if (canPrepare && joinCode.empty() && !a.coldPrepOk[g] && a.ini.geti("Graphics", "AutoPrepareAsk", 1) != 0) {
+            std::string was;
+            read_file(join(game_shader_dir(g), "prepared-for.txt"), was, 8192);
+            const std::string now = prepared_key(a, g);
+            if (!now.empty() && was != now) {
+                ask(a, "coldprep", g, tr("Prepare the shaders first?"),
+                    std::string(tr(was.empty() ? "The shaders haven't been prepared for this PC yet."
+                                               : "Your graphics driver, graphics card or Graphics API has changed since the shaders were prepared.")) +
+                        " " + tr("Without them, the first minutes of play stutter while the graphics driver builds them.") + "\n\n" +
+                        tr("Prepare all shaders now? It takes a few minutes, once; the game then starts by itself."),
+                    { tr("Prepare now"), tr("Play now"), tr("Don't ask again") });
+                return;
+            }
+        }
     }
     // this play's own folder: the log, the arguments, any crash report
     std::string logDir = join(game_logs_dir(g), now_stamp());
@@ -373,7 +401,15 @@ void play_start(App &a, int g, bool prepare)
     }
     a.env[g].log_dir = logDir;
     std::vector<std::string> notes;
-    std::vector<std::string> args = gs::build_args(G, ver, a.cur[g], a.env[g], &notes);
+    // A "Prepare all shaders" run never goes online (Shagg): building shaders needs no network, and signed in as the
+    // profile it was a second copy of the player on the COGBox server for minutes - no --net_online,
+    // --net_live_emulation, --net_master_server or --net_identity_dir for it.
+    gs::Environment runEnv = a.env[g];
+    if (prepare) {
+        runEnv.online_server.clear();
+        runEnv.identity_dir.clear();
+    }
+    std::vector<std::string> args = gs::build_args(G, ver, a.cur[g], runEnv, &notes);
     std::string shared = join(exe_dir(), "shared");
     bool useShared = dir_exists(shared);
     if (useShared) args.push_back("--gow2_dxc_dir=\"" + shared + "\"");
@@ -544,6 +580,18 @@ void play_poll(App &a)
         const bool done = prog.find(" done ") != std::string::npos;
         append_line(join(a.run.logDir, "args.txt"), "launcher: prepare all shaders ended after " + std::to_string(secs) + " s, exit code " +
                                                         (known ? hex32(code) : std::string("unknown")) + ", progress " + prog);
+        const bool thenPlay = a.prepThenPlay[g];
+        a.prepThenPlay[g] = false;
+        if (done && known && code == 0) {   // 0.6.5: prepared for this driver - the cold-start question stays away until it changes
+            const std::string fp = prepared_key(a, g);
+            if (!fp.empty()) write_file(join(game_shader_dir(g), "prepared-for.txt"), fp);
+        }
+        if (done && known && code == 0 && thenPlay) {   // 0.6.5: asked at Play - the game starts now
+            refresh_games(a, false);
+            a.coldPrepOk[g] = true;
+            play_start(a, g);
+            return;
+        }
         if (done && known && code == 0)
             ask(a, "info", g, "Shaders prepared",
                 std::string(d.name) + "'s shaders are ready (" + std::to_string(secs / 60) + " min " + std::to_string(secs % 60) +

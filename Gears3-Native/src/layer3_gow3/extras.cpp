@@ -29,18 +29,23 @@
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
+#include <ue3/auto_cheats.h>
 #include <ue3/console.h>
 #include <ue3/match_guard.h>
+#include <ue3/settings_dump.h>
 
 #include "gow3_addresses.h"
 
 #include <atomic>
 #include <string>
 
+REXCVAR_DEFINE_BOOL(ue3_dump_settings, false, "Gears3",
+                    "Diagnostic (DLC light research): log the names of the online session properties and contexts "
+                    "(every Settings class's PropertyMappings / LocalizedSettingsMappings) once, 45 s after start");
 REXCVAR_DEFINE_BOOL(gow3_cheats, false, "Gears3",
-                    "Developer cheats on (never in a Versus match), with hotkeys: F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F8 free "
-                    "camera (photo mode), F9 freeze the world, F10 hide the HUD, F11 all weapons and ammo (keys can be "
-                    "changed with --ue3_hotkeys)");
+                    "Developer cheats on (never in a Versus match), with the keys F9 free camera (photo mode), F10 freeze "
+                    "the world, F11 hide / show the HUD (keys can be changed with --ue3_hotkeys). Needs the patched script "
+                    "package. GitHub #342: god mode, weapons, speed and a hidden HUD are --ue3_cheat_*");
 REXCVAR_DEFINE_BOOL(gow3_unlock_mutators, false, "Gears3",
                     "All Arcade mutators available without their awards (not saved to the profile)");
 REXCVAR_DEFINE_BOOL(gow3_mute_unfocused, false, "Gears3",
@@ -54,8 +59,9 @@ namespace {
 constexpr const char* kCheatsPatch = "GearGame.xxx@0xD4508E:28>27#GearGame.AllowCheats returns True";
 constexpr const char* kMutatorsPatch =
     "GearGame.xxx@0xD084C3:7a>79#GearPC.UpdateMutatorUnlocks: every mutator unlocked";
-constexpr const char* kDefaultHotkeys =
-    "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F8=ToggleDebugCamera;F9=PlayersOnly;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
+// GitHub #342: god mode, weapons and slow motion are the launcher's own options now (ue3/auto_cheats.h); the keys keep
+// what only makes sense on a key (the same keys in all four games).
+constexpr const char* kDefaultHotkeys = "F9=ToggleDebugCamera;F10=PlayersOnly;F11=ToggleHUD";
 
 // 0.6.3 (ue3/match_guard.h): cheats run in the campaign (and Arcade), Horde, Beast and the front end only - every other game
 // type is Versus (review r41: an allow-list, so a DLC mode such as Guardian is refused). The party / pre-game lobbies (and
@@ -79,6 +85,17 @@ void Gow3InstallExtras() {
                          target.players_num_offset, &OpenObjects});
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
+  // GitHub #342: the launcher's cheats. God mode, speed and a hidden HUD need no cheat manager (no package patch, so they
+  // work with Title Update 6); all weapons does, which only --gow3_cheats' patched AllowCheats gives. Also in a game this
+  // PC hosts, as Gears 3's cheats always were.
+  ue3::cheats::Configure({"Gears 3", true, false, REXCVAR_GET(gow3_cheats), target.engine_global,
+                          target.players_data_offset, target.players_num_offset, "GearPawn"});
+  ue3::cheats::SetKeysOn(REXCVAR_GET(gow3_cheats));   // F11 = ToggleHUD: Hide the HUD leaves it a say
+#if defined(GOW3_TU6) && GOW3_TU6
+  // GitHub #359: Title Update 6 runs the unpatched AllowCheats (the launcher never sends --gow3_cheats with it), so a key's
+  // command that needs the cheat manager (AllWeapons, Slomo, ToggleDebugCamera, ...) is "not recognised": say why.
+  if (!REXCVAR_GET(gow3_cheats)) ue3::cheats::SetUnavailableReason("not available with Title Update 6");
+#endif
   if (REXCVAR_GET(gow3_cheats)) {
     AddPackagePatch(kCheatsPatch);
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
@@ -86,6 +103,7 @@ void Gow3InstallExtras() {
   } else {
     Ue3ConsoleInstallHotkeys();  // only what --ue3_hotkeys names
   }
+  if (REXCVAR_GET(ue3_dump_settings)) ue3::settings_dump::Start("Gears 3", &OpenObjects, 45);   // reads only
   if (REXCVAR_GET(gow3_unlock_mutators)) {
     AddPackagePatch(kMutatorsPatch);
     REXLOG_INFO("gow3_unlock_mutators: every mutator unlocked");
@@ -124,4 +142,5 @@ extern "C" void GOW3_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
   Gow3NoteTickCall(hits_before, ctx.f1.f64, caller);  // read-only: counts the ticks that did not reach the limiter hook
   if (caller == gow3::addr::kServerTickClientsTickRateRet) return;  // once per engine frame (the engine loop's call)
   Ue3ConsoleRunQueued(ctx, base);
+  ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
 }

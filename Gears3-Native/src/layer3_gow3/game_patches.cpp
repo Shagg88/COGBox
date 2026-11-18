@@ -23,6 +23,8 @@
 #include <ue3/objects.h>
 #include <ue3/script_input.h>
 #include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
+#include <ue3/name_tags.h>
+#include <iterator>   // std::size  // GitHub #353
 #include "mouse_look.h"
 #include "main_menu_exit.h"
 
@@ -776,6 +778,9 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
     Gow3CheckpointStreamTick();  // GitHub #226
     Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
     Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
+    // GitHub #353: COGBox tags after the players' names, grey (the Flash text fields render <font>)
+    Ue3NameTagsTick([] { return ue3::obj::Ready() || ue3::obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar); },
+                    Ue3NameTagStyle{"<font color='#808080'>", "</font>"});
   }
   const int32_t v = LiveMaxFps();
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
@@ -1108,3 +1113,46 @@ void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
     REXLOG_INFO("gow3_aspect: present at the front buffer's own shape {}", set);
   }
 }
+
+#if defined(GOW3_TU6) && GOW3_TU6  // the TU6 build's addresses; other builds draw the kill feed with the markup
+// GitHub #353, the kill feed: the HUD keeps copies of the names in its DeathData entries and draws them through
+// Canvas's text calls, which draw the text as it is - so the tag's grey markup (rendered by the Flash scenes: lobby,
+// scoreboard) would show as text. These are the
+// engine's text routines under Canvas.DrawText / TextSize / StrLen (exec functions 82749400, 82749AE8, 82749850 call them with the
+// script's copy of the text): the original gets a copy, without the markup, of any argument holding it - the text itself, or an FString whose
+// data it is - before the original runs.
+namespace {
+// Each text argument through Ue3NameTagsTextArg: a scratch copy without the tag's markup in place of text holding it
+// (the caller's text is never changed); a register is rewritten only when its value is replaced.
+void CleanTextArgs(PPCContext& ctx) {
+  for (PPCRegister* r : {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10})
+    if (const uint32_t v = Ue3NameTagsTextArg(r->u32); v != r->u32) r->u64 = v;
+}
+// The hooks act only once these Canvas natives are found at these addresses (this build's; checked at start-up).
+constexpr Ue3TextHookCheck kTextHookChecks[] = {{"DrawText", 0x82749400}, {"TextSize", 0x82749AE8}, {"StrLen", 0x82749850}};
+const bool kTextHookChecksSet = (Ue3NameTagsTextHookChecks(kTextHookChecks, std::size(kTextHookChecks)), true);
+}  // namespace
+#define TEXT_HOOK(addr)                                                             \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);     \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {           \
+    CleanTextArgs(ctx);                                                             \
+    __imp__sub_##addr(ctx, base);                                                   \
+  }
+TEXT_HOOK(82746EE0)  // DrawText's
+TEXT_HOOK(82748790)  // DrawText's
+TEXT_HOOK(82747930)  // TextSize's
+TEXT_HOOK(827486C0)  // StrLen's
+#undef TEXT_HOOK
+// The Canvas exec natives themselves: the hooks above act only inside one of these (the text routines are shared by
+// much of the engine; only the script's draw calls hold the copy that is cleaned) - review r368b.
+#define CANVAS_EXEC(addr)                                                                  \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);    \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {          \
+    Ue3CanvasTextCall in_canvas;                                                     \
+    __imp__sub_##addr(ctx, base);                                                    \
+  }
+CANVAS_EXEC(82749400)  // Canvas.DrawText
+CANVAS_EXEC(82749AE8)  // Canvas.TextSize
+CANVAS_EXEC(82749850)  // Canvas.StrLen
+#undef CANVAS_EXEC
+#endif

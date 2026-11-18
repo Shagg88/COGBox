@@ -24,13 +24,16 @@
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
+#include <ue3/auto_cheats.h>
 #include <ue3/console.h>
+#include <ue3/name_tags.h>
+#include <iterator>   // std::size  // GitHub #353
 #include <ue3/match_guard.h>
 
 REXCVAR_DEFINE_BOOL(gow1_cheats, false, "Gears1",
-                    "GitHub #264: developer cheats on hotkeys (never in a Versus match): F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F9 "
-                    "fly through walls (on / off), F10 hide the HUD, F11 all weapons and ammo (keys can be changed with "
-                    "--ue3_hotkeys)");
+                    "GitHub #264 / #342: the developers' cheat keys (never in a Versus match): F9 fly through walls (on / "
+                    "off), F10 freeze the world, F11 hide / show the HUD (keys can be changed with --ue3_hotkeys; god mode, "
+                    "weapons, speed: --ue3_cheat_*)");
 
 namespace {
 constexpr uint32_t kGEngine = 0x82FCDD50u;
@@ -48,8 +51,9 @@ bool OpenObjects() {
   ue3::obj::ParseLayout(kLayout, &layout);
   return ue3::obj::Init(kGNamesVar, kGObjectsVar, &layout);
 }
-constexpr const char* kDefaultHotkeys =
-    "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F9=Ghost|Walk;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
+// GitHub #342: god mode, weapons and slow motion are the launcher's own options now (ue3/auto_cheats.h). PlayersOnly was
+// checked on the PC (jobs 1818, 1819).
+constexpr const char* kDefaultHotkeys = "F9=Ghost|Walk;F10=PlayersOnly;F11=ToggleHUD";
 }  // namespace
 
 // OnPostSetup. Without --gow1_cheats only what --ue3_hotkeys / --ue3_exec name runs, and nothing enables cheats.
@@ -65,8 +69,12 @@ void Gow1InstallCheats() {
   if (cheats) target.before_each = "EnableCheats";
   ue3::match::Configure({"Gears 1", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
-  target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
+  target.gate = &ue3::cheats::GateLocalOnly;   // 0.6.3: not in a Versus match; #342: and only this PC's players
   Ue3ConsoleSetTarget(target);
+  // GitHub #342: the launcher's cheats - only while every player is on this PC (Gears 1's AllowCheats: standalone games)
+  ue3::cheats::Configure({"Gears 1", false, false, true, target.engine_global, target.players_data_offset,
+                          target.players_num_offset, "WarPawn"});
+  ue3::cheats::SetKeysOn(cheats);   // F11 = ToggleHUD: Hide the HUD leaves it a say
   if (cheats) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
     REXLOG_INFO("gow1_cheats: developer cheats on hotkeys (never in a Versus match)");
@@ -81,6 +89,53 @@ void Gow1AdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_
 extern "C" void __imp__sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base);
 extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
   __imp__sub_8222A6E0(ctx, base);
+  // GitHub #353: COGBox tags after the players' names. Gears 1's set takes a class only: the class-wide form, put right
+  // in the same frame (so before Ue3ConsoleRunQueued). Grey: its one grey text style, set to the names' own font.
+  Ue3NameTagsTick([] { return ue3::obj::Ready() || OpenObjects(); }, Ue3NameTagStyle{"<Styles:credits_headers>", "<Styles:/>", true, "credits_headers=WarfareFonts_Euro20"});
   Ue3ConsoleRunQueued(ctx, base);
+  ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   Gow1AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
 }
+
+// GitHub #353, the kill feed: Gears 1's HUD draws each kill-feed line from the players' live names (DeathData holds the
+// killer and victim, not their text) through Canvas's text calls, which draw the text as it is - so the tag's grey markup
+// (rendered by the UI scenes: lobby, scoreboard) would show as text there. These are the engine's text routines under
+// Canvas.DrawText / DrawTextClipped / TextSize / StrLen (their exec functions 8233BE60, 8233C058, 8233C4D0, 8233C210 call
+// them with the script's copy of the text): the original gets a copy of any text argument without the markup.
+namespace {
+// Each text argument through Ue3NameTagsTextArg: a scratch copy without the tag's markup in place of text holding it
+// (the caller's text is never changed); a register is rewritten only when its value is replaced.
+void CleanTextArgs(PPCContext& ctx) {
+  for (PPCRegister* r : {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10})
+    if (const uint32_t v = Ue3NameTagsTextArg(r->u32); v != r->u32) r->u64 = v;
+}
+// The hooks act only once these Canvas natives are found at these addresses (this build's; checked at start-up).
+constexpr Ue3TextHookCheck kTextHookChecks[] = {{"DrawText", 0x8233BE60}, {"DrawTextClipped", 0x8233C058}, {"TextSize", 0x8233C4D0}, {"StrLen", 0x8233C210}};
+const bool kTextHookChecksSet = (Ue3NameTagsTextHookChecks(kTextHookChecks, std::size(kTextHookChecks)), true);
+}  // namespace
+#define GOW1_TEXT_HOOK(addr)                                                         \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);    \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {          \
+    CleanTextArgs(ctx);                                                              \
+    __imp__sub_##addr(ctx, base);                                                    \
+  }
+GOW1_TEXT_HOOK(8233B5D0)  // DrawText's
+GOW1_TEXT_HOOK(8233AD88)  // DrawText's and DrawTextClipped's
+GOW1_TEXT_HOOK(823A38F0)  // DrawText's and DrawTextClipped's
+GOW1_TEXT_HOOK(8233CD68)  // DrawTextClipped's and TextSize's
+GOW1_TEXT_HOOK(82398848)  // TextSize's
+GOW1_TEXT_HOOK(8233B538)  // StrLen's
+#undef GOW1_TEXT_HOOK
+// The Canvas exec natives themselves: the hooks above act only inside one of these (the text routines are shared by
+// much of the engine; only the script's draw calls hold the copy that is cleaned) - review r368b.
+#define GOW1_CANVAS_EXEC(addr)                                                                  \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);    \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {          \
+    Ue3CanvasTextCall in_canvas;                                                     \
+    __imp__sub_##addr(ctx, base);                                                    \
+  }
+GOW1_CANVAS_EXEC(8233BE60)  // Canvas.DrawText
+GOW1_CANVAS_EXEC(8233C058)  // Canvas.DrawTextClipped
+GOW1_CANVAS_EXEC(8233C4D0)  // Canvas.TextSize
+GOW1_CANVAS_EXEC(8233C210)  // Canvas.StrLen
+#undef GOW1_CANVAS_EXEC

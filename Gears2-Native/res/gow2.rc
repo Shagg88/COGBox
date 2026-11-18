@@ -1,0 +1,3 @@
+// GitHub #355: the game window and taskbar icon (SDL uses the exe's first icon): COGBox's own cog with the game's
+// number - no Microsoft or Epic art.
+1 ICON "gow2.ico"

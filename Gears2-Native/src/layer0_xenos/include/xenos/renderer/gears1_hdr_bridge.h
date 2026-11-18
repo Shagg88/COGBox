@@ -1,5 +1,6 @@
 // Captured Gears 1 UE3 analytic grade bridge. No game shader data. MIT.
 #pragma once
+#include <cstdint>
 #include <string>
 #include <xenos/renderer/psychov35_source.h>
 #include <xenos/renderer/ue3_grade_bridge.h>

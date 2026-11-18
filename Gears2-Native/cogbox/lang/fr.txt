@@ -286,7 +286,8 @@ WASD move, mouse look, left click fire, right click aim, Space cover/roll, F mel
 Sens = Sensib.
 Mouse sensitivity = Sensibilité de la souris
 How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = Vitesse à laquelle la souris tourne la caméra. 0,5 est un bon départ ; baissez-la pour une souris à DPI élevé, augmentez-la pour une souris à faible DPI.
-Extra stick dead zone = Zone morte supplémentaire du stick
+Left stick dead zone (%) = Zone morte du stick gauche (%)
+Right stick dead zone (%) = Zone morte du stick droit (%)
 Game's own = Celui du jeu
 Vibration = Vibration
 Controller vibration = Vibration de la manette
@@ -745,7 +746,8 @@ Sets the graphics boxes in one go. Original = the game as on the console. Change
 How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = Le niveau de détail dessiné par le jeu. 1x : 1280x720 comme sur la console, 2x : 2560x1440, 3x : 3840x2160 (4K), 4x : 5120x2880. Un vrai détail, pas un agrandissement. Adapter à mon moniteur : la plus petite échelle qui couvre l'écran, rééchantillonnée à sa taille exacte. 1080p : dessiné en 720p et agrandi à l'écran avec netteté, rapide, pour les cartes graphiques modestes ; plus doux que le vrai détail.
 The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = La réserve de diffusion des textures. Plus grande : moins de textures floues en attente de netteté. Les grandes tailles laissent moins de mémoire au reste du jeu.
 100 = the original. Widens (or narrows) every camera view by this much. = 100 : l'original. Élargit (ou rétrécit) chaque vue de caméra de cette valeur.
-Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = S'ajoute à la zone morte propre au jeu, pour les sticks usés qui dérivent. Propre au jeu : rien n'est ajouté.
+Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own dead zone. = Les mouvements du stick gauche plus petits que cette valeur sont ignorés : augmentez-la si le stick dérive. 0 = seulement la zone morte du jeu.
+Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own dead zone. = Les mouvements du stick droit plus petits que cette valeur sont ignorés : augmentez-la si la caméra dérive. 0 = seulement la zone morte du jeu.
 The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = La langue des textes et des voix du jeu, toutes les langues des versions américaine et européenne. Seules les langues de votre copie du jeu sont disponibles ; les autres repassent en anglais. Les copies européennes en ont le plus. Pris en compte au lancement du jeu.
 English (US) = Anglais (États-Unis)
 English (UK) = Anglais (Royaume-Uni)
@@ -1168,7 +1170,7 @@ resume = reprendre
 # 0.4.9: Launcher: 4:3, FSR on Vulkan, DLSS model, frame generation
 Aspect ratio = Format d'image
 Auto = Auto
-4:3 tells the game it is on an old 4:3 TV, so it makes a 4:3 picture and HUD itself, as on the console. Auto = 16:9 for now (4:3 is untested: choose it yourself). Not with Ultrawide. = 4:3 indique au jeu qu'il est sur un ancien téléviseur 4:3 : il produit lui-même une image et un HUD en 4:3, comme sur la console. Auto: 16:9 pour l'instant (4:3 n'est pas testé : choisissez-le vous-même). Pas avec Ultra-large.
+16:10 and 4:3 tell the game the screen's shape, so it makes a picture of that shape and lays out its HUD itself (16:10: a taller view, for a Steam Deck or a 16:10 laptop). Auto = 16:10 on a 16:10 screen, else 16:9 (4:3 is untested: choose it yourself). Not with Ultrawide. = 16:10 et 4:3 indiquent au jeu la forme de l'écran : il crée lui-même une image de cette forme et dispose son HUD (16:10 : une vue plus haute, pour un Steam Deck ou un portable 16:10). Auto = 16:10 sur un écran 16:10, sinon 16:9 (le 4:3 n'est pas testé : choisissez-le vous-même). Pas avec Ultra-large.
 needs the next runtime (SDK patch 70) = nécessite le prochain runtime (patch SDK 70)
 not checked yet = pas encore vérifié
 this build has no DLSS file = ce build n'a pas de fichier DLSS
@@ -1433,6 +1435,9 @@ In progress = En cours
 This match is full. = Cette partie est pleine.
 Join the match in progress: you take a bot's place. = Rejoindre la partie en cours : vous prenez la place d'un bot.
 Join this match. = Rejoindre cette partie.
+You have this match's map. = Vous avez la carte de ce match.
+You may not have this match's map (DLC). Add the map pack in COGBox to join. = Il vous manque peut-être la carte de ce match (DLC). Ajoutez le pack de cartes dans COGBox pour rejoindre.
+The host hasn't chosen a map yet. = L'hôte n'a pas encore choisi de carte.
 Match = Partie
 Casual (under level 3) = Casual (sous le niveau 3)
 # deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")
@@ -1570,3 +1575,44 @@ Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and 
 the match's playlist = la playlist du match
 Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3 : pour choisir COG ou Locust, héberge Versus > Private et fais rejoindre les autres par code de salon ou Rejoindre un ami. Dans le salon, appuie sur Y pour changer d'équipe.
 Join through Gears 3's own matchmaking: the host's game picks your team. = Rejoindre via la recherche de partie de Gears 3 : le jeu de l'hôte choisit ton équipe.
+# GitHub #342: the cheats that are simply on (machine-made; corrections welcome)
+God mode = Mode dieu
+All weapons and ammo = Toutes les armes et munitions
+Game speed = Vitesse du jeu
+Normal = Normale
+Slow motion (3/4) = Ralenti (3/4)
+Slow motion (1/2) = Ralenti (1/2)
+Slow motion (1/4) = Ralenti (1/4)
+Hide the HUD = Masquer le HUD
+Cheat keys (F9-F11) = Touches de triche (F9-F11)
+CHEATS = TRICHES
+Cheat: you take no damage. = Triche : vous ne subissez aucun dégât.
+Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn. = Triche : toutes les armes et les munitions au maximum, redonnées à chaque début de niveau, point de contrôle et réapparition.
+Cheat: the whole game runs slower (in a game you host, for every player). = Triche : tout le jeu tourne plus lentement (dans une partie que vous hébergez, pour tous les joueurs).
+The game's own slow-motion moments still play as made. = Les ralentis prévus par le jeu restent tels quels.
+No HUD while you play - for screenshots and videos. = Pas de HUD pendant que vous jouez - pour les captures d'écran et les vidéos.
+With Cheat keys on, F11 shows it again. = Avec les touches de triche activées, F11 le réaffiche.
+The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show the HUD. = Les touches des développeurs en jeu : F9 caméra libre (Gears 1 : voler à travers les murs), F10 figer le monde, F11 masquer / afficher le HUD.
+Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = Uniquement dans la campagne et les modes à vagues (Horde, Bête, Survie) - jamais en Versus.
+Gears 1 and 2: games on this PC only. = Gears 1 et 2 : uniquement dans les parties sur ce PC.
+Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 et Judgment : aussi dans une partie System Link ou en ligne que vous hébergez - gardez-les pour vos propres parties.
+Achievements and saves are your own business. = Les succès et les sauvegardes, c'est votre affaire.
+At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution. = À cette résolution de rendu (3x), Performance garde la scène en taille réelle : l'upscaler ne fait qu'anticrénelage (pas d'images en plus). Choisissez Qualité ou Ultra performance, ou une résolution de rendu 2x.
+At this render resolution Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution. = À cette résolution de rendu, Performance garde la scène en taille réelle : l'upscaler ne fait qu'anticrénelage (pas d'images en plus). Performance demande une résolution de rendu 2x ou 4x.
+At this render resolution this choice keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Quality and Ultra performance need a 3x render resolution (4K). = À cette résolution de rendu, ce choix garde la scène en taille réelle : l'upscaler ne fait qu'anticrénelage (pas d'images en plus). Qualité et Ultra performance demandent une résolution de rendu 3x (4K).
+# GitHub #359: the cheat key notices in game (machine-made; corrections welcome)
+Fly mode = Mode vol
+Free camera = Caméra libre
+Freeze the world = Figer le monde
+Slow motion = Ralenti
+All weapons = Toutes les armes
+All ammo = Toutes les munitions
+ON = ACTIVÉ
+OFF = DÉSACTIVÉ
+DONE = FAIT
+GIVEN = OBTENU
+Cheats are off in Versus = Les codes sont désactivés en Versus
+Cheats are off with another PC's player in the game = Les codes sont désactivés avec le joueur d'un autre PC dans la partie
+not recognised by the game = non reconnu par le jeu
+not available with Title Update 6 = indisponible avec la Title Update 6
+HUD = ATH

@@ -9,6 +9,7 @@ import { signalingRoutes } from './ws/signaling.js';
 import { friendRoutes } from './routes/friends.js';
 import { inviteRoutes } from './routes/invites.js';
 import { matchRoutes } from './routes/matches.js';
+import { playerRoutes } from './routes/players.js';
 import { checkAuthHeader } from './auth.js';
 import { logSafeRequest, logSafeText } from './log_scrub.js';
 import { Registry } from './social/registry.js';
@@ -116,6 +117,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
     registry.population(String(req.query.title_id ?? '').toUpperCase(), req.query.region));
   await server.register(friendRoutes, { prefix: '/api/v1/friends', db, registry });
   await server.register(matchRoutes, { prefix: '/api/v1/matches', db, registry });
+  await server.register(playerRoutes, { prefix: '/api/v1/players', db });   // GitHub #353: tags in matches
   await server.register(inviteRoutes, { prefix: '/api/v1/invites', db, registry, now: opts.now ?? Date.now, stats });
 
   // What the private admin listener needs (see the standalone block below)

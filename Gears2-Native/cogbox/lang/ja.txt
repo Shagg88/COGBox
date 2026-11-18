@@ -286,7 +286,8 @@ WASD move, mouse look, left click fire, right click aim, Space cover/roll, F mel
 Sens = Sens
 Mouse sensitivity = マウス感度
 How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = マウスでカメラを回す速さ。最初は0.5がおすすめです。高DPIのマウスでは下げ、低DPIのマウスでは上げてください。
-Extra stick dead zone = スティックのデッドゾーン追加
+Left stick dead zone (%) = 左スティックのデッドゾーン (%)
+Right stick dead zone (%) = 右スティックのデッドゾーン (%)
 Game's own = ゲーム標準
 Vibration = 振動
 Controller vibration = コントローラーの振動
@@ -745,7 +746,8 @@ Sets the graphics boxes in one go. Original = the game as on the console. Change
 How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = ゲームが描画する精細さです。1x：コンソール版と同じ1280x720、2x：2560x1440、3x：3840x2160（4K）、4x：5120x2880。アップスケールではない本物の精細さです。モニターに合わせる：画面を覆う最小の倍率で、画面の正確なサイズにリサンプリングします。1080p：720pで描画し、シャープ処理をして画面にアップスケールします。高速で、性能の低いグラフィックスカード向けですが、本物の精細さよりやわらかくなります。
 The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = テクスチャストリーミングのプールです。大きいほど、鮮明になるのを待つぼやけたテクスチャが減ります。大きいサイズにすると、ゲームのほかの部分に使えるメモリが減ります。
 100 = the original. Widens (or narrows) every camera view by this much. = 100：オリジナル。カメラの視野をこの分だけ広げます（または狭めます）。
-Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = ゲーム本来のデッドゾーンに上乗せされます。ドリフトする摩耗したスティック向けです。ゲーム本来：何も加えません。
+Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own dead zone. = これより小さい左スティックの動きは無視されます。スティックがドリフトする場合は上げてください。0 = ゲーム本来のデッドゾーンのみ。
+Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own dead zone. = これより小さい右スティックの動きは無視されます。カメラがドリフトする場合は上げてください。0 = ゲーム本来のデッドゾーンのみ。
 The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = ゲーム内のテキストと音声の言語です。米国版と欧州版のすべての言語に対応しています。ゲームのコピーに入っている言語のみ選べ、それ以外は英語になります。欧州版のコピーが最も多くの言語を含みます。ゲームの起動時に反映されます。
 English (US) = 英語（米国）
 English (UK) = 英語（英国）
@@ -1168,7 +1170,7 @@ resume = 再開
 # 0.4.9: Launcher: 4:3, FSR on Vulkan, DLSS model, frame generation
 Aspect ratio = アスペクト比
 Auto = 自動
-4:3 tells the game it is on an old 4:3 TV, so it makes a 4:3 picture and HUD itself, as on the console. Auto = 16:9 for now (4:3 is untested: choose it yourself). Not with Ultrawide. = 4:3 を選ぶと、ゲームは古い 4:3 テレビにつながっていると判断し、コンソールと同じように 4:3 の画面と HUD を自分で作ります。自動: 現在は 16:9（4:3 は未検証のため、ご自身で選んでください）。ウルトラワイドとは併用できません。
+16:10 and 4:3 tell the game the screen's shape, so it makes a picture of that shape and lays out its HUD itself (16:10: a taller view, for a Steam Deck or a 16:10 laptop). Auto = 16:10 on a 16:10 screen, else 16:9 (4:3 is untested: choose it yourself). Not with Ultrawide. = 16:10 と 4:3 は画面の形をゲームに伝えるため、ゲーム自体がその形の映像を作り、HUD を配置します（16:10：縦に広い視界。Steam Deck や 16:10 のノート PC 向け）。自動 = 16:10 の画面では 16:10、それ以外は 16:9（4:3 は未検証：自分で選んでください）。ウルトラワイドとは併用できません。
 needs the next runtime (SDK patch 70) = 次のランタイムが必要です（SDK パッチ 70）
 not checked yet = まだ確認していません
 this build has no DLSS file = このビルドには DLSS ファイルがありません
@@ -1434,6 +1436,9 @@ In progress = 進行中
 This match is full. = このマッチは満員です。
 Join the match in progress: you take a bot's place. = 進行中のマッチに参加します: ボットの枠に入ります。
 Join this match. = このマッチに参加します。
+You have this match's map. = このマッチのマップを持っています。
+You may not have this match's map (DLC). Add the map pack in COGBox to join. = このマッチのマップ（DLC）がない可能性があります。参加するには COGBox でマップパックを追加してください。
+The host hasn't chosen a map yet. = ホストはまだマップを選んでいません。
 Match = マッチ
 Casual (under level 3) = Casual (レベル 3 未満)
 # deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")
@@ -1572,3 +1577,44 @@ Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and 
 the match's playlist = そのマッチのプレイリスト
 Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: COG か Locust を選ぶには、Versus > Private をホストし、ほかのプレイヤーにルームコードまたはフレンドに参加で入ってもらいます。ロビーで Y を押すとチームを切り替えられます。
 Join through Gears 3's own matchmaking: the host's game picks your team. = Gears 3 のマッチメイキングで参加します。ホストのゲームがあなたのチームを決めます。
+# GitHub #342: the cheats that are simply on (machine-made; corrections welcome)
+God mode = ゴッドモード
+All weapons and ammo = 全武器と弾薬
+Game speed = ゲームスピード
+Normal = 通常
+Slow motion (3/4) = スローモーション (3/4)
+Slow motion (1/2) = スローモーション (1/2)
+Slow motion (1/4) = スローモーション (1/4)
+Hide the HUD = HUDを隠す
+Cheat keys (F9-F11) = チートキー (F9-F11)
+CHEATS = チート
+Cheat: you take no damage. = チート: ダメージを受けません。
+Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn. = チート: すべての武器と満タンの弾薬。レベル開始、チェックポイント、リスポーンのたびに再び与えられます。
+Cheat: the whole game runs slower (in a game you host, for every player). = チート: ゲーム全体が遅くなります (ホストしているゲームでは全プレイヤーに影響)。
+The game's own slow-motion moments still play as made. = ゲーム本来のスローモーション演出はそのまま再生されます。
+No HUD while you play - for screenshots and videos. = プレイ中にHUDを表示しません - スクリーンショットや動画用。
+With Cheat keys on, F11 shows it again. = チートキーがオンなら、F11で再表示できます。
+The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show the HUD. = ゲーム内の開発者キー: F9 フリーカメラ (Gears 1: 壁をすり抜けて飛ぶ)、F10 世界を停止、F11 HUDの表示/非表示。
+Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = キャンペーンとウェーブモード (ホード、ビースト、サバイバル) のみ - 対戦では使えません。
+Gears 1 and 2: games on this PC only. = Gears 1と2: このPC上のゲームのみ。
+Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3とJudgment: ホストしているSystem Linkやオンラインのゲームでも有効 - 自分のゲームだけで使ってください。
+Achievements and saves are your own business. = 実績とセーブデータは自己責任です。
+At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution. = このレンダー解像度（3x）では、パフォーマンスはシーンをフルサイズのままにするため、アップスケーラーはアンチエイリアスのみになります（フレームは増えません）。クオリティかウルトラパフォーマンス、または 2x のレンダー解像度を選んでください。
+At this render resolution Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution. = このレンダー解像度では、パフォーマンスはシーンをフルサイズのままにするため、アップスケーラーはアンチエイリアスのみになります（フレームは増えません）。パフォーマンスには 2x か 4x のレンダー解像度が必要です。
+At this render resolution this choice keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Quality and Ultra performance need a 3x render resolution (4K). = このレンダー解像度では、この選択はシーンをフルサイズのままにするため、アップスケーラーはアンチエイリアスのみになります（フレームは増えません）。クオリティとウルトラパフォーマンスには 3x（4K）のレンダー解像度が必要です。
+# GitHub #359: the cheat key notices in game (machine-made; corrections welcome)
+Fly mode = 飛行モード
+Free camera = フリーカメラ
+Freeze the world = 世界を停止
+Slow motion = スローモーション
+All weapons = 全武器
+All ammo = 全弾薬
+ON = オン
+OFF = オフ
+DONE = 完了
+GIVEN = 入手
+Cheats are off in Versus = Versusではチートはオフです
+Cheats are off with another PC's player in the game = 他のPCのプレイヤーがいる間はチートはオフです
+not recognised by the game = ゲームが認識しません
+not available with Title Update 6 = Title Update 6では使用できません
+HUD = HUD

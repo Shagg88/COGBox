@@ -83,7 +83,27 @@ the community x360db archive (raw.githubusercontent.com) and the LaunchBox Games
 (images.launchbox-app.com) onto your own PC for your own use. The images belong to their
 owners. See `PRIVACY.md` for everything COGBox sends or downloads.
 
-## 11. Concerns and takedown requests
+## 11. Mods and the Fabricator
+
+COGBox's **FABRICATOR** screen is a mod manager for your own PC: it adds mods you give it (a `.zip` or a folder), turns
+them on and off, orders them, updates them and uninstalls them.
+
+- **COGBox doesn't host mods.** It has no mod server and no mod library; it never uploads or distributes anyone's mod.
+  Players get mods where they choose, and what they add is their own choice and responsibility.
+- **Creators are responsible for what they share:** that they have the right to share it, and that it carries no
+  game files or files made from them (see section 3). The Fabricator's Creator tab checks a mod's folder and makes
+  a zip, but it doesn't review, approve or vouch for any mod, and a clean check isn't a legal clearance.
+- **Mods are used at your own risk** (see sections 6 to 8). A mod isn't made, checked or endorsed by COGBox.
+- **Program files are left out of installs.** A mod is data for the game, not a program: files that Windows runs
+  (programs and libraries, scripts, installers, shortcuts and similar) and the archives and disk images COGBox
+  recognises inside the mod are not copied into the mods folder, and the install tells you which were left out. This is a safety measure, not a guarantee that a mod
+  is safe.
+- **Mods from Nexus Mods are planned,** not available yet. When they are, they will be subject to Nexus Mods' own
+  terms and the mod author's, and COGBox is not made, endorsed or sponsored by Nexus Mods.
+
+See `PRIVACY.md` for what the Fabricator stores on your PC (it sends nothing).
+
+## 12. Concerns and takedown requests
 
 If you believe something in the COGBox project infringes your rights, or you have any other legal concern, please
 contact us first. We'd much rather fix things quickly and in good faith.

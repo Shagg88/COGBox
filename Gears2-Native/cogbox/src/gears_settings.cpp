@@ -240,9 +240,13 @@ std::vector<Option> make_options(Game g) {
              "A wider view that matches an ultrawide monitor (21:9 or 32:9); black bars on other shapes.", 362), "ultrawide");
     // 0.4.9: 4:3 screens (SDK patch 70 --video_mode_widescreen=false): the game is told it is on a 4:3 TV and lays
     // itself out for 4:3 (a 960x720 picture, x the resolution scale), as on the console. Not with Ultrawide.
-    add(choice("AspectRatio", "Aspect ratio", Tab::Display, PG, { "Auto", "16:9", "4:3" }, 0,
-               "4:3 tells the game it is on an old 4:3 TV, so it makes a 4:3 picture and HUD itself, as on the console. "
-               "Auto = 16:9 for now (4:3 is untested: choose it yourself). Not with Ultrawide.", 0), "aspect43", "!Ultrawide");
+    // 0.6.5 (Shagg 16 Nov: 16:10 for the Steam Deck / 16:10 laptops): the same path with a 1152x720 mode - the games
+    // size their picture from a non-widescreen mode (720 x w / h, jobs 1965 / 1966: Gears 2 / 3 / Judgment draw a full
+    // 1152x720 picture, HUD laid out by the game). Added LAST so a saved index keeps its meaning.
+    add(choice("AspectRatio", "Aspect ratio", Tab::Display, PG, { "Auto", "16:9", "4:3", "16:10" }, 0,
+               "16:10 and 4:3 tell the game the screen's shape, so it makes a picture of that shape and lays out its HUD "
+               "itself (16:10: a taller view, for a Steam Deck or a 16:10 laptop). Auto = 16:10 on a 16:10 screen, else "
+               "16:9 (4:3 is untested: choose it yourself). Not with Ultrawide.", 0), "aspect43", "!Ultrawide");
 
     // ---- Graphics ------------------------------------------------------------------------------------------------
     add(choice("Preset", "Quality preset", Tab::Graphics, PG, { "Original (as on the console)", "High", "Ultra", "Custom" }, 3,
@@ -464,8 +468,15 @@ std::vector<Option> make_options(Game g) {
     add(number("Sens", "Mouse sensitivity", Tab::Controls, Kind::Float, SH, 0.01, 2, 0.01, 0.5,
                "How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a "
                "low-DPI one.", 381, 2));
-    add(choice("DeadZone", "Extra stick dead zone", Tab::Controls, SH, { "Game's own", "5%", "10%", "15%", "20%", "25%" }, 0,
-               "Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added.", 382));
+    // 0.6.5 (Shagg 16 Nov 22:22: "simple thumbstick deadzones like those found in popular emulators"): one slider per
+    // stick, 0-50 % in 1 % steps (was one 6-step choice for both). The old saved "DeadZone" choice is read into both
+    // (Store::load). Same runtime switches as before (left_ / right_stick_deadzone_percentage, a fraction), read per poll.
+    add(number("DeadZoneL", "Left stick dead zone (%)", Tab::Controls, Kind::Int, SH, 0, 50, 1, 0,
+               "Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own "
+               "dead zone.", 382));
+    add(number("DeadZoneR", "Right stick dead zone (%)", Tab::Controls, Kind::Int, SH, 0, 50, 1, 0,
+               "Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own "
+               "dead zone.", 0));
     // GitHub #95: a round (radial) dead zone on both sticks, rescaled from its edge - Gears 3's feel for Gears 1 and 2.
     // SDK patch 55 (pad_radial_deadzone). In Gears 1 and 2 the game's own per-axis dead zone on the look binding is
     // taken off at the same time (below), so the round one is the one you feel.
@@ -565,13 +576,28 @@ std::vector<Option> make_options(Game g) {
              "(they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus "
              "use the lobby's own bot setting.", 0),
         "hordebots");
-    add(make("Cheats", "Cheats (hotkeys F5-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
-             "The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - "
-             "hide the HUD, all weapons). "
-             "Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a "
-             "System Link or online game you host, where slow motion and the rest affect every player - please keep them "
-             "to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business."
-             " They do not work in Versus matches - only in the campaign and the wave modes (Horde, Beast, Survival).", 327), "cheats");
+    // GitHub #342 (Shagg 16 Nov: "the F keys are stupid"): the cheats you pick are simply on - no keys. The game applies
+    // them whenever you have a body, again after every level start, checkpoint and respawn (ue3/auto_cheats.h), never in
+    // Versus. The text shared by the four options' tips:
+#define CHEAT_RULES " Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. Gears 1 and 2: games on " \
+                    "this PC only. Gears 3 and Judgment: also a System Link or online game you host - please keep it to " \
+                    "your own games. Achievements and saves are your own business."
+    add(make("CheatGod", "God mode", Tab::Gameplay, Kind::Bool, SH, 0,
+             "Cheat: you take no damage." CHEAT_RULES, 0), "cheatauto");
+    add(make("CheatWeapons", "All weapons and ammo", Tab::Gameplay, Kind::Bool, SH, 0,
+             "Cheat: every weapon and full ammo, given again at every level start, checkpoint and respawn." CHEAT_RULES, 0),
+        "cheatweapons");
+    add(choice("CheatSpeed", "Game speed", Tab::Gameplay, SH, { "Normal", "Slow motion (3/4)", "Slow motion (1/2)",
+               "Slow motion (1/4)" }, 0,
+               "Cheat: the whole game runs slower (in a game you host, for every player). The game's own slow-motion "
+               "moments still play as made." CHEAT_RULES, 0), "cheatauto");
+    add(make("CheatHud", "Hide the HUD", Tab::Gameplay, Kind::Bool, SH, 0,
+             "No HUD while you play - for screenshots and videos. With Cheat keys on, F11 shows it again." CHEAT_RULES, 0),
+        "cheatauto");
+    add(make("Cheats", "Cheat keys (F9-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
+             "The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / "
+             "show the HUD." CHEAT_RULES, 327), "cheats");
+#undef CHEAT_RULES
     add(make("Mutators", "Unlock all mutators", Tab::Gameplay, Kind::Bool, SH, 0,
              "Every mutator (gameplay modifier) available from the start. Writes nothing to your profile.", 328), "mutators");
     // First-person camera (Gears 3, Gears 2, Judgment; layer3 first_person.cpp): the game's own camera moved to the
@@ -816,11 +842,19 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Judgment && !cap_exe(env, "gowj_ultrawide")) return no(not_yet(2));
         if (g == Game::Gears1 && !cap_exe(env, "gow1_ultrawide")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "aspect43") {   // 0.4.9: SDK patch 70; Gears 1's video-mode code is not checked yet
-        if (g == Game::Gears1) return no(not_yet(gi, "not checked yet"));
+        // 0.6.5: Gears 1 letterboxed a 16:10 mode to 16:9 (job 1969) until --gow1_no_aspect_lock (its view's constrain flag)
+        if (g == Game::Gears1 && !cap_exe(env, "gow1_no_aspect_lock")) return no(not_yet(gi, "needs its next build"));
         if (!cap_rt(env, "video_mode_widescreen")) return no(not_yet(gi, "needs the next runtime (SDK patch 70)"));
+    } else if (f == "cheatauto" || f == "cheatweapons") {   // GitHub #342: console.cpp's --ue3_cheat_* (a long literal: cap_exe)
+        if (!cap_exe(env, "GitHub #342: the HUD hidden whenever a player exists")) return no(not_yet(gi, "needs its next build"));
+        // all weapons needs the game's cheat manager: Gears 3 only makes one with its patched script package (below)
+        if (f == "cheatweapons" && g == Game::Gears3 && ver == Version::TitleUpdate && env.update_ready)
+            return no("Gears 3: not with Title Update 6 yet (it shows a dirty-disc error with it).");
     } else if (f == "cheats" && (g == Game::Gears2 || g == Game::Judgment || g == Game::Gears1)) {   // GitHub #264: --gow2_cheats / --gowj_cheats / --gow1_cheats (no package patch, so no TU check)
         // the option's description, a long literal (a short name can be built a few letters at a time - cap_exe)
-        if (!cap_exe(env, "GitHub #264: developer cheats on hotkeys")) return no(not_yet(gi, "needs its next build"));
+        // (0.6.5, #342: the description was rewritten - either text)
+        if (!cap_exe(env, "GitHub #264: developer cheats on hotkeys") && !cap_exe(env, "GitHub #264 / #342: the developers' cheat keys"))
+            return no(not_yet(gi, "needs its next build"));
     } else if (f == "cheats" || f == "mutators") {
         if (g != Game::Gears3) return no(not_yet(gi));
         if (ver == Version::TitleUpdate && env.update_ready)
@@ -1514,6 +1548,9 @@ bool Store::load_ini(const std::string& text) {
     // FrameCap list version per section (0 = [General]); only FrameCap values read from a file without
     // "FrameCapList=2" are moved over, once, after reading (values from the old "Fps" are already list 2).
     bool capList2[kGameCount + 1] = {}, capRead[kGameCount + 1] = {};
+    // 0.6.5: the old 6-step "DeadZone" choice (both sticks) goes into each slider not saved in the file itself
+    int oldDeadZone = -1;
+    bool dzRead[2] = {};
     // The PS1's flat keys (launcher-settings.json converted to key=value) are read in [General] too.
     struct Legacy { const char* key; int game; const char* id; };
     static const Legacy legacy[] = {
@@ -1555,6 +1592,9 @@ bool Store::load_ini(const std::string& text) {
                 continue;
             }
             if (key == "FrameCapList") { capList2[0] = x >= 2; continue; }
+            if (key == "DeadZone") { oldDeadZone = std::max(0, std::min(5, static_cast<int>(x))); any = true; continue; }
+            if (key == "DeadZoneL") dzRead[0] = true;
+            if (key == "DeadZoneR") dzRead[1] = true;
             if (key == "BrightnessDefault") continue;   // 0.6.1: the setting is gone (see the top of this file)
             if (key == "FrameCap") { top["FrameCap"] = x; capRead[0] = true; any = true; continue; }
             if (key == "Fps") {   // job 638: the old 4-step frame rate limit (the shared value)
@@ -1593,6 +1633,10 @@ bool Store::load_ini(const std::string& text) {
         }
     }
     if (capRead[0] && !capList2[0]) top["FrameCap"] = old_cap_list1_to_2(top["FrameCap"]);
+    if (oldDeadZone >= 0) {
+        if (!dzRead[0]) top["DeadZoneL"] = std::round(k_deadValue[oldDeadZone] * 100.0);
+        if (!dzRead[1]) top["DeadZoneR"] = std::round(k_deadValue[oldDeadZone] * 100.0);
+    }
     for (int g = 0; g < kGameCount; ++g)
         if (capRead[g + 1] && !capList2[g + 1]) per[g]["FrameCap"] = old_cap_list1_to_2(per[g]["FrameCap"]);
     // 0.6.1: a saved Brightness (shared or per game) is dropped, so it is not written back either.
@@ -1709,7 +1753,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (isG3) {
         if (scale > 1) a.push_back("--gow2_renderer_resolution_scale_threshold=1120");
 
-        if (avail("HordeBots") && on("HordeBots")) a.push_back("--gow3_horde_bots=true");   // GitHub #89
+        if (avail("HordeBots") && on("HordeBots")) {
+            a.push_back("--gow3_horde_bots=true");   // GitHub #89
+            // 0.6.5 (Discord: four Horde bots all Marcus): bots added mid-match load the character they're named after
+            if (cap_exe(env, "gow3_horde_bot_characters")) a.push_back("--gow3_horde_bot_characters=true");
+        }
         // GitHub #105: the depth-of-field chain's half-size targets (pitch 640) follow the scale despite the threshold
         if (scale > 1 && avail("DofScale") && on("DofScale")) a.push_back("--gow2_renderer_resolution_scale_pitches=640");
         a.push_back("--gow2_renderer_memexport=true");
@@ -1924,6 +1972,14 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (on("Cheats")) a.push_back(g == Game::Gears2 ? "--gow2_cheats=true" : g == Game::Judgment ? "--gowj_cheats=true" :
                                   g == Game::Gears1 ? "--gow1_cheats=true" : "--gow3_cheats=true");   // #264: Gears 2, Judgment, Gears 1 too
     if (on("Mutators")) a.push_back("--gow3_unlock_mutators=true");
+    // GitHub #342: the cheats that are simply on (console.cpp --ue3_cheat_*, every game)
+    if (on("CheatGod")) a.push_back("--ue3_cheat_god=true");
+    if (on("CheatWeapons")) a.push_back("--ue3_cheat_weapons=true");
+    if (avail("CheatSpeed") && s.i("CheatSpeed") > 0) {
+        static const char* const k_speed[4] = { "1", "0.75", "0.5", "0.25" };
+        a.push_back(std::string("--ue3_cheat_speed=") + k_speed[std::max(0, std::min(3, s.i("CheatSpeed")))]);
+    }
+    if (on("CheatHud")) a.push_back("--ue3_cheat_hide_hud=true");
     if (kOfferFirstPerson && on("FirstPerson")) a.push_back(g == Game::Gears2 ? "--gow2_first_person=true" : g == Game::Judgment ? "--gowj_first_person=true" :
                                        "--gow3_first_person=true");
     // PS1 873-898: the game's own engine settings through --ue3_ini_edits
@@ -2092,12 +2148,21 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         constexpr bool kAuto43 = false;
         const bool screen43 = kAuto43 && env.monitor_w > 0 && env.monitor_h > 0 && env.monitor_w >= env.monitor_h &&
                               env.monitor_w * 10 <= env.monitor_h * 14;   // landscape, <= 1.4:1
+        // 0.6.5: 16:10 = a landscape screen between 1.55:1 and 1.65:1 (1280x800, 1440x900, 1680x1050, 1920x1200, 2560x1600)
+        const bool screen1610 = env.monitor_w > 0 && env.monitor_h > 0 && env.monitor_w * 100 >= env.monitor_h * 155 &&
+                                env.monitor_w * 100 <= env.monitor_h * 165;
         if (ar == 2 || (ar == 0 && screen43)) {
             a.push_back("--video_mode_width=960");
             a.push_back("--video_mode_height=720");
             a.push_back("--video_mode_widescreen=false");
             if (ar == 0) notes.push_back("launcher: Aspect ratio Auto: " + std::to_string(env.monitor_w) + "x" + std::to_string(env.monitor_h) + " screen -> 4:3");
+        } else if (ar == 3 || (ar == 0 && screen1610)) {
+            a.push_back("--video_mode_width=1152");
+            a.push_back("--video_mode_height=720");
+            a.push_back("--video_mode_widescreen=false");
+            if (ar == 0) notes.push_back("launcher: Aspect ratio Auto: " + std::to_string(env.monitor_w) + "x" + std::to_string(env.monitor_h) + " screen -> 16:10");
         }
+        if (isG1 && (ar == 2 || ar == 3 || (ar == 0 && (screen43 || screen1610)))) a.push_back("--gow1_no_aspect_lock=true");
     }
     // PS1 900: HDR
     if (s.b("HDR")) {
@@ -2132,8 +2197,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 904-908: stick dead zone, vibration
     {
-        int d = std::max(0, std::min(5, s.i("DeadZone")));
-        if (d > 0) { std::string dz = fmt_double(k_deadValue[d]); a.push_back("--left_stick_deadzone_percentage=" + dz); a.push_back("--right_stick_deadzone_percentage=" + dz); }
+        const int l = std::max(0, std::min(50, s.i("DeadZoneL"))), r = std::max(0, std::min(50, s.i("DeadZoneR")));
+        if (l > 0) a.push_back("--left_stick_deadzone_percentage=" + fmt_double(l / 100.0));
+        if (r > 0) a.push_back("--right_stick_deadzone_percentage=" + fmt_double(r / 100.0));
     }
     if (!s.b("Vibration")) a.push_back("--vibration=false");
     if (on("AdaptiveTriggers")) a.push_back("--pad_adaptive_triggers=true");   // GitHub #245 (greyed: never sent)
@@ -2529,7 +2595,8 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         { "HideNotes", { { "gow2_hide_onscreen_notes", "false" } } },
         { "Mute", { { p + "_mute_unfocused", "false" } } },
         { "Vibration", { { "vibration", "true" } } },
-        { "DeadZone", { { "left_stick_deadzone_percentage", "0" }, { "right_stick_deadzone_percentage", "0" } } },
+        { "DeadZoneL", { { "left_stick_deadzone_percentage", "0" } } },
+        { "DeadZoneR", { { "right_stick_deadzone_percentage", "0" } } },
         { "WalkMode", { { "mnk_walk_toggle", "false" } } },
         { "AchievementStyle", { { "cogbox_ach_style", "x360" } } },
         { "AchievementColour", { { "cogbox_ach_colour", "dark" } } },

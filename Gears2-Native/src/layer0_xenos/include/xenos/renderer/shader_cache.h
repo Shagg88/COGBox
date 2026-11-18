@@ -222,6 +222,13 @@ class ShaderCache {
   // and not at every launch (Gears 3: 31.6 s of conversion for 8,974 shaders, more with the optimiser). `switches` =
   // every setting that changes the words (discard form, float controls, optimiser on). Empty dir = no store.
   static void SetSpirvStore(const std::filesystem::path& dir, uint32_t switches);
+  // 0.6.5: translated DXBC (and the metadata the renderer reads from it) kept in <dir>\dxbc-store.bin, so a start-up
+  // translates each recorded shader once per build and not at every launch (Gears 3: 9,296 shaders, 14 s of CPU).
+  // Empty dir = no store. DxbcStoreKey: 0 = not stored (no store, or no ucode words).
+  static void SetDxbcStore(const std::filesystem::path& dir);
+  static uint64_t DxbcStoreKey(const uint32_t* dwords, size_t dword_count, bool is_vertex, const ucode::DecodeOptions& d,
+                               const hlsl::HlslOptions& o);
+  static void DxbcStoreCounts(uint64_t* hits, uint64_t* misses, uint64_t* stored);
   void SetTexNumFormat(bool on) { tex_num_format_ = on; }  // patch 0040
   void SetTexPostConstants(bool on) { tex_post_constants_ = on; }  // patch 0105
   void SetTexPostAffine(bool on) { tex_post_affine_ = on; }        // job 634
@@ -332,6 +339,10 @@ class ShaderCache {
   std::condition_variable spv_wake_;
   uint32_t spv_warm_limit_ = UINT32_MAX, spv_warm_active_ = 0;  // under mutex_
   std::vector<std::thread> spv_workers_;
+  // 0.6.5 (job 1991): while the warm-up's own workers run, warm SPIR-V jobs only queue - the background threads start
+  // when it ends (or at once for a live job), as before the streaming adoption. Under mutex_.
+  bool spv_hold_ = false;
+  void StartSpvWorkersLocked();
   uint64_t spv_jobs_done_ = 0, spv_jobs_failed_ = 0;
   double poll_spent_ms_ = 0.0;
   double spv_jobs_ms_ = 0.0;

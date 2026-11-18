@@ -2,7 +2,7 @@ COGBox - Gears of War native PC ports
 =====================================
 
 COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
-Judgment. This README is for COGBox 0.6.4.
+Judgment. This README is for COGBox 0.6.5.
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project. COGBox isn't affiliated with Microsoft, Epic Games or The
 Coalition.
@@ -34,7 +34,7 @@ What you need
 
 Getting started
 ---------------
-1. Right-click COGBox-0.6.4.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
+1. Right-click COGBox-0.6.5.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
    7-zip.org) to a folder of its own that you can write to, for example C:\Games\COGBox. Don't start
    COGBox from inside the archive, and don't use Program Files (Windows protects it) - COGBox tells
    you on start-up if it's in such a place.
@@ -65,6 +65,21 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 Alt+Enter in the game window switches between windowed and borderless full screen (all four games; another key:
 --bind_cogbox_fullscreen=<key> in extra-args.txt, None = off).
+
+
+New in 0.6.5
+------------
+- SHADERS, MUCH FASTER: on every start after the first, Gears 3's shader warm-up drops from 8.5 s to 0.2 s
+  (DirectX 12) and the game reaches gameplay 66% sooner. Converted shaders are kept between starts (Vulkan too:
+  9.4 s -> 1.9 s), first-ever starts translate shaders 56% faster with 67% fewer stutters, and a new graphics
+  driver no longer means long freezes (Play now offers Prepare all shaders first).
+- Cheats chosen in the launcher (Gameplay tab): God mode, Game speed, All weapons and ammo, Hide the HUD.
+- Gears 1: 16:10. Left and right stick dead zones. HDR for Judgment and Gears 1 (by legoliamneeson).
+- The FABRICATOR is a local mod manager (by KiltedKernel). Recent players and COGBox tags on players' names online.
+- Linux / Steam Deck players can be joined online again; Judgment voice language works (#367).
+- Thanks to Flippage, KiltedKernel and legoliamneeson for their code, and to everyone who reported issues on GitHub
+  and tested in the Discord.
+- Full list: CHANGES.md on GitHub (https://github.com/Shagg88/COGBox).
 
 
 New in 0.6.4

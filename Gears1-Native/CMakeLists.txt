@@ -93,6 +93,9 @@ set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 # its options are saved under Gears 1's settings group
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_CONSOLE_GEARS1=1)
+# GitHub #353: the shared name tags, with this game's own ue3/ headers (Gears 1's ue3::obj: whole-table lookups only).
+target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp)
+set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_OBJECTS_NO_RANGE=1)
 
 # Layer 3: Gears of War (the executable).
 set(GOW1_SOURCES
@@ -104,7 +107,9 @@ set(GOW1_SOURCES
     src/layer3_gow1/adaptive_triggers.cpp  # GitHub #245: DualSense trigger feel per weapon (--pad_adaptive_triggers)
 )
 if(WIN32)
-    add_executable(gow1 WIN32 ${GOW1_SOURCES})
+    # GitHub #355: the game's own window / taskbar icon (res/gow1.rc; SDL takes the exe's first icon)
+    enable_language(RC)
+    add_executable(gow1 WIN32 ${GOW1_SOURCES} res/gow1.rc)
 else()
     add_executable(gow1 ${GOW1_SOURCES})
 endif()

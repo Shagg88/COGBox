@@ -264,6 +264,46 @@ int main() {
         CHECK(same(call_for(SocialAction::JoinMatch, "0b6f2c1e-1111-4222-8333-944455556666"), "POST",
                    "/api/v1/matches/0b6f2c1e-1111-4222-8333-944455556666/join", ""));
     }
+    // 0.6.5 DLC light: the host's map (context 1) against the player's packages
+    {
+        const auto ms = parse_matches(R"({"matches":[{"lobby_id":"1","title_id":"4D5308AB","map":11},
+            {"lobby_id":"2","title_id":"4D5308AB","map":3},{"lobby_id":"3","title_id":"4D5308AB","map":null},
+            {"lobby_id":"4","title_id":"4D5308AB","map":99},{"lobby_id":"5","title_id":"4D5308AB","map":-4}]})");
+        CHECK(ms.size() == 5);
+        if (ms.size() == 5) {
+            auto base = [](const std::string& p) { return p == "mp_gridlockg3"; };   // base maps only, no Azura
+            CHECK(ms[0].map == 11 && match_map_light(ms[0], base) == MapLight::Missing);
+            CHECK(match_map_light(ms[0], [](const std::string& p) { return p == "mp_azura"; }) == MapLight::Have);
+            CHECK(match_map_light(ms[1], base) == MapLight::Have);
+            CHECK(ms[2].map == 0 && match_map_light(ms[2], base) == MapLight::None);
+            CHECK(match_map_light(ms[3], base) == MapLight::Missing);   // a number not in the table
+            CHECK(ms[4].map == 0 && match_map_light(ms[4], base) == MapLight::None);
+            CHECK(match_map_light(ms[1], nullptr) == MapLight::Missing);
+            const auto old = parse_matches(R"({"matches":[{"lobby_id":"6","title_id":"4D5308AB"},{"lobby_id":"7","title_id":"4D53082D","map":3}]})");
+            CHECK(old.size() == 2 && old[0].map == -1 && match_map_light(old[0], base) == MapLight::Unknown);
+            CHECK(old.size() == 2 && match_map_light(old[1], base) == MapLight::Unknown);   // Gears 2: not checked yet
+        }
+        CHECK(std::string(match_map_package(0, 10)) == "MP_Stasis" && !match_map_package(0, 11) && !match_map_package(0, 0));
+        CHECK(std::string(match_map_package(2, 20)) == "MP_Haven_ALT" && !match_map_package(2, 21));
+        CHECK(!match_map_package(3, 1) && !match_map_package(-1, 1));
+    }
+    // recent players (0.6.5): the people met in matches, newest first, with what you are to them
+    {
+        const auto r = parse_recent(R"({"recent":[)"
+            R"({"uuid":"0b6f2c1e-1111-4222-8333-944455556666","display_name":"Raven","discriminator":"2210","icon":"4D5308AB/3.png","title_id":"4d5308ab","seen_at":1000,"relation":"none"},)"
+            R"({"uuid":"../../x","display_name":"Bad","discriminator":"0001","icon":"","title_id":"4D5308AB","seen_at":900,"relation":"none"},)"
+            R"({"uuid":"aaaaaaaa-1111-4222-8333-944455556666","display_name":"Dizzy","discriminator":"5104","icon":"","title_id":"4D5309C9","seen_at":800,"relation":"sent"}]})");
+        CHECK(r.size() == 2);   // an unsafe uuid is dropped
+        CHECK(r[0].tag == "Raven#2210" && r[0].title_id == "4D5308AB" && r[0].seen_at == 1000 && r[0].relation == "none");
+        CHECK(r[0].icon == "4D5308AB/3.png");
+        CHECK(r[1].tag == "Dizzy#5104" && r[1].relation == "sent");
+        CHECK(parse_recent("not json").empty());
+        CHECK(recent_when(1000000, 1000000 + 30000) == "just now");
+        CHECK(recent_when(0, 25 * 60000) == "25 min ago");
+        CHECK(recent_when(0, 3 * 3600000LL + 5000) == "3 h ago");
+        CHECK(recent_when(0, 30 * 3600000LL) == "yesterday");
+        CHECK(recent_when(0, 4 * 86400000LL) == "4 days ago");
+    }
     if (g_failures == 0) std::printf("social_model_test: all passed\n");
     return g_failures;
 }
