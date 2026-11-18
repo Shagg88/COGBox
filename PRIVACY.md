@@ -64,6 +64,20 @@ server runs on your own PC.
   and the games' save folders. Old files are moved to `_old-files`, not deleted.
 - **Your Player name** is stored only in `CogBox.ini` on your PC.
 
+## The Fabricator (the mod manager)
+
+The **FABRICATOR** screen works offline and **sends nothing**: it makes no network request. It adds, updates and
+uninstalls mods from files on your PC. What it keeps, in the COGBox folder:
+
+- `fabricator.json` in each mod folder it installed: which mod this is (its name and version, that it was added from a
+  file) and a SHA-256 hash of the zip. COGBox writes it, and it is left out of any zip you make.
+- `mods\.fabricator-backup\` in each game's folder: the old copy of a mod after an update, or of one you uninstalled.
+  You can delete it yourself at any time.
+- `fabricator\work\` next to COGBox: a temporary folder used while a mod folder is packed and checked. It is removed
+  afterwards.
+
+A mod you put in the mods folder by hand has no `fabricator.json`, and COGBox never changes or deletes it.
+
 ## Problem reports
 
 When you make a problem report, COGBox writes **one zip file on your desktop** with the logs, your settings and a

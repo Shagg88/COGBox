@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **The FABRICATOR is a local mod manager** (KiltedKernel): the launcher's FABRICATOR screen manages the mods of all four
+  games on your PC, offline, with nothing sent anywhere (it is also reached from **More in FABRICATOR** on a game's Mods
+  tab).
+  - **LIBRARY:** add a mod from a `.zip` or a folder (or drop one on the window); it is checked, added, turned on and
+    put last in the load order. Adding a mod again with the same mod.ini Name offers an update. Turn mods on or off,
+    move them in the order, open the mods folder, and uninstall (the folder is moved to `mods\.fabricator-backup`, not
+    deleted). A mod folder you put there by hand is never changed or deleted. Everything refuses with "Close the game
+    first." while the game runs. Program files in a mod (programs, libraries, scripts, installers, shortcuts, archives
+    inside the zip) are left out, and the install names them.
+  - **STORE:** a coming-soon note: mods from Nexus Mods are planned; there is no online mod library yet.
+  - **CREATOR:** check a mod folder against the install rules and limits (50 000 files, 8 GiB unpacked, 4 GiB zip,
+    mod.ini 256 KB), edit its mod.ini in a form (Name, Game, Version, Author, Description, Side, Requires; other
+    sections and comments are kept), make a clean zip, and see the steps to publish it on Nexus Mods with the COGBox
+    tag.
+  - LEGAL.md has a new section 11, "Mods and the Fabricator" (the takedown section is now 12); PRIVACY.md lists what the
+    Fabricator keeps on your PC; `docs/modding.md` has "Packaging and publishing your mod".
 - **A bigger launcher** (Shagg): the window is 1280 x 800 at 100% Windows scaling (it was 1000 x 624), with the same
   text and button sizes; a screen too small for it gets a smaller window first, and smaller text only below the old size.
   The settings panel reaches to about 40 px from the window's sides, and every tab uses the room for two columns:
