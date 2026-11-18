@@ -2,6 +2,22 @@
 
 ## 0.6.5
 
+**The big one: shaders.** COGBox 0.6.5 rebuilds how the games' shaders are translated, kept and built, and you feel it
+from the moment you press Play:
+
+| Gears 3, RTX 3080 Ti PC | 0.6.4 | 0.6.5 |
+|---|---|---|
+| Shader warm-up, every start after the first (DirectX 12) | 8.5 s | **0.2 s** (97% less) |
+| CPU work for that warm-up | 85 s of thread time | **1.4 s** (98% less) |
+| Start to the 300th frame | 15.4 s | **5.2 s** (66% sooner) |
+| Shader warm-up, Vulkan, a later start | 9.4 s | **1.9 s** |
+| Shader translation on a first-ever start | 15.8 s | **7.0 s** (56% faster) |
+| Stutters over 50 ms on a first-ever start | | **67% fewer** |
+| Worst frame times (p99), Vulkan, new graphics driver | 47.8 ms | **26.7 ms** (44% lower) |
+
+Converted shaders are now kept between starts, the translator does about 88% less CPU work, saving pipelines no longer
+pauses the game, and after a driver update the area you are playing is built first. Details below.
+
 - **Much faster start-up** - compared with 0.6.4's shader translator (Gears 3, RTX 3080 Ti PC, same shaders):
   - **DirectX 12 (the default), every start after the first: shader warm-up 97% less time** (8.5 s -> 0.2 s) and **98%
     less CPU work** (85 s of thread time -> 1.4 s); from start to the 300th frame **66% sooner** (15.4 s -> 5.2 s),

@@ -69,8 +69,10 @@ Alt+Enter in the game window switches between windowed and borderless full scree
 
 New in 0.6.5
 ------------
-- Much faster start-up: shader warm-up up to 97% shorter on DirectX 12, converted shaders kept between starts
-  (Vulkan too), and a smoother first start after a new graphics driver (Play now offers Prepare all shaders first).
+- SHADERS, MUCH FASTER: on every start after the first, Gears 3's shader warm-up drops from 8.5 s to 0.2 s
+  (DirectX 12) and the game reaches gameplay 66% sooner. Converted shaders are kept between starts (Vulkan too:
+  9.4 s -> 1.9 s), first-ever starts translate shaders 56% faster with 67% fewer stutters, and a new graphics
+  driver no longer means long freezes (Play now offers Prepare all shaders first).
 - Cheats chosen in the launcher (Gameplay tab): God mode, Game speed, All weapons and ammo, Hide the HUD.
 - Gears 1: 16:10. Left and right stick dead zones. HDR for Judgment and Gears 1 (by legoliamneeson).
 - The FABRICATOR is a local mod manager (by KiltedKernel). Recent players and COGBox tags on players' names online.
