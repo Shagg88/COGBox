@@ -53,7 +53,7 @@ struct Running {
     std::shared_ptr<CrashDumpStatus> crashDump;   // GitHub #286: the crash minidump watcher (crash_dump.h)
 };
 
-enum Screen { SCR_FRONT, SCR_PAGE };
+enum Screen { SCR_FRONT, SCR_PAGE, SCR_FABRICATOR };   // SCR_FABRICATOR: the local mod manager (fabricator_ui.cpp)
 
 struct Modal {                       // one message box at a time, drawn by main.cpp
     bool open = false;
@@ -85,12 +85,13 @@ struct App {
     // front screen
     float carPos = 0;                 // the carousel: which box is in front (fractional while turning)
     int front = 0;                    // the box it is turning to
-    int frontSel = 0;                 // the controller's choice under the box: 0 Play / Add your copy, 1 Settings (LB / RB)
+    int frontSel = 0;                 // the controller's choice under the box: 0 Play / Add your copy, 1 Settings (LB / RB), 2 Achievements, 3 Social, 4 Fabricator
     double restSince = 0;             // when the carousel stopped turning
     // pages
     Screen screen = SCR_FRONT;
     int page = 0;                     // the game whose page is shown
     int tab = 0;
+    int fabTab = 0;                   // the FABRICATOR screen's tab: 0 Library, 1 Store, 2 Creator
     int barSel = -1;                  // a page's bottom bar chosen with the controller: -1 none (in the rows), 0 Library, 1 Save, 2 Play
     double zoomStart = -10;           // the front <-> page transition
     Screen zoomTo = SCR_FRONT;
@@ -165,6 +166,10 @@ void art_download_start();
 int art_download_poll();
 // page.cpp
 void page_draw(App &a, ImVec2 size);
+// fabricator_ui.cpp: the FABRICATOR screen (LIBRARY, STORE, CREATOR), and a file or folder dropped on it (the CREATOR
+// tab takes a folder as the mod to package; anything else is a mod to add)
+void fabricator_draw(App &a, ImVec2 size);
+void fabricator_drop(App &a, const std::string &path);
 // achievements_tab.cpp (achievements part 4): the ACHIEVEMENTS tab below its option rows (the rows' label / control
 // widths and right edge, as page.cpp lays them out); read again after a game closed; the front button's "open on All";
 // the reveal question answered (ask tag "achreveal", 1 = yes).

@@ -7,6 +7,7 @@
 #include "upgrade_cleanup.h"   // cleanup049
 #include "app.h"
 #include "social_client.h"
+#include "fabricator_state.h"   // the FABRICATOR screen's worker and jobs
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
 #include "update.h"
@@ -258,6 +259,7 @@ static void answered(App &a)
         else a.joinLobby[m.game].clear();
         a.misplacedAsked[m.game] = false;
     }
+    else if (m.tag == "fabupdate" || m.tag == "fabuninstall") fab_answer(a, m);   // the Fabricator's questions
     else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
     else if (m.tag == "socialremove") social_remove_answer(m.answer);   // social step 3
     else if (m.tag == "socialdelete") social_delete_answer(a, m.answer);   // 0.6.0 review: delete the online account
@@ -565,6 +567,7 @@ static void draw_ui(App &a, ImVec2 size)
     // old picture then cross-fades into the new one. (Before 0.3.8: a 0.5 s dip through black - the whole window,
     // window buttons and background included, went black half way, and the switch waited for it.)
     if (a.screen == SCR_FRONT) front_draw(a, size);
+    else if (a.screen == SCR_FABRICATOR) fabricator_draw(a, size);
     else page_draw(a, size);
 
     // the message line
@@ -663,7 +666,8 @@ static void refresh_pads(App &a)
 }
 
 // Test switches (all off for players): COGBOX_SHOT=<file.bmp> saves the window after COGBOX_SHOT_FRAMES frames (90)
-// and exits (COGBOX_SHOT_NOTICES=1 keeps the startup questions); COGBOX_PAGE=<game>[:<tab>] opens on a page; COGBOX_FRONT=<game> turns the carousel there.
+// and exits (COGBOX_SHOT_NOTICES=1 keeps the startup questions); COGBOX_PAGE=<game>[:<tab>] opens on a page; COGBOX_FRONT=<game> turns the carousel there;
+// COGBOX_FABRICATOR=<library|store|creator> opens the FABRICATOR screen on that tab.
 static void test_shot(App &a)
 {
     const char *shot = getenv("COGBOX_SHOT");
@@ -887,6 +891,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         a.tab = c ? std::max(0, std::min(7, atoi(c + 1))) : 0;   // 0-4 gs::Tab, 5 SOCIAL, 6 MODS, 7 ABOUT
         a.screen = a.zoomTo = SCR_PAGE;
     }
+    if (const char *t = getenv("COGBOX_FABRICATOR")) {   // test switch: only picks the screen and its tab
+        const std::string tab = t;
+        a.fabTab = tab == "store" ? 1 : tab == "creator" ? 2 : 0;
+        a.screen = a.zoomTo = SCR_FABRICATOR;
+    }
     covers_load(a);
     // 0.2.0 (GitHub #3 / #7): some unzip tools (KDE's Ark) flatten the release's folders; the ports are then "missing"
     {
@@ -941,12 +950,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         case 3: set_message(a, "The box art couldn't be downloaded - check the internet connection.", true); break;
         }
         install_poll(a);
+        fab_state_poll(a);   // the FABRICATOR's jobs: an install's folder chosen and its final moves made here, on the UI thread
         linux_poll(a);   // proton049
         backup_poll(a);   // GitHub #120: the save backup runs on its own thread
         social_delete_poll(a);   // DELETE ONLINE ACCOUNT runs on its own thread too
         // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
         // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
         // game copy or a title update is searched for DLC packages.
+        if (!a.dropped.empty() && a.screen == SCR_FABRICATOR && !a.modal.open) {   // on the FABRICATOR screen: a mod to add or package
+            const std::vector<std::string> d = a.dropped;
+            a.dropped.clear();
+            for (const std::string &p : d) fabricator_drop(a, p);
+        }
         if (!a.dropped.empty() && !a.modal.open && a.job.state.load() != 1 && !dlc_dupes_running()) {   // r25: after a duplicate check
             std::string p = a.dropped.front();
             a.dropped.erase(a.dropped.begin());
@@ -1018,8 +1033,17 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         const bool quitAskable = !a.run.proc && SDL_GetKeyboardFocus() && a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
                                  !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.job.state.load() != 1 &&
                                  !g_popupLastFrame;   // 0.4.6 review: Dear ImGui closes a popup on Esc before this, so the same Esc must not quit
+        // the FABRICATOR screen: Esc / B go back to the library when nothing else has them (a question, a list, a text box)
+        static bool textLastFrame = false;
+        const bool fabBackable = SDL_GetKeyboardFocus() && a.screen == SCR_FABRICATOR && a.zoomTo == SCR_FABRICATOR && !a.modal.open &&
+                                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !g_popupLastFrame && !textLastFrame && !pad_capturing(a);
         draw_ui(a, io.DisplaySize);
         g_popupLastFrame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+        if (fabBackable && !a.modal.open && !io.WantTextInput &&
+            (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))) {
+            a.zoomTo = SCR_FRONT; a.zoomStart = ImGui::GetTime();
+        }
+        textLastFrame = io.WantTextInput;
         // job 526: Start (Options) or Esc on the library screen asks to close COGBox (asked after this frame's drawing, so
         // the same Esc doesn't also answer it)
         if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
@@ -1037,6 +1061,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (a.job.state.load() == 1) { a.job.cancel = true; }
     if (a.job.th.joinable()) a.job.th.join();
     music_stop();
+    fab_state_shutdown();   // the FABRICATOR: packs cancelled, unfinished installs' .partial folders removed
     for (auto &c : a.cover) if (c.tex) SDL_DestroyTexture(c.tex);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();

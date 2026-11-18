@@ -48,5 +48,8 @@ void shell_select(const std::string &file);   // Explorer opens the folder with 
 // Windows' folder / file pickers (empty = cancelled). filter is like L"Disc images\0*.iso\0All files\0*.*\0".
 std::string pick_folder(const wchar_t *title);
 std::string pick_file(const wchar_t *title, const wchar_t *filter);
+// The save box (the Fabricator's "Make a zip"): default_name filled in, default_ext (L"zip") added when the name has
+// none; it asks before replacing a file. Empty = cancelled.
+std::string pick_save_file(const wchar_t *title, const wchar_t *filter, const std::string &default_name, const wchar_t *default_ext);
 // Known folders
 std::string desktop_dir();

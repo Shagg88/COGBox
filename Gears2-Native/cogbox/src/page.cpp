@@ -10,6 +10,7 @@
 #include "report.h"   // report_gpu_names (report_share)
 #include "dlss_custom.h"   // 0.4.9: Custom DLSS file
 #include "save_import.h"   // 0.6.1: Import saves
+#include "fabricator_state.h"   // the MODS tab's "More in FABRICATOR" (the LIBRARY opens on this game)
 #include <filesystem>
 #include "imgui_internal.h"
 
@@ -448,6 +449,15 @@ void ui_columns(const std::function<void(int)> &body)   // (also achievements_ta
 }
 float ui_label_w() { return g_labelW; }   // (achievements_tab.cpp / social_tab.cpp, inside a column)
 float ui_row_x1() { return g_rowX1; }
+// The FABRICATOR screen (fabricator_ui.cpp): its rows child gets the metrics page_draw gives a page's rows, so
+// ui_section / ui_note / ui_columns work there as on a page
+void ui_rows_begin()
+{
+    g_ctrlW = T(300);
+    g_labelW = std::min(S(500), ImGui::GetContentRegionAvail().x - g_ctrlW - S(40));
+    g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
+    g_sections = 0;
+}
 
 static bool small_button(const char *label_en)
 {
@@ -1463,6 +1473,13 @@ static void mods_tab(App &a, int g)
         ImGui::SameLine();
         if (small_button("Mods folder")) { make_dirs(mods_dir(g)); open_folder(a, mods_dir(g)); }
         ui_tip(k_noModsTip);
+        ImGui::SameLine();
+        if (small_button("More in FABRICATOR")) {   // the local mod manager: add a folder, update, uninstall, package
+            if (std::any_of(a.dirty, a.dirty + G_COUNT, [](bool x) { return x; })) settings_save(a);
+            fab_library_set_game(g);
+            a.fabTab = 0; a.zoomTo = SCR_FABRICATOR; a.zoomStart = ImGui::GetTime(); a.barSel = -1;
+        }
+        ui_tip("Update, uninstall and package mods, and add a mod's folder.");
         if (changed) { mlAt[g] = 0; env_refresh(a, g); }
     }
 }

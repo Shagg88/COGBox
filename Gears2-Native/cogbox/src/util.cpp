@@ -365,6 +365,41 @@ static std::string pick(const wchar_t *title, const wchar_t *filter, bool folder
 std::string pick_folder(const wchar_t *title) { return pick(title, nullptr, true); }
 std::string pick_file(const wchar_t *title, const wchar_t *filter) { return pick(title, filter, false); }
 
+std::string pick_save_file(const wchar_t *title, const wchar_t *filter, const std::string &default_name, const wchar_t *default_ext)
+{
+    std::string result;
+    HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    IFileSaveDialog *d = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_IFileSaveDialog, (void **)&d))) {
+        DWORD opts = 0;
+        d->GetOptions(&opts);
+        d->SetOptions(opts | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
+        d->SetTitle(title);
+        std::vector<COMDLG_FILTERSPEC> specs;
+        if (filter)
+            for (const wchar_t *p = filter; *p;) {
+                const wchar_t *name = p; p += wcslen(p) + 1;
+                if (!*p) break;
+                const wchar_t *spec = p; p += wcslen(p) + 1;
+                specs.push_back({name, spec});
+            }
+        if (!specs.empty()) d->SetFileTypes((UINT)specs.size(), specs.data());
+        if (default_ext) d->SetDefaultExtension(default_ext);
+        if (!default_name.empty()) d->SetFileName(widen(default_name).c_str());
+        if (SUCCEEDED(d->Show(nullptr))) {
+            IShellItem *it = nullptr;
+            if (SUCCEEDED(d->GetResult(&it))) {
+                PWSTR p = nullptr;
+                if (SUCCEEDED(it->GetDisplayName(SIGDN_FILESYSPATH, &p))) { result = narrow(p); CoTaskMemFree(p); }
+                it->Release();
+            }
+        }
+        d->Release();
+    }
+    if (SUCCEEDED(init)) CoUninitialize();
+    return result;
+}
+
 std::string desktop_dir()
 {
     PWSTR p = nullptr;
