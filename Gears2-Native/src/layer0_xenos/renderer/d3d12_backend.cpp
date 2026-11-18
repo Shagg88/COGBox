@@ -4735,13 +4735,15 @@ class D3D12Backend final : public Backend {
     // priority built the 2,036 recorded pipelines and the recipe pack beside the game's own threads): on 8 logical
     // processors or fewer, start-up backlog jobs (nothing draws with them yet) run below normal, and while the game is
     // being played at most half the workers take them. A job a draw asks for is moved to the live queue before it is
-    // taken (PromoteBacklogJob) and is never limited. Bigger CPUs: unchanged unless the cvars say otherwise.
-    const bool small_cpu = hw <= 8;
+    // taken (PromoteBacklogJob) and is never limited.
     worker_prio_ = prio;
-    backlog_prio_ = options_.backlog_thread_priority <= -3 ? (small_cpu ? std::min(prio, -1) : prio)
+    // 0.6.5 (job 2021, a cold start on 16 logical processors: 12 normal-priority workers building the backlog beside the
+    // game and the package readers gave 50-70 ms frames for over a minute, and a clean window only once they ran dry):
+    // auto now means below normal and half the workers during play on every CPU, not only on 8 or fewer.
+    backlog_prio_ = options_.backlog_thread_priority <= -3 ? std::min(prio, -1)
                                                            : std::min(prio, std::clamp(options_.backlog_thread_priority, -2, 0));
     const int bw = options_.backlog_play_workers;
-    backlog_play_limit_ = bw < 0 ? (small_cpu && n > 1 ? std::max(1u, n / 2) : 0u) : std::min(uint32_t(bw), n);
+    backlog_play_limit_ = bw < 0 ? (n > 1 ? std::max(1u, n / 2) : 0u) : std::min(uint32_t(bw), n);
     if (backlog_play_limit_ >= n) backlog_play_limit_ = 0;  // no limit at all
     for (uint32_t i = 0; i < n; ++i)
       workers_.emplace_back([this, prio] {

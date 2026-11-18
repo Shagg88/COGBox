@@ -164,13 +164,13 @@ REXCVAR_DEFINE_INT32(gow2_renderer_backlog_priority, -3, "Gears2",
                      "0.6.3 (4-core laptop stuttering while the start-up backlog built): Windows priority of a pipeline "
                      "worker while it builds a start-up backlog pipeline (recorded pipelines, the recipe pack; a pipeline "
                      "a draw asks for is moved to the live queue first and keeps the workers' own priority): -3 = auto "
-                     "(below normal on 8 logical processors or fewer, else the workers' own), -2 = lowest, -1 = below "
+                     "(below normal; 0.6.5 - was only on 8 logical processors or fewer), -2 = lowest, -1 = below "
                      "normal, 0 = the workers' own (gow2_renderer_pipeline_thread_priority). D3D12");
 REXCVAR_DEFINE_INT32(gow2_renderer_backlog_play_workers, -1, "Gears2",
                      "0.6.3: the most pipeline workers on start-up backlog pipelines at once while the game is being "
                      "played (frames of 64+ draws); loading screens, menus and videos keep every worker, and pipelines a "
-                     "draw asks for are never limited. -1 = auto (half the workers on 8 logical processors or fewer, "
-                     "else no limit), 0 = no limit, N = N. D3D12");
+                     "draw asks for are never limited. -1 = auto (half the workers; 0.6.5 - "
+                     "was only on 8 logical processors or fewer), 0 = no limit, N = N. D3D12");
 REXCVAR_DEFINE_INT32(gow2_renderer_pipeline_save_seconds, 15, "Gears2",
                      "Patch 0056: seconds between saves of the pipeline library while it grows (was 60; a quit or a "
                      "hard exit lost everything since the last save). Minimum 5");
