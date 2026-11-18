@@ -62,7 +62,7 @@
   the online server were not tested on our PC.
 - **A versus search no longer sends you into someone's campaign** (Discord): searching for a versus match could join
   another player's campaign lobby (seen with RAAM's Shadow in Gears 3). Searches for a versus playlist now skip lobbies
-  that don't name a playlist.
+  that don't name a playlist (tested in Gears 3; Gears 2 and Judgment versus lobbies not checked yet).
 - **Judgment: no more one-frame light flashes with XeGTAO, steady blood decals with DLSS, and no freeze back to the main
   menu** (by Flippage):
   - With XeGTAO on, large areas (and the player model) lit up for a single frame as the camera moved. On some frames
@@ -106,7 +106,7 @@
   **Recent players** lists the COGBox players you were in an online match with over the last 14 days, newest first, with
   the game and when, and an ADD FRIEND (or ACCEPT) button. The game reports the players it shows tags for, each at most
   once every 10 minutes; the server keeps one row per pair (new table recent_players, POST / GET
-  /api/v1/players/recent). The Gears 3 team-picking note under Open matches is gone.
+  /api/v1/players/recent; needs the updated online server). The Gears 3 team-picking note under Open matches is gone.
 - **COGBox tags on every player's name** (all four games; GitHub #353): in online lobbies, party lists and the
   scoreboard each player's name shows their COGBox tag after it in grey, for example Flapper#5531, so you can add
   someone you just played with as a friend by their tag. The game asks the COGBox server once for each new player (up to
