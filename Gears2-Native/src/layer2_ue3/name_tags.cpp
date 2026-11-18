@@ -290,10 +290,12 @@ namespace {
 const Ue3TextHookCheck* g_checks = nullptr;   // the game's (constant-initialized: set by a static initializer)
 size_t g_check_count = 0;
 std::atomic<bool> g_text_ok{false};           // the checks passed: the hooks clean text
+thread_local int t_canvas_calls = 0;          // this thread is inside a Canvas exec native (Ue3CanvasTextCall)
 
 // Scratch copies: a ring of guest-memory slots of our own (system heap), each a text of up to kMaxText characters and
 // an FString after it. A slot is needed only for the one call it is passed to: the hooked routines measure the text, or
-// draw it (turning it into glyph quads) before they return - they keep no pointer to it. At most a few slots per call
+// draw it (turning it into glyph quads) before they return - they keep no pointer to it. Only inside a Canvas exec native
+// (Ue3CanvasTextCall), so only the script's draw calls on the game thread take slots. At most a few slots per call
 // (only arguments holding the markup take one); the ring is far longer than any nesting of these calls.
 constexpr uint32_t kMaxText = 256, kSlots = 64, kSlotBytes = 0x220, kSlotFString = 0x210;
 std::atomic<uint32_t> g_scratch{0}, g_scratch_next{0};
@@ -379,8 +381,11 @@ void Ue3NameTagsTextHookChecks(const Ue3TextHookCheck* checks, size_t count) {
   g_check_count = count;
 }
 
+Ue3CanvasTextCall::Ue3CanvasTextCall() { ++t_canvas_calls; }
+Ue3CanvasTextCall::~Ue3CanvasTextCall() { --t_canvas_calls; }
+
 uint32_t Ue3NameTagsTextArg(uint32_t arg) {
-  if (!g_text_ok.load(std::memory_order_acquire)) return arg;
+  if (t_canvas_calls <= 0 || !g_text_ok.load(std::memory_order_acquire)) return arg;   // only the script's draw calls
   if (Mk().before.empty() && Mk().after.empty()) return arg;   // tags without markup: nothing to take out
   uint32_t count = 0, len = 0;
   if (const uint32_t c = CleanCopy(arg, &count, &len)) return c;   // the text itself

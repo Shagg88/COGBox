@@ -41,3 +41,12 @@ struct Ue3TextHookCheck {
 };
 void Ue3NameTagsTextHookChecks(const Ue3TextHookCheck* checks, size_t count);
 uint32_t Ue3NameTagsTextArg(uint32_t arg);
+// The text routines are shared by much of the engine (Gears 1's 823A38F0 has 327 call sites), so Ue3NameTagsTextArg
+// acts only on this thread while one of the Canvas exec natives above runs (they hold the script's own copy of the text):
+// a game's layer 3 also wraps each of those natives in an Ue3CanvasTextCall (review r368b).
+struct Ue3CanvasTextCall {
+  Ue3CanvasTextCall();
+  ~Ue3CanvasTextCall();
+  Ue3CanvasTextCall(const Ue3CanvasTextCall&) = delete;
+  Ue3CanvasTextCall& operator=(const Ue3CanvasTextCall&) = delete;
+};

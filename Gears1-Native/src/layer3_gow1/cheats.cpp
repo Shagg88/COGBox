@@ -126,3 +126,16 @@ GOW1_TEXT_HOOK(8233CD68)  // DrawTextClipped's and TextSize's
 GOW1_TEXT_HOOK(82398848)  // TextSize's
 GOW1_TEXT_HOOK(8233B538)  // StrLen's
 #undef GOW1_TEXT_HOOK
+// The Canvas exec natives themselves: the hooks above act only inside one of these (the text routines are shared by
+// much of the engine; only the script's draw calls hold the copy that is cleaned) - review r368b.
+#define GOW1_CANVAS_EXEC(addr)                                                                  \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);    \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {          \
+    Ue3CanvasTextCall in_canvas;                                                     \
+    __imp__sub_##addr(ctx, base);                                                    \
+  }
+GOW1_CANVAS_EXEC(8233BE60)  // Canvas.DrawText
+GOW1_CANVAS_EXEC(8233C058)  // Canvas.DrawTextClipped
+GOW1_CANVAS_EXEC(8233C4D0)  // Canvas.TextSize
+GOW1_CANVAS_EXEC(8233C210)  // Canvas.StrLen
+#undef GOW1_CANVAS_EXEC

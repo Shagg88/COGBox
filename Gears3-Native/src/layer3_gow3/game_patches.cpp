@@ -1114,10 +1114,10 @@ void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
   }
 }
 
-#if defined(GOW3_TU6) && GOW3_TU6  // the TU6 build's addresses; other builds clean the stored copies only
+#if defined(GOW3_TU6) && GOW3_TU6  // the TU6 build's addresses; other builds draw the kill feed with the markup
 // GitHub #353, the kill feed: the HUD keeps copies of the names in its DeathData entries and draws them through
 // Canvas's text calls, which draw the text as it is - so the tag's grey markup (rendered by the Flash scenes: lobby,
-// scoreboard) would show as text, for the one frame before name_tags.cpp takes it out of the stored copy. These are the
+// scoreboard) would show as text. These are the
 // engine's text routines under Canvas.DrawText / TextSize / StrLen (exec functions 82749400, 82749AE8, 82749850 call them with the
 // script's copy of the text): the original gets a copy, without the markup, of any argument holding it - the text itself, or an FString whose
 // data it is - before the original runs.
@@ -1143,4 +1143,16 @@ TEXT_HOOK(82748790)  // DrawText's
 TEXT_HOOK(82747930)  // TextSize's
 TEXT_HOOK(827486C0)  // StrLen's
 #undef TEXT_HOOK
+// The Canvas exec natives themselves: the hooks above act only inside one of these (the text routines are shared by
+// much of the engine; only the script's draw calls hold the copy that is cleaned) - review r368b.
+#define CANVAS_EXEC(addr)                                                                  \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);    \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {          \
+    Ue3CanvasTextCall in_canvas;                                                     \
+    __imp__sub_##addr(ctx, base);                                                    \
+  }
+CANVAS_EXEC(82749400)  // Canvas.DrawText
+CANVAS_EXEC(82749AE8)  // Canvas.TextSize
+CANVAS_EXEC(82749850)  // Canvas.StrLen
+#undef CANVAS_EXEC
 #endif

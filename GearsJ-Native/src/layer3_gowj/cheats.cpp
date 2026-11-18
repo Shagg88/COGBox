@@ -125,7 +125,7 @@ extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
 
 // GitHub #353, the kill feed: the HUD keeps copies of the names in its DeathData entries and draws them through
 // Canvas's text calls, which draw the text as it is - so the tag's grey markup (rendered by the Flash scenes: lobby,
-// scoreboard) would show as text, for the one frame before name_tags.cpp takes it out of the stored copy. These are the
+// scoreboard) would show as text. These are the
 // engine's text routines under Canvas.DrawText / TextSize / StrLen (exec functions 8275ED00, 8275F540, 8275F2A8 call them with the
 // script's copy of the text): the original gets a copy, without the markup, of any argument holding it - the text itself, or an FString whose
 // data it is - before the original runs.
@@ -151,3 +151,15 @@ TEXT_HOOK(8275DFF8)  // DrawText's
 TEXT_HOOK(8275DE88)  // TextSize's
 TEXT_HOOK(8275DF28)  // StrLen's
 #undef TEXT_HOOK
+// The Canvas exec natives themselves: the hooks above act only inside one of these (the text routines are shared by
+// much of the engine; only the script's draw calls hold the copy that is cleaned) - review r368b.
+#define CANVAS_EXEC(addr)                                                                  \
+  extern "C" void __imp__sub_##addr(PPCContext& __restrict ctx, uint8_t* base);    \
+  extern "C" void sub_##addr(PPCContext& __restrict ctx, uint8_t* base) {          \
+    Ue3CanvasTextCall in_canvas;                                                     \
+    __imp__sub_##addr(ctx, base);                                                    \
+  }
+CANVAS_EXEC(8275ED00)  // Canvas.DrawText
+CANVAS_EXEC(8275F540)  // Canvas.TextSize
+CANVAS_EXEC(8275F2A8)  // Canvas.StrLen
+#undef CANVAS_EXEC
