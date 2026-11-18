@@ -42,6 +42,7 @@
 // read keeps its own language (no swap).
 namespace ue3 {
 bool ReadPackageExportPaths(const std::filesystem::path& file, std::set<std::string>* out);
+uint64_t WholeCompressedSize(const std::filesystem::path& file);  // 0.6.5 (#367): Gears 2's package_exports.cpp
 }  // namespace ue3
 
 REXCVAR_DEFINE_STRING(ue3_ini_edits, "", "Gears3",

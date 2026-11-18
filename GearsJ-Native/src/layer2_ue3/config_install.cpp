@@ -43,6 +43,7 @@
 // game's include folder (CMakeLists.txt), declared here so this game's own ue3/ headers are not shadowed.
 namespace ue3 {
 bool ReadPackageExportPaths(const std::filesystem::path& file, std::set<std::string>* out);
+uint64_t WholeCompressedSize(const std::filesystem::path& file);  // 0.6.5 (#367): Gears 2's package_exports.cpp
 std::string DescribePackageSummary(const std::filesystem::path& file);  // Gears 2's package_exports.cpp (to-do 2)
 }  // namespace ue3
 
