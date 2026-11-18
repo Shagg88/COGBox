@@ -10,6 +10,14 @@ const std::vector<std::string> &mod_file_program_exts()
         "mst", "scr", "com", "lnk", "url", "pif", "hta", "reg", "asi", "sys", "cpl", "ocx", "jar", "appx", "msix",
         "appxbundle", "msixbundle", "scf", "inf", "chm", "gadget", "application", "settingcontent-ms", "msc",
         "zip", "7z", "rar", "cab",   // nested archives
+        // review r369 M3: more code the system loads or runs (drivers, codecs, EFI, PowerShell data / console files,
+        // scriptlets, Windows Script, ClickOnce / search / library shortcuts, update and troubleshooter packages)
+        "ax", "drv", "efi", "mui", "ps1xml", "psd1", "psc1", "psc2", "msh", "msh1", "msh2", "mshxml", "msh1xml",
+        "msh2xml", "ws", "wsc", "sct", "vb", "appref-ms", "library-ms", "search-ms", "searchconnector-ms", "msu",
+        "diagcab", "appinstaller", "jnlp", "xll", "xbap", "website",
+        // ... and the other archives and disk images a program could hide in
+        "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "lz", "lzma", "zst", "arj", "lzh", "ace", "iso", "img", "vhd",
+        "vhdx", "wim", "dmg",
     };
     return exts;
 }

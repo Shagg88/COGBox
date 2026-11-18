@@ -111,6 +111,11 @@ bool mod_ini_write(const std::string &folder, const ModIniFields &f)
     const std::string path = join(folder, "mod.ini");
     std::string text;
     if (file_exists(path) && !read_file(path, text, 1u << 20)) return false;
+    // review r369: a file this editor would damage is left alone (false): UTF-16 (a BOM or NUL bytes - an ASCII [Mod]
+    // spliced in would corrupt it) or old Mac line endings (a lone CR: the whole file reads as one line)
+    if (text.compare(0, 2, "\xFF\xFE") == 0 || text.compare(0, 2, "\xFE\xFF") == 0 || text.find('\0') != std::string::npos) return false;
+    for (size_t i = text.find('\r'); i != std::string::npos; i = text.find('\r', i + 1))
+        if (i + 1 >= text.size() || text[i + 1] != '\n') return false;
     const bool bom = strip_bom(text);
     std::vector<Line> lines = split_lines(text);
     std::string eol = "\r\n";   // a new file: Windows endings; else the first line's

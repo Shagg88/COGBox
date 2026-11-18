@@ -436,7 +436,7 @@ bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, 
 // out go to left_out (may be null).
 bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err, std::vector<std::string> *left_out)
 {
-    if (a.run.proc) { err = "Close the game first."; return false; }   // the game reads the mods folder while it runs
+    if (a.run.proc || any_game_exe_running()) { err = "Close the game first."; return false; }   // the game reads the mods folder while it runs
     std::string top;
     {
         ZipReader zr(zipPath);

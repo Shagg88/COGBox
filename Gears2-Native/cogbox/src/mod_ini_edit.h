@@ -21,5 +21,6 @@ std::optional<ModIniFields> mod_ini_read(const std::string &folder);
 // left empty removes its line; a second Requires line is folded into the first). With several [Mod] sections every
 // occurrence of a key is updated and a new key goes into the last one (the one modcore's later-wins reading ends on). Every other line, section, comment, the BOM and the line endings are kept; a new key is
 // added after the section's last key; a missing [Mod] section is added at the top; a missing mod.ini is created. The
-// write is atomic (a temporary file, then a rename). false when it could not be written.
+// write is atomic (a temporary file, then a rename). false when it could not be written, or when the file is UTF-16 or
+// has old Mac (CR-only) line endings, which this editor would damage (it is then left as it is).
 bool mod_ini_write(const std::string &folder, const ModIniFields &f);

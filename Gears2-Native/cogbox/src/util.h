@@ -42,6 +42,11 @@ struct Ini {
     void remove_section(const std::string &sec);   // 0.6.3: the [sec] line too, and everything under it
 };
 
+// Review r369: a game program (gow1.exe, gow2.exe, gow3.exe, gowj.exe) is running, started by COGBox or not (Steam,
+// a shortcut, the exe itself) - what the mods folder's writers check besides the launcher's own a.run.proc. Looked up
+// at most once a second (the answer is kept); any thread.
+bool any_game_exe_running();
+
 // Opens a folder or a web page with Windows' own handler.
 void shell_open(const std::string &target);
 void shell_select(const std::string &file);   // Explorer opens the folder with that file selected

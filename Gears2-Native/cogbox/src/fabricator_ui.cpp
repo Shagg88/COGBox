@@ -219,7 +219,7 @@ void library_row(App &a, int g, const FabLibRow &r, size_t i, size_t n)
     const ImVec2 r1(r0.x + rw, r0.y + rh);
     dl->AddRectFilled(r0, r1, U(hexc(0x16181b), 0.8f), S(4));
     dl->AddRect(r0, r1, U(hexc(0x2f3338)), S(4));
-    const bool gameRuns = a.run.proc != nullptr;
+    const bool gameRuns = a.run.proc != nullptr || any_game_exe_running();   // review r369: started outside COGBox too
 
     // the buttons, right to left: Uninstall and Update (COGBox's installs only), Open folder, Down, Up
     struct B { const char *label; bool enabled; int what; };
@@ -503,7 +503,7 @@ void creator_form_section(App &a)
             g_crNeeds = needs_text(g_crForm.needs);
             set_message(a, "mod.ini is saved.", false);
             creator_check(a);
-        } else set_message(a, "mod.ini couldn't be saved (is the folder read-only?).", true);
+        } else set_message(a, "mod.ini couldn't be saved (is the folder read-only, or is mod.ini saved as UTF-16 or with old Mac line endings? Save it as UTF-8 first).", true);
     }
     ui_tip("Only these keys change; everything else in mod.ini (other sections, comments) stays as it is.");
     if (dirty && g_crHadIni) { ImGui::SameLine(); ui_note("Not saved yet", col::amber); }

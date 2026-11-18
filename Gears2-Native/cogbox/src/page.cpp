@@ -1419,7 +1419,7 @@ void auto_settings_apply(App &a, int g)
 // 0.4.6 (Shagg 5 Nov): mods have their own tab (they were a section of About)
 static void mods_tab(App &a, int g)
 {
-    bool running = a.run.proc != nullptr;
+    bool running = a.run.proc != nullptr || any_game_exe_running();   // review r369: a game started outside COGBox too
     // 0.2.0: mods - <Game>\mods\<mod>\, laid out like the game's data folder; a later one wins
     ui_section("MODS");
     {

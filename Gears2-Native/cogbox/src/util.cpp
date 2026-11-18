@@ -5,6 +5,8 @@
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
+#include <atomic>
 #include <ctime>
 #include <cstdio>
 #include <cstring>
@@ -407,4 +409,27 @@ std::string desktop_dir()
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &p))) r = narrow(p);
     if (p) CoTaskMemFree(p);
     return r.empty() ? exe_dir() : r;
+}
+
+bool any_game_exe_running()   // review r369 (util.h)
+{
+    static std::atomic<uint64_t> checked_at{0};
+    static std::atomic<bool> running{false};
+    const uint64_t now = GetTickCount64();
+    const uint64_t at = checked_at.load(std::memory_order_acquire);
+    if (at && now - at < 1000) return running.load(std::memory_order_relaxed);
+    bool found = false;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe;
+        pe.dwSize = sizeof pe;
+        for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe)) {
+            for (const wchar_t *n : { L"gow1.exe", L"gow2.exe", L"gow3.exe", L"gowj.exe" })
+                if (_wcsicmp(pe.szExeFile, n) == 0) { found = true; break; }
+        }
+        CloseHandle(snap);
+    }
+    running.store(found, std::memory_order_relaxed);
+    checked_at.store(now ? now : 1, std::memory_order_release);
+    return found;
 }

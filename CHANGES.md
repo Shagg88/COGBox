@@ -41,7 +41,7 @@
   - **LIBRARY:** add a mod from a `.zip` or a folder (or drop one on the window); it is checked, added, turned on and
     put last in the load order. Adding a mod again with the same mod.ini Name offers an update. Turn mods on or off,
     move them in the order, open the mods folder, and uninstall (the folder is moved to `mods\.fabricator-backup`, not
-    deleted). A mod folder you put there by hand is never moved or deleted. While the game runs, an added mod waits
+    deleted). A mod folder you put there by hand (one without COGBox's `fabricator.json`) is never moved or deleted. While the game runs, an added mod waits
     and is installed once the game is closed; a row's Update and Uninstall, on / off and the order refuse with "Close
     the game first.". Program files in a mod (programs, libraries, scripts, installers, shortcuts, archives inside the
     zip) are left out, and the install names them.

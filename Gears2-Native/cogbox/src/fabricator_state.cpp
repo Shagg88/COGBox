@@ -276,7 +276,7 @@ void fab_add_path(App &a, const std::string &path)
 void fab_update_from(App &a, int g, const std::string &folder, const std::string &zip)
 {
     if (zip.empty() || !game_is_port(g)) return;
-    if (a.run.proc) { set_message(a, kClose, true); return; }
+    if (a.run.proc || any_game_exe_running()) { set_message(a, kClose, true); return; }
     start_add(zip, g, folder);
 }
 
@@ -483,7 +483,7 @@ void fab_state_poll(App &a)
             j->phase = FabJob::Asking;
         } else if (ph == FabJob::Waiting) {
             if (installing) continue;
-            if (a.run.proc) {
+            if (a.run.proc || any_game_exe_running()) {
                 if (!j->told_close) { j->told_close = true; set_message(a, std::string(tr(kClose)) + " " + tr("The mod is installed once the game is closed."), true); }
                 continue;
             }
@@ -503,7 +503,7 @@ void fab_state_poll(App &a)
             installing = true;
             worker().post([j] { run_unpack(j); });
         } else if (ph == FabJob::Unpacked) {
-            if (a.run.proc) {   // a game started during the unpack: the move waits for it to close (the .partial stays)
+            if (a.run.proc || any_game_exe_running()) {   // a game started during the unpack: the move waits for it to close (the .partial stays)
                 if (!j->told_close) { j->told_close = true; set_message(a, std::string(tr(kClose)) + " " + tr("The mod is installed once the game is closed."), true); }
                 continue;
             }

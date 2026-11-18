@@ -64,7 +64,13 @@ int main()
         CHECK(!mod_file_is_program("f.ini"));
         CHECK(!mod_file_is_program("exe"));        // no extension
         CHECK(!mod_file_is_program("dll.dir/f.ini"));   // only the last component's extension
-        CHECK(mod_file_program_exts().size() == 44);
+        CHECK(mod_file_program_exts().size() == 92);   // 44 + review r369's 48
+        CHECK(mod_file_is_program("Textures/x.ISO"));
+        CHECK(mod_file_is_program("a/b/plugin.ax"));
+        CHECK(mod_file_is_program("pack.tar.gz"));
+        CHECK(mod_file_is_program("evil.drv. "));
+        CHECK(!mod_file_is_program("Gears.upk"));
+        CHECK(!mod_file_is_program("readme.txt"));
     }
     // ---- device names (mod_file_rules), one component ----
     {

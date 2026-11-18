@@ -71,16 +71,19 @@ server runs on your own PC.
 ## The Fabricator (the mod manager)
 
 The **FABRICATOR** screen works offline and **sends nothing**: it makes no network request. It adds, updates and
-uninstalls mods from files on your PC. What it keeps, in the COGBox folder:
+uninstalls mods from files on your PC. What it keeps, all on your PC:
 
-- `fabricator.json` in each mod folder it installed: which mod this is (its name and version, that it was added from a
-  file) and a SHA-256 hash of the zip. COGBox writes it, and it is left out of any zip you make.
-- `mods\.fabricator-backup\` in each game's folder: the old copy of a mod after an update, or of one you uninstalled.
-  You can delete it yourself at any time.
+- `fabricator.json` in each mod folder it installed (inside the game's `mods` folder): which mod this is (its name and
+  version, that it was added from a file) and a SHA-256 hash of the zip. COGBox writes it, and it is left out of any zip
+  you make.
+- `mods\.fabricator-backup\` in each game's folder: the old copy of a mod after an update, or of one you uninstalled
+  (one per mod; a newer one replaces it). You can delete it yourself at any time.
 - `fabricator\work\` next to COGBox: a temporary folder used while a mod folder is packed and checked. It is removed
   afterwards.
 
-A mod you put in the mods folder by hand has no `fabricator.json`, and COGBox never moves or deletes its folder.
+A mod folder without a `fabricator.json` (one you put in the mods folder by hand) is never moved or deleted by COGBox.
+A mod added by hand with a COGBox version before 0.6.5 may carry a `fabricator.json` from its zip; the Fabricator then
+treats it as one it installed, and Uninstall moves it to `mods\.fabricator-backup\` (never deletes it).
 
 ## Problem reports
 
