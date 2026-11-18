@@ -1599,11 +1599,6 @@ Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = �
 Gears 1 and 2: games on this PC only. = Gears 1 和 2：仅限此电脑上的游戏。
 Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 和 Judgment：也包括你主持的系统链接或在线游戏 - 请只在你自己的游戏中使用。
 Achievements and saves are your own business. = 成就和存档后果自负。
-# GitHub #353: recent players (machine-made; corrections welcome)
-RECENT PLAYERS = 最近的玩家
-Played with you recently = 最近和你一起玩过
-Played {1} with you recently = 最近和你一起玩过 {1}
-Send a friend request. = 发送好友请求。
 At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution. = 在此渲染分辨率（3x）下，性能模式会让场景保持全尺寸，因此超分只做抗锯齿（不会增加帧数）。请选择质量或超级性能，或改用 2x 渲染分辨率。
 At this render resolution Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution. = 在此渲染分辨率下，性能模式会让场景保持全尺寸，因此超分只做抗锯齿（不会增加帧数）。性能模式需要 2x 或 4x 渲染分辨率。
 At this render resolution this choice keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Quality and Ultra performance need a 3x render resolution (4K). = 在此渲染分辨率下，此选项会让场景保持全尺寸，因此超分只做抗锯齿（不会增加帧数）。质量和超级性能需要 3x（4K）渲染分辨率。

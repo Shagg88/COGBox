@@ -70,7 +70,6 @@ void run(SocialBackend b, uint64_t gen) {
         std::optional<SocialJoin> join;
         std::map<std::string, int> regions;
         std::optional<std::vector<SocialMatch>> matches;
-        std::optional<std::vector<SocialRecent>> recent;   // GitHub #353
         std::string tag = acc ? acc->tag() : std::string();
         if (acc) {
             if (action) {
@@ -102,12 +101,6 @@ void run(SocialBackend b, uint64_t gen) {
                 // any other answer (an older server without the list, an error) is "none", not "still looking"
                 if (m.status != 0) matches = m.status == 200 ? parse_matches(m.body) : std::vector<SocialMatch>{};
             }
-            // GitHub #353: recent players - every 15 s, and straight after an Add (the added player leaves the list)
-            if (reachable && (tick % 3 == 0 || (action && action->first == SocialAction::Add))) {
-                const HttpResult r = b.call({ "GET", "/api/v1/friends/recent", "" });
-                // an older server answers 404: no list, nothing shown
-                if (r.status != 0) recent = r.status == 200 ? parse_recent(r.body) : std::vector<SocialRecent>{};
-            }
         }
         {
             std::unique_lock<std::mutex> lk(s.mu);
@@ -126,8 +119,6 @@ void run(SocialBackend b, uint64_t gen) {
                 v.invites = invites;
             }
             if (!regions.empty()) v.region_counts = regions;
-            if (recent) v.recent = std::move(*recent);
-            else if (acc && !reachable) v.recent.clear();
             if (matches) {
                 v.matches = std::move(*matches);
                 v.matches_known = true;

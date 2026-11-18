@@ -64,13 +64,11 @@ export const signalingRoutes: FastifyPluginAsync<SignalingPluginOptions> = async
     db.prepare('UPDATE users SET last_seen = ? WHERE uuid = ?').run(Date.now(), user.uuid);
 
     // Candidates and invites are for the target's game, and only between players who have a reason to connect.
-    const relay = (target_uuid: unknown, message: object, errorType: string, met = false) => {
+    const relay = (target_uuid: unknown, message: object, errorType: string) => {
       const target = typeof target_uuid === 'string' && mayConnect(db, registry, user.uuid, target_uuid)
         ? registry.game(target_uuid)?.socket : undefined;
       if (target && target.readyState === WebSocket.OPEN) {
         registry.addContact(user.uuid, target_uuid as string);
-        // GitHub #353: two games exchanging connection details = two players in one match (Social "Recent players")
-        if (met) registry.noteMet(user.uuid, target_uuid as string, registry.game(user.uuid)?.titleId);
         target.send(JSON.stringify({ ...message, from_uuid: user.uuid, from_xuid: user.xuid }));
       } else {
         socket.send(JSON.stringify({ type: errorType, target_uuid, error: 'Target peer is offline or not found' }));
@@ -100,7 +98,7 @@ export const signalingRoutes: FastifyPluginAsync<SignalingPluginOptions> = async
           relay(data.target_uuid ?? byXuid?.uuid, {
             type: 'candidates', session_token: data.session_token, port: data.port, candidates,
             ...(typeof data.launch_id === 'string' && /^[0-9a-f]{1,16}$/.test(data.launch_id) ? { launch_id: data.launch_id } : {})
-          }, 'candidates_error', true);
+          }, 'candidates_error');
           return;
         }
         case 'invite':

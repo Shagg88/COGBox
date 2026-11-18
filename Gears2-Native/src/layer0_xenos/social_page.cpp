@@ -308,20 +308,6 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
         g_remove_uuid = f.uuid;
       }
     }
-    // GitHub #353: players from your recent matches, with their tag - ADD sends a friend request
-    if (!v.recent.empty()) {
-      Section("RECENT PLAYERS", s);
-      for (const SocialRecent& r : v.recent) {
-        const char* g = game_name_for_title(r.title_id);
-        std::string where = (g && *g) ? std::string(XenosTr("Played {1} with you recently")) : std::string(XenosTr("Played with you recently"));
-        if (g && *g) {
-          const size_t at = where.find("{1}");
-          if (at != std::string::npos) where.replace(at, 3, XenosTr(g));
-        }
-        if (Row(("recent" + r.uuid).c_str(), r.tag, where, kDim, kDim, {{"ADD", true, true}}, s, r.icon) == 0)
-          social_do(SocialAction::Add, r.tag);
-      }
-    }
   }
   ImGui::EndChild();
   ImGui::SameLine(0, gap);

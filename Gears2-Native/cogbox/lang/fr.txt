@@ -1597,11 +1597,6 @@ Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = U
 Gears 1 and 2: games on this PC only. = Gears 1 et 2 : uniquement dans les parties sur ce PC.
 Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 et Judgment : aussi dans une partie System Link ou en ligne que vous hébergez - gardez-les pour vos propres parties.
 Achievements and saves are your own business. = Les succès et les sauvegardes, c'est votre affaire.
-# GitHub #353: recent players (machine-made; corrections welcome)
-RECENT PLAYERS = JOUEURS RÉCENTS
-Played with you recently = A joué avec vous récemment
-Played {1} with you recently = A joué à {1} avec vous récemment
-Send a friend request. = Envoyer une demande d'ami.
 At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution. = À cette résolution de rendu (3x), Performance garde la scène en taille réelle : l'upscaler ne fait qu'anticrénelage (pas d'images en plus). Choisissez Qualité ou Ultra performance, ou une résolution de rendu 2x.
 At this render resolution Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution. = À cette résolution de rendu, Performance garde la scène en taille réelle : l'upscaler ne fait qu'anticrénelage (pas d'images en plus). Performance demande une résolution de rendu 2x ou 4x.
 At this render resolution this choice keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Quality and Ultra performance need a 3x render resolution (4K). = À cette résolution de rendu, ce choix garde la scène en taille réelle : l'upscaler ne fait qu'anticrénelage (pas d'images en plus). Qualité et Ultra performance demandent une résolution de rendu 3x (4K).

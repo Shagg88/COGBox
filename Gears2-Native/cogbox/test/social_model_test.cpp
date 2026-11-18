@@ -264,17 +264,6 @@ int main() {
         CHECK(same(call_for(SocialAction::JoinMatch, "0b6f2c1e-1111-4222-8333-944455556666"), "POST",
                    "/api/v1/matches/0b6f2c1e-1111-4222-8333-944455556666/join", ""));
     }
-    {   // GitHub #353: recent players
-        const auto r = parse_recent(R"({"recent":[{"uuid":"u1","tag":"Marcus#0001","icon":"icons/4D5308AB/3.png","title_id":"4d5308ab","at":5},
-                                                  {"uuid":"u2","tag":"no tag","icon":"","title_id":""},
-                                                  {"uuid":"","tag":"Dom#0002"}, 7]})");
-        CHECK(r.size() == 1 && r[0].tag == "Marcus#0001" && r[0].title_id == "4D5308AB" && r[0].icon == "icons/4D5308AB/3.png");
-        CHECK(parse_recent("not json").empty() && parse_recent(R"({"error":"not found"})").empty());
-        std::string many = R"({"recent":[)";
-        for (int i = 0; i < 30; i++) many += std::string(i ? "," : "") + R"({"uuid":"u)" + std::to_string(i) + R"(","tag":"Player#)" +
-                                           std::to_string(1000 + i) + R"("})";
-        CHECK(parse_recent(many + "]}").size() == 20);
-    }
     // 0.6.5 DLC light: the host's map (context 1) against the player's packages
     {
         const auto ms = parse_matches(R"({"matches":[{"lobby_id":"1","title_id":"4D5308AB","map":11},

@@ -434,20 +434,6 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
             }
             ImGui::PopID();
         }
-        // GitHub #353: players from your recent matches, with their tag - ADD sends a friend request
-        if (!v.recent.empty()) {
-            ImGui::Dummy(ImVec2(0, S(6)));
-            th_heading(tr("RECENT PLAYERS"), x1);
-            for (const SocialRecent &r : v.recent) {
-                ImGui::PushID(("recent" + r.uuid).c_str());
-                const std::string game = game_name_for_title(r.title_id);
-                const std::string where = game.empty() ? std::string(tr("Played with you recently"))
-                                                       : trf("Played {1} with you recently", { tr(game.c_str()) });
-                if (line_row(a, r.tag, where, col::dim, 0, r.icon, x1, { { "ADD", true, true, "Send a friend request." } }) == 0)
-                    social_do(SocialAction::Add, r.tag);
-                ImGui::PopID();
-            }
-        }
     }
     ImGui::EndChild();
     ImGui::SameLine(0, gap);

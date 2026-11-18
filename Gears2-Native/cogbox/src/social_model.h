@@ -64,12 +64,6 @@ struct HttpResult {
 
 // GET /api/v1/friends; nullopt when the body is not that answer.
 std::optional<SocialLists> parse_friends(const std::string& body);
-// GitHub #353: a player this one recently played with (their games connected in a match) - so a tag seen in a match can
-// be added. GET /api/v1/friends/recent; empty when none, or from a server without the list.
-struct SocialRecent {
-    std::string uuid, tag, icon, title_id;
-};
-std::vector<SocialRecent> parse_recent(const std::string& body);
 // GET /api/v1/invites (the ones sent to this player); empty when none or not that answer.
 std::vector<SocialInvite> parse_invites(const std::string& body);
 

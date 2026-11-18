@@ -1606,11 +1606,6 @@ Campaign and the wave modes (Horde, Beast, Survival) only - never in Versus. = C
 Gears 1 and 2: games on this PC only. = Gears 1 és 2: csak az ezen a PC-n futó játékokban.
 Gears 3 and Judgment: also a System Link or online game you host - please keep it to your own games. = Gears 3 és Judgment: az általad vezetett System Link vagy online játékban is - kérlek, csak a saját játékaidban használd.
 Achievements and saves are your own business. = Az achievementek és a mentések a te dolgod.
-# GitHub #353: recent players (machine-made; corrections welcome)
-RECENT PLAYERS = LEGUTÓBBI JÁTÉKOSOK
-Played with you recently = Nemrég játszott veled
-Played {1} with you recently = Nemrég játszott veled: {1}
-Send a friend request. = Barátkérés küldése.
 At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution. = Ennél a renderfelbontásnál (3x) a Teljesítmény teljes méretben hagyja a jelenetet, így a felskálázó csak élsimít (nincs több képkocka). Válaszd a Minőséget vagy az Ultra teljesítményt, vagy 2x renderfelbontást.
 At this render resolution Performance keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Performance needs a 2x or 4x render resolution. = Ennél a renderfelbontásnál a Teljesítmény teljes méretben hagyja a jelenetet, így a felskálázó csak élsimít (nincs több képkocka). A Teljesítményhez 2x vagy 4x renderfelbontás kell.
 At this render resolution this choice keeps the scene at full size, so the upscaler only anti-aliases (no extra frames). Quality and Ultra performance need a 3x render resolution (4K). = Ennél a renderfelbontásnál ez a választás teljes méretben hagyja a jelenetet, így a felskálázó csak élsimít (nincs több képkocka). A Minőséghez és az Ultra teljesítményhez 3x (4K) renderfelbontás kell.
