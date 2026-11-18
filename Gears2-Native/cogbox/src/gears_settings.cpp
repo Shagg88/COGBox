@@ -2167,6 +2167,17 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PS1 900: HDR
     if (s.b("HDR")) {
         a.push_back("--present_hdr=true");
+        // Judgment and Gears 1's native scene paths are opt-in; HDR output alone uses legacy expansion.
+        if (isGJ || isG1) {
+            const std::string native = isGJ ? "gowj_hdr_native" : "gow1_hdr_native";
+            if (cap_exe(env, native)) {
+                a.push_back("--" + native + "=true");
+                if (cap_exe(env, "gow2_hdr_ui_automatic")) a.push_back("--gow2_hdr_ui_automatic=true");
+            } else {
+                notes.push_back(std::string("launcher: ") + (isGJ ? "Judgment" : "Gears 1") +
+                                " native HDR needs a game build with " + native + " support - legacy HDR output instead");
+            }
+        }
         a.push_back("--gow2_hdr_paper_white=" + std::to_string(s.i("PaperWhite")));
         a.push_back("--gow2_hdr_peak=" + std::to_string(s.i("Peak")));
         if ((g == Game::Gears2 || g == Game::Gears3) && cap_exe(env, "gow2_hdr_highlights") && s.i("HdrHighlights") != 2) {
