@@ -42,6 +42,16 @@ const char* match_mode(const SocialMatch& m);
 // "KOTH · 6/10 · Gears 3 · US" (UTF-8 middle dots).
 std::string match_label(const SocialMatch& m);
 
+// Recent players (0.6.5): the COGBox players met in matches, newest first (GET /api/v1/players/recent).
+// relation: "friend", "sent" (you asked them), "incoming" (they asked you) or "none".
+struct SocialRecent {
+    std::string uuid, tag, icon, title_id, relation;
+    long long seen_at = 0;   // ms since 1970 (the server's clock)
+};
+std::vector<SocialRecent> parse_recent(const std::string& body);
+// "just now", "25 min ago", "3 h ago", "yesterday", "4 days ago" - from when (ms) to now (ms).
+std::string recent_when(long long when_ms, long long now_ms);
+
 // The signed-in account (identity.json) and one answer from the server.
 struct SocialAccount {
     std::string uuid, token, name, discriminator, xuid;

@@ -5,10 +5,13 @@
 #include <rex/kernel/xam/net/identity.h>
 #include <rex/kernel/xam/net/master_client.h>
 #include <rex/logging/macros.h>
+#include <rex/runtime.h>
+#include <rex/system/kernel_state.h>
 
 #include "../../cogbox/third_party/nlohmann/json.hpp"
 
 #include <chrono>
+#include <cstdio>
 #include <mutex>
 #include <thread>
 
@@ -17,6 +20,7 @@ namespace net = rex::kernel::xam::net;
 
 std::mutex g_mu;
 xenos::tags::Cache g_cache;
+xenos::tags::Met g_met;   // 0.6.5: the players met, for the Social pages' Recent list
 std::once_flag g_started;
 
 int64_t NowMs() {
@@ -29,9 +33,31 @@ bool Online() {
   return !id.uuid.empty() && !id.token.empty();   // claimed: the server answers signed-in accounts only
 }
 
+// Recent players (0.6.5): the players with a tag met in this game, reported with the game's title ID.
+void ReportMet() {
+  std::vector<uint64_t> met;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    met = g_met.TakeReport(NowMs());
+  }
+  if (met.empty()) return;
+  rex::Runtime* rt = rex::Runtime::instance();
+  char tid[9] = {};
+  if (rt && rt->kernel_state()) std::snprintf(tid, sizeof tid, "%08X", rt->kernel_state()->title_id());
+  nlohmann::json body = {{"title_id", tid}, {"xuids", nlohmann::json::array()}};
+  for (uint64_t x : met) body["xuids"].push_back(std::to_string(x));
+  const net::MasterClient::Result r = net::MasterClient::Get().Call("POST", "/api/v1/players/recent", body.dump());
+  if (r.status != 200) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_met.Failed(met, NowMs());
+  }
+  REXLOG_DEBUG("recent players: {} reported (HTTP {})", met.size(), r.status);
+}
+
 void Worker() {
   for (;;) {
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    ReportMet();
     std::vector<uint64_t> batch;
     {
       std::lock_guard<std::mutex> lock(g_mu);
@@ -67,5 +93,8 @@ std::optional<xenos::tags::Tag> XenosPlayerTag(uint64_t xuid) {
   if (!xuid || !Online()) return std::nullopt;
   std::call_once(g_started, [] { std::thread(Worker).detach(); });
   std::lock_guard<std::mutex> lock(g_mu);
-  return g_cache.Want(xuid, NowMs());
+  const int64_t now = NowMs();
+  auto tag = g_cache.Want(xuid, now);
+  if (tag) g_met.Seen(xuid, now);   // a COGBox player in this match: one for the Recent list
+  return tag;
 }

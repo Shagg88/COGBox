@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **A bigger launcher** (Shagg): the window is 1280 x 800 at 100% Windows scaling (it was 1000 x 624), with the same
+  text and button sizes; a screen too small for it gets a smaller window first, and smaller text only below the old size.
+  The settings panel reaches to about 40 px from the window's sides, and every tab uses the room for two columns:
+  Display, Graphics, Controls and Gameplay put their sections side by side, About splits in two, and Achievements has
+  its popup settings at the top and your achievements two to a row below. One column again when the window is narrow.
+- **Social: Invites, Matches and Recent players** (launcher and the in-game F8 page): friends on the left, each on two
+  lines (tag over status), and on the right one of INVITES, MATCHES or RECENT (click, or LT / RT on a controller).
+  **Recent players** lists the COGBox players you were in an online match with over the last 14 days, newest first, with
+  the game and when, and an ADD FRIEND (or ACCEPT) button. The game reports the players it shows tags for, each at most
+  once every 10 minutes; the server keeps one row per pair (new table recent_players, POST / GET
+  /api/v1/players/recent). The Gears 3 team-picking note under Open matches is gone.
 - **COGBox tags on every player's name** (all four games; GitHub #353): in online lobbies, party lists and the
   scoreboard each player's name shows their COGBox tag after it in grey, for example Flapper#5531, so you can add
   someone you just played with as a friend by their tag. The game asks the COGBox server once for each new player (up to

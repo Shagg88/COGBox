@@ -78,6 +78,41 @@ class Cache {
   std::unordered_map<uint64_t, Entry> entries_;
 };
 
+// Recent players (0.6.5): the COGBox players met in a match (those with a tag), reported to the server for the Social
+// pages' Recent list - each at most once per kReportEveryMs while they stay in the match.
+class Met {
+ public:
+  static constexpr size_t kBatch = Cache::kBatch;
+  static constexpr int64_t kReportEveryMs = 10 * 60 * 1000;
+
+  void Seen(uint64_t xuid, int64_t now) {
+    auto [it, added] = due_.try_emplace(xuid, now);
+    if (!added && it->second < 0) it->second = -it->second;   // reported: due again kReportEveryMs after that
+  }
+  // The players due to be reported now (at most kBatch); they count as reported until Failed.
+  std::vector<uint64_t> TakeReport(int64_t now) {
+    std::vector<uint64_t> out;
+    for (auto& [xuid, at] : due_) {
+      if (out.size() == kBatch) break;
+      if (at >= 0 && at <= now) {
+        at = -(now + kReportEveryMs);
+        out.push_back(xuid);
+      }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+  }
+  void Failed(const std::vector<uint64_t>& sent, int64_t now) {   // sent again after Cache::kFailedRetryMs
+    for (uint64_t x : sent) {
+      auto it = due_.find(x);
+      if (it != due_.end()) it->second = now + Cache::kFailedRetryMs;
+    }
+  }
+
+ private:
+  std::unordered_map<uint64_t, int64_t> due_;   // when due (>= 0), or -(when due again) once reported and not seen since
+};
+
 }  // namespace xenos::tags
 
 // The game's shared cache: the tag for this XUID if known, else asked in the background (never blocks). Empty when the

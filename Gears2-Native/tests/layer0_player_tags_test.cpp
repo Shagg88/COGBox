@@ -42,3 +42,30 @@ TEST_CASE("player tags: one batch holds at most the server's limit", "[tags]") {
   CHECK(c.TakeBatch(0).size() == Cache::kBatch);
   CHECK(c.TakeBatch(0).size() == 3);
 }
+
+// Recent players (0.6.5): the COGBox players met in a match are reported to the server, each at most once per interval.
+using xenos::tags::Met;
+
+TEST_CASE("players met: each player is reported once, again only after the interval", "[tags]") {
+  Met m;
+  m.Seen(11, 0);
+  m.Seen(12, 0);
+  m.Seen(11, 5);
+  CHECK(m.TakeReport(10) == std::vector<uint64_t>{11, 12});
+  CHECK(m.TakeReport(20).empty());
+  m.Seen(11, 30);  // still in the match
+  CHECK(m.TakeReport(30).empty());
+  m.Seen(11, Met::kReportEveryMs + 40);
+  CHECK(m.TakeReport(Met::kReportEveryMs + 40) == std::vector<uint64_t>{11});
+}
+
+TEST_CASE("players met: a failed report is sent again; one report holds at most the server's limit", "[tags]") {
+  Met m;
+  for (uint64_t x = 1; x <= Met::kBatch + 2; ++x) m.Seen(x, 0);
+  const auto first = m.TakeReport(0);
+  CHECK(first.size() == Met::kBatch);
+  m.Failed(first, 0);
+  CHECK(m.TakeReport(0).size() == 2);                        // the rest, now
+  CHECK(m.TakeReport(0).empty());                            // the failed ones wait
+  CHECK(m.TakeReport(Cache::kFailedRetryMs).size() == Met::kBatch);
+}
