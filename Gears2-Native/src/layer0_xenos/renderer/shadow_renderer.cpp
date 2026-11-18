@@ -90,8 +90,6 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 
 #include <algorithm>
 #include <source_location>
-#include <type_traits>
-#include <utility>
 #include <tuple>
 #include <array>
 #include <bit>
@@ -463,19 +461,12 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_dedicated_images, false, "Gears2",
                     "targets) get one, as D3D12's committed resources are. A measurement switch first (job 403): "
                     "Vulkan colour targets draw in ~2x D3D12's GPU time even with DXC-compiled shaders (job 402)");
 #if GN_SDK_VULKAN
-namespace {
-// 0.6.5: SDK patch 116 adds VulkanDevice::Properties::graphicsPipelineLibrary (true only with fast linking and
-// independent interpolation decorations). Read where the SDK headers have it; older SDK headers -> false (built whole).
-template <class P, class = void>
-struct HasGplField : std::false_type {};
-template <class P>
-struct HasGplField<P, std::void_t<decltype(std::declval<const P&>().graphicsPipelineLibrary)>> : std::true_type {};
-template <class P>
-bool SdkGraphicsPipelineLibrary(const P& pr) {
-  if constexpr (HasGplField<P>::value) return bool(pr.graphicsPipelineLibrary);
-  else return false;
+// 0.6.5: SDK patch 116 (runtime 066) - whether the SDK's Vulkan device was made with graphicsPipelineLibrary enabled
+// (only where links are fast and stages need not agree on interpolation decorations). Declared here as in the patched
+// SDK's rex/ui/vulkan/device.h, so this builds with either header (it links against runtime 066).
+namespace rex::ui::vulkan {
+bool CogboxGraphicsPipelineLibraryEnabled(VkDevice device);
 }
-}  // namespace
 #endif
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_pipeline_libraries, false, "Gears2",
                     "0.6.5 (Vulkan): build each new pipeline from per-stage pipeline libraries "
@@ -1663,7 +1654,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           vk_external_.anisotropy = pr.samplerAnisotropy;
           vk_external_.texture_compression_bc = pr.textureCompressionBC;
           vk_external_.occlusion_query_precise = pr.occlusionQueryPrecise;  // 0.6.1
-          vk_external_.graphics_pipeline_library = SdkGraphicsPipelineLibrary(pr);  // 0.6.5: SDK patch 116 (runtime 066)
+          vk_external_.graphics_pipeline_library =  // 0.6.5: SDK patch 116 (runtime 066)
+              rex::ui::vulkan::CogboxGraphicsPipelineLibraryEnabled(dev->device());
           options.vulkan_external = &vk_external_;
           presenter_ = presenter;
           presenter_vulkan_ = true;
