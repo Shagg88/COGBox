@@ -646,6 +646,7 @@ static void prepare_section(App &a, int g)
         if (!ok) ImGui::BeginDisabled();
         if (small_button("Prepare all shaders now")) {
             settings_save(a);
+            a.prepThenPlay[g] = false;   // (review r91897: a manual run never starts the game afterwards)
             play_start(a, g, true);
         }
         if (!ok) ImGui::EndDisabled();
