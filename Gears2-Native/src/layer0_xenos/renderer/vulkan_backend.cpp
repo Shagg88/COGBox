@@ -794,9 +794,10 @@ class VulkanBackend final : public Backend {
         // guessed pipelines - doesn't wait its turn: a waiting draw builds it now, an async one moves it to the front.
         // 0.6.5 (job 2028: 45,079 moves on a cold start - every pending draw moved the same job again, to the front, and
         // scanned both queues each time): once per pipeline, to the back of the live queue (draws served in turn).
-        if (!pipeline_backlog_ && !p.promoted.exchange(true)) {
+        // (review) A waiting draw always builds a still-queued job itself; only the async move is once, from the backlog.
+        if (!pipeline_backlog_ && (!async || !p.promoted.exchange(true))) {
           PipelineJob queued;
-          if (TakeQueued(handle, queued)) {
+          if (TakeQueued(handle, queued, /*backlog_only=*/async)) {
             if (!async) {
               ++stats_.pipelines_promoted;
               Build(queued);
@@ -868,15 +869,17 @@ class VulkanBackend final : public Backend {
   }
   void SetPipelineBacklog(bool on) override { pipeline_backlog_ = on; }  // patch 0076
   // A queued (not started) job for this pipeline, removed from its queue.
-  bool TakeQueued(PipelineHandle handle, PipelineJob& out) {
+  bool TakeQueued(PipelineHandle handle, PipelineJob& out, bool backlog_only = false) {  // 0.6.5: backlog_only
     std::lock_guard<std::mutex> lock(job_mutex_);
-    for (auto* q : {&jobs_, &backlog_jobs_})
+    for (auto* q : {&jobs_, &backlog_jobs_}) {
+      if (backlog_only && q == &jobs_) continue;
       for (auto it = q->begin(); it != q->end(); ++it)
         if (it->handle == handle && !it->cache_fill) {
           out = *it;
           q->erase(it);
           return true;
         }
+    }
     return false;
   }
   // 0.6.5 (job 2028: a 760 ms synchronous build while recording a cold-start frame - Vulkan had no bounded wait, so
@@ -892,7 +895,7 @@ class VulkanBackend final : public Backend {
       Pipeline& p = *pipelines_[handle];
       if (!pipeline_backlog_ && !p.promoted.exchange(true)) {
         PipelineJob queued;
-        if (TakeQueued(handle, queued)) {
+        if (TakeQueued(handle, queued, /*backlog_only=*/true)) {
           {
             std::lock_guard<std::mutex> lock(job_mutex_);
             jobs_.push_back(queued);
