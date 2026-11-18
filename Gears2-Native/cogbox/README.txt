@@ -2,7 +2,7 @@ COGBox - Gears of War native PC ports
 =====================================
 
 COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
-Judgment. This README is for COGBox 0.6.4.
+Judgment. This README is for COGBox 0.6.5.
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project. COGBox isn't affiliated with Microsoft, Epic Games or The
 Coalition.
@@ -65,6 +65,19 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 Alt+Enter in the game window switches between windowed and borderless full screen (all four games; another key:
 --bind_cogbox_fullscreen=<key> in extra-args.txt, None = off).
+
+
+New in 0.6.5
+------------
+- Much faster start-up: shader warm-up up to 97% shorter on DirectX 12, converted shaders kept between starts
+  (Vulkan too), and a smoother first start after a new graphics driver (Play now offers Prepare all shaders first).
+- Cheats chosen in the launcher (Gameplay tab): God mode, Game speed, All weapons and ammo, Hide the HUD.
+- Gears 1: 16:10. Left and right stick dead zones. HDR for Judgment and Gears 1 (by legoliamneeson).
+- The FABRICATOR is a local mod manager (by KiltedKernel). Recent players and COGBox tags on players' names online.
+- Linux / Steam Deck players can be joined online again; Judgment voice language works (#367).
+- Thanks to Flippage, KiltedKernel and legoliamneeson for their code, and to everyone who reported issues on GitHub
+  and tested in the Discord.
+- Full list: CHANGES.md on GitHub (https://github.com/Shagg88/COGBox).
 
 
 New in 0.6.4

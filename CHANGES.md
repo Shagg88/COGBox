@@ -28,7 +28,10 @@
     starts - **33% fewer** draws left out while waiting (17,286 -> 11,657) and worst frame times (p99) a little lower. The
     background building also runs at a lower priority with half its threads during play. And when the shaders weren't
     prepared for this driver, card and renderer, **Play now offers "Prepare all shaders" first** (then the game starts by
-    itself; Play now / Don't ask again). Vulkan: about the same as before on a fully cold start.
+    itself; Play now / Don't ask again).
+  - **Vulkan: no more long freezes on a first start** (same test): a draw whose pipeline wasn't built yet could build it
+    right there and hold the frame up to three quarters of a second; it now waits a few milliseconds, as on DirectX 12,
+    and is left out of that frame if the pipeline isn't ready. Worst frame times (p99) **44% lower** (47.8 -> 26.7 ms).
   - **"Prepare all shaders" runs offline** (#370 by Flippage): the run that prepares the shaders started like a normal
     game and signed in to the COGBox server as you - a second copy of you online for minutes. It now starts with no
     online server and without your online identity.
