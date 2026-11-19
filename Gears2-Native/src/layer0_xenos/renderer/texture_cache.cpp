@@ -1611,7 +1611,20 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   const std::filesystem::path* pack_file = nullptr;  // texture packs
   std::shared_ptr<const std::vector<uint8_t>> swap_overlay_holder;
   const std::vector<uint8_t>* swap_overlay = nullptr;  // job 629
-  if ((g_swap.On() || e.has_overlay || e.ov_scale > 1 || !e.overlay_variants.empty()) &&
+  // 19 Nov (speed study, job 2108: Load was 6.5% of the renderer thread for ~4 reloads a frame): a texture whose
+  // pages ALL hold what our GPU wrote last (a resolve the game samples) is no replacement / overlay / pack / dump
+  // candidate - its CPU bytes are not its content (r95 M2 below already says so for packs) - so its megabytes are not
+  // hashed on every reload (1280x720x4 = 3.7 MB each time).
+  bool all_gpu_written = false;
+  if (g_swap.On() && !e.has_overlay && e.ov_scale <= 1 && e.overlay_variants.empty()) {
+    const uint32_t len = std::max(layout.base.level_data_extent_bytes, 1u);
+    all_gpu_written = true;
+    for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + len - 1) >> GuestWatch::kPageShift && all_gpu_written; ++p)
+      all_gpu_written = watch_.GpuCurrent(p);
+    if (all_gpu_written) ++stats_.swap_hash_skipped_gpu;
+  }
+  XENOS_SITE(2);
+  if (!all_gpu_written && (g_swap.On() || e.has_overlay || e.ov_scale > 1 || !e.overlay_variants.empty()) &&
       gd == tx::Dimension::k2DOrStacked && layers == 1 && host_kind == 0) {
     swap_hash = XXH3_64bits(guest_ + base, std::max(layout.base.level_data_extent_bytes, 1u));
     rex_hash = ComputeRexTextureHash(swap_hash, w, h, layers, pitch_div_32, format, endian, dim, tiled, packed,
@@ -1666,6 +1679,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       if (!resolved) pack_dump = g_swap.pack_dumped.insert(rex_hash).second;
     }
   }
+  XENOS_SITE(2);
   if (swap_hash) {  // PR117 fix: remember what this content is, so a generation bump needs no rehash to skip it
     e.swap_checked = true;
     e.prompt_known = swap_overlay != nullptr || prompt::IsPromptAtlasOrAlias(swap_hash) || prompt::IsPromptAtlasOrAlias(rex_hash);
