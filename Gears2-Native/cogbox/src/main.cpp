@@ -85,7 +85,21 @@ static bool zip_skip_dir(const std::string &name)
 {
     return _stricmp(name.c_str(), "00000002") == 0 || _stricmp(name.c_str(), "000B0000") == 0;   // DLC, title update
 }
+static bool zip_folder_to(const std::string &dir, const std::string &zipPath, std::string &err, int &files);
+// 0.6.6 (review #21): written as <name>.partial and renamed once finished, so a zip under the final name is always a
+// whole one (closing COGBox mid-backup used to leave a cut-off zip that looked complete)
 static bool zip_folder(const std::string &dir, const std::string &zipPath, std::string &err, int &files)
+{
+    const std::string part = zipPath + ".partial";
+    if (!zip_folder_to(dir, part, err, files)) return false;
+    if (!MoveFileExW(widen(part).c_str(), widen(zipPath).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(widen(part).c_str());
+        err = "couldn't rename the finished backup to " + zipPath;
+        return false;
+    }
+    return true;
+}
+static bool zip_folder_to(const std::string &dir, const std::string &zipPath, std::string &err, int &files)
 {
     HANDLE h = CreateFileW(widen(zipPath).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) { err = "couldn't create " + zipPath; return false; }
@@ -969,7 +983,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             a.dropped.clear();
             for (const std::string &p : d) fabricator_drop(a, p);
         }
-        if (!a.dropped.empty() && !a.modal.open && a.job.state.load() != 1 && !dlc_dupes_running()) {   // r25: after a duplicate check
+        if (!a.dropped.empty() && !a.modal.open && a.job.state.load() == 0 && !dlc_dupes_running()) {   // 0.6.6 (review #13): only once the last job's result was taken (install_poll sets 0), not while it is finishing   // r25: after a duplicate check
             std::string p = a.dropped.front();
             a.dropped.erase(a.dropped.begin());
             std::vector<std::string> dlc;
@@ -1066,6 +1080,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (std::any_of(a.dirty, a.dirty + G_COUNT, [](bool x) { return x; })) settings_save(a);
     a.ini.save();
     if (a.job.state.load() == 1) { a.job.cancel = true; }
+    while (g_backupState.load() == 1) SDL_Delay(50);   // 0.6.6 (review #21): a save backup still zipping finishes first
     if (a.job.th.joinable()) a.job.th.join();
     music_stop();
     fab_state_shutdown();   // the FABRICATOR: packs cancelled, unfinished installs' .partial folders removed

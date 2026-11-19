@@ -122,8 +122,9 @@ void Gow3CheckpointStreamTick() {
   const int64_t last = g_last_stream_ms.load(std::memory_order_relaxed);
   if (last < 0) return;
   const int64_t now = NowMs();
-  if (g_new.load(std::memory_order_relaxed) && now >= g_next_scan_ms) {
-    g_new = false;
+  // 0.6.6 (review #19): taken in one step - a package opened between a separate load and clear was lost until the next
+  // open; exchange leaves a later open's flag set for the next tick
+  if (now >= g_next_scan_ms && g_new.exchange(false)) {
     g_next_scan_ms = now + 200;  // a full object scan: at most five a second, only in this window
     uint32_t& cls = g_cls;
     int &name = g_name, &loaded = g_loaded, &block = g_block;
