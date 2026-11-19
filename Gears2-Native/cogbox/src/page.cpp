@@ -383,15 +383,27 @@ static float g_labelW, g_ctrlW, g_rowX1;
 static float row_wrap_x() { return g_rowX1 - ImGui::GetWindowPos().x + ImGui::GetScrollX(); }
 static const float k_rowText = 1.1f;    // the rows' text, bigger than the body font (Shagg 21:44: hard to read)
 
+// 0.6.5 (Shagg, the two-column tabs): a label longer than the room before its control (g_labelW) wraps onto more
+// lines there - never under the control - and the control sits in the middle of those lines.
+static float g_labelBottom;   // the last row label's bottom (screen y): a row's hover area reaches it (option_row)
 static void row_label(const char *label, const std::string &desc, bool enabled)
 {
     label = tr(label);   // 0.2.0
+    const float y0 = ImGui::GetCursorPosY();
     ImGui::AlignTextToFramePadding();
+    const float room = g_labelW - S(12);
+    const bool wrap = room > S(80);   // a very narrow window: one line as before, not one word per line
+    if (wrap) ImGui::PushTextWrapPos(room);
     ImGui::PushStyleColor(ImGuiCol_Text, enabled ? col::text : col::faint);
     ImGui::TextUnformatted(label);
     ImGui::PopStyleColor();
+    if (wrap) ImGui::PopTextWrapPos();
     if (!desc.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", desc.c_str());
+    g_labelBottom = ImGui::GetItemRectMax().y;
+    const float h = ImGui::GetItemRectSize().y, frame = ImGui::GetFrameHeight();
     ImGui::SameLine(g_labelW);
+    // more than one line: the control in the middle of them (the text starts FramePadding.y down, as a control's does)
+    if (h > frame + 1.0f) ImGui::SetCursorPosY(y0 + ImGui::GetStyle().FramePadding.y + (h - frame) * 0.5f);
 }
 
 // ---- 0.4.6 (Shagg 5 Nov 18:07: "the whole launcher aesthetically streamlined and simple") - one visual system for
@@ -431,6 +443,11 @@ void ui_columns(const std::function<void(int)> &body)   // (also achievements_ta
     const float keepLabel = g_labelW, keepX1 = g_rowX1;
     const int keepSections = g_sections;
     float bottom = ImGui::GetCursorScreenPos().y;
+    // each pair of columns on a page its own child windows: the same names twice in one window would be the same
+    // windows, so a second block (the Achievements tab's Sort / Show) would be drawn into the first (its popup settings)
+    static int frame = -1, block = 0;
+    if (frame != ImGui::GetFrameCount()) { frame = ImGui::GetFrameCount(); block = 0; }
+    ImGui::PushID(block++);
     for (int side = 0; side < 2; side++) {
         if (side) ImGui::SameLine(0, gap);
         ImGui::BeginChild(side ? "##colR" : "##colL", ImVec2(colW, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened,
@@ -439,9 +456,11 @@ void ui_columns(const std::function<void(int)> &body)   // (also achievements_ta
         g_rowX1 = ImGui::GetCursorScreenPos().x + colW - S(4);
         g_sections = keepSections;
         body(side);
+        ImGui::Dummy(ImVec2(0, S(3)));   // room under the last row: a child sized to its content clips that row's border
         ImGui::EndChild();
         bottom = std::max(bottom, ImGui::GetItemRectMax().y);
     }
+    ImGui::PopID();
     g_labelW = keepLabel; g_rowX1 = keepX1;
     g_sections = keepSections + 1;
     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetStyle().WindowPadding.x - ImGui::GetScrollX(), bottom));
@@ -453,16 +472,24 @@ float ui_row_x1() { return g_rowX1; }
 // ui_section / ui_note / ui_columns work there as on a page
 void ui_rows_begin()
 {
-    g_ctrlW = T(300);
+    g_ctrlW = T(270);   // 0.6.5 (Shagg): 10% narrower than the first two-column build
     g_labelW = std::min(S(500), ImGui::GetContentRegionAvail().x - g_ctrlW - S(40));
     g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
     g_sections = 0;
+}
+
+// 0.6.5: after a SameLine, the next item (w wide) goes to the next line when the window has no room left for it.
+static void wrap_if_no_room(float w)
+{
+    const float x = ImGui::GetCursorPosX();
+    if (x > ImGui::GetCursorStartPos().x + 1.0f && x + w > row_wrap_x()) ImGui::NewLine();   // not at the start of a line
 }
 
 static bool small_button(const char *label_en)
 {
     const char *label = tr(label_en);
     const float w = std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, label).x + S(28));
+    wrap_if_no_room(w);   // 0.6.5: a row of buttons wraps in a column instead of running past its edge
     return th_button(label, ImVec2(w, T(26)), true, F_BODY);
 }
 
@@ -923,9 +950,7 @@ static void pad_layout_section(App &a, int g)
     };
     for (int i = 0; i < gs::kPadInputs; i++) {
         ImGui::PushID(i);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(pad_button_name(a, i).c_str());
-        ImGui::SameLine(g_labelW);
+        row_label(pad_button_name(a, i).c_str(), "", true);
         std::string shown;
         for (int b : gs::pad_sources(m, i)) shown += (shown.empty() ? "" : " / ") + pad_button_name(a, b);
         if (shown.empty()) shown = tr("Nothing");
@@ -1212,7 +1237,7 @@ static void option_row(App &a, int g, const gs::Option &o)
         if (o.id == "Version" || o.id == "Monitor") env_refresh(a, g);
     }
     // the description as a tooltip: the mouse resting on the row (label or control) for a second (greyed rows lead with why)
-    ImVec2 rowB(g_rowX1, ImGui::GetItemRectMax().y);
+    ImVec2 rowB(g_rowX1, std::max(ImGui::GetItemRectMax().y, g_labelBottom));   // 0.6.5: a wrapped label's last line too
     static ImGuiID tipRow = 0;
     static double tipSince = 0;
     ImGuiID id = ImGui::GetID("row");
@@ -1628,15 +1653,37 @@ static void about_tab(App &a, int g)
         // GitHub #283: a package another installed one already covers (same files, same contents) is marked
         const bool dup = !dl[i].dupOfName.empty();
         dupes += dup;
-        lamp_line(dup ? 2 : 1, dl[i].title + (dl[i].title != dl[i].name ? "  (" + dl[i].name + ")" : "") +
-                                   (dup ? "  -  duplicate of \"" + dl[i].dupOf + "\" - can be removed" : ""),
-                  dup ? "Everything in this package is also in the other one, with the same contents, so the game gets the same items twice "
-                        "(for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched." : "");
-        ImGui::SameLine();
+        // 0.6.5 (Shagg): the name on one line, its package id under it, and Remove at the right in the middle of the two
+        const char *remove = tr("Remove");
+        const float bw = std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, remove).x + S(28)), bh = T(26);
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const float lineH = ImGui::GetTextLineHeight();
+        th_lamp(ImGui::GetWindowDrawList(), ImVec2(p0.x + S(6), p0.y + lineH * 0.55f), S(4.5f), dup ? 2 : 1);
+        ImGui::SetCursorScreenPos(ImVec2(p0.x + S(20), p0.y));
+        ImGui::BeginGroup();
+        ImGui::PushTextWrapPos(row_wrap_x() - bw - S(12));
+        ImGui::TextUnformatted(tr(dl[i].title + (dup ? "  -  duplicate of \"" + dl[i].dupOf + "\" - can be removed" : "")).c_str());
+        if (dl[i].title != dl[i].name) {
+            ImGui::PushFont(F_SMALL, FS(F_SMALL));
+            ImGui::PushStyleColor(ImGuiCol_Text, col::dim);
+            ImGui::TextUnformatted(("(" + dl[i].name + ")").c_str());
+            ImGui::PopStyleColor();
+            ImGui::PopFont();
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        if (dup) ui_tip("Everything in this package is also in the other one, with the same contents, so the game gets the same items "
+                        "twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file "
+                        "is not touched.");
+        const ImVec2 t0 = ImGui::GetItemRectMin(), t1 = ImGui::GetItemRectMax();
+        const float by = std::max(p0.y, (t0.y + t1.y) * 0.5f - bh * 0.5f);
+        ImGui::SetCursorScreenPos(ImVec2(g_rowX1 - bw, by));
         const bool off = busy || running || dlc_dupes_running();   // r25: not while the duplicate check reads the files
         if (off) ImGui::BeginDisabled();
-        if (small_button("Remove")) dlc_remove_ask(a, g, dl[i]);
+        if (th_button(remove, ImVec2(bw, bh), true, F_BODY)) dlc_remove_ask(a, g, dl[i]);
         if (off) ImGui::EndDisabled();
+        ImGui::SetCursorScreenPos(ImVec2(p0.x, std::max(t1.y, by + bh) + ImGui::GetStyle().ItemSpacing.y));
+        ImGui::Dummy(ImVec2(0, 0));
         ImGui::PopID();
     }
     if (dl.size() > 1 && dlc_dupes_checking(g)) lamp_line(0, "Checking for duplicates...");   // r22 R1: on a worker thread
@@ -1752,6 +1799,8 @@ static void about_tab(App &a, int g)
     bool fs = a.fullscreen;   // job 523
     if (ImGui::Checkbox(tr("Fullscreen (F11, or LT + RT together)"), &fs)) set_fullscreen(a, fs);
     ImGui::SameLine(0, S(24));
+    wrap_if_no_room(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x +
+                    ImGui::CalcTextSize(tr("Borderless window (no title bar)")).x);   // 0.6.5: else on its own line
     bool bl = a.borderless;   // job 523
     if (ImGui::Checkbox(tr("Borderless window (no title bar)"), &bl)) set_borderless(a, bl);
     ui_tip(k_winTip);
@@ -1914,7 +1963,7 @@ void page_draw(App &a, ImVec2 size)
     ImGui::SetCursorScreenPos(c0);
     ImGui::BeginChild("rows", ImVec2(c1.x - c0.x, c1.y - c0.y), ImGuiChildFlags_NavFlattened);
     ImGui::PushFont(F_BODY, FS(F_BODY) * k_rowText);
-    g_ctrlW = T(300);
+    g_ctrlW = T(270);   // 0.6.5 (Shagg): 10% narrower than the first two-column build
     g_labelW = std::min(S(500), (c1.x - c0.x) - g_ctrlW - S(40));
     g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
     g_sections = 0;

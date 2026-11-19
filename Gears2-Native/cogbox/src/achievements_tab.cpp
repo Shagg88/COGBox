@@ -27,8 +27,6 @@ namespace ach = xenos::ach;
 
 // page.cpp's 0.4.6 building blocks, so this tab looks like the others: a section heading, a hover tooltip, a short note
 void ui_section(const char *title_en);
-void ui_columns(const std::function<void(int)> &body);   // page.cpp (0.6.5)
-float ui_label_w();
 void ui_tip(const std::string &text_en);
 void ui_note(const std::string &text_en, ImVec4 c = col::dim);
 
@@ -123,7 +121,8 @@ bool choice_row(const char *label, const char *id, T &value, const T (&values)[N
 {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(tr(label));
-    ImGui::SameLine(labelW);
+    if (labelW > 0) ImGui::SameLine(labelW);
+    else ImGui::SameLine();   // 0.6.5: right after its label (Sort / Show side by side)
     ImGui::SetNextItemWidth(ctrlW);
     bool changed = false;
     if (ImGui::BeginCombo(id, tr(name(value)))) {
@@ -151,6 +150,8 @@ void achievements_reveal_answer(App &a, int answer)
 
 void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
 {
+    (void)labelW;   // 0.6.5: Sort / Show sit side by side, each list right after its label
+    (void)ctrlW;
     // read again when the tab has just been shown (it was not drawn last frame), on another game's page, or when asked
     const int frame = ImGui::GetFrameCount();
     if (frame != g_last_frame + 1 || g != g_last_page) {
@@ -199,11 +200,11 @@ void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
     static const ach::SortOrder kSorts[] = { ach::SortOrder::kUnlockTime, ach::SortOrder::kRarity, ach::SortOrder::kGameOrder,
                                              ach::SortOrder::kGamerscore, ach::SortOrder::kName };
     static const ach::ShowFilter kShows[] = { ach::ShowFilter::kAll, ach::ShowFilter::kUnlocked, ach::ShowFilter::kLocked };
-    ui_columns([&](int side) {   // 0.6.5: Sort on the left, Show on the right (one under the other when narrow)
-        const float lw = side < 0 ? labelW : ui_label_w();
-        if (side != 1 && choice_row("Sort", "##achsort", g_sort, kSorts, ach::SortName, lw, ctrlW)) rebuild_rows();
-        if (side != 0 && choice_row("Show", "##achshow", g_show, kShows, ach::ShowName, lw, ctrlW)) rebuild_rows();
-    });
+    // 0.6.5 (Shagg): Sort and Show side by side on one line, each list right after its label
+    const float listW = T(220);
+    if (choice_row("Sort", "##achsort", g_sort, kSorts, ach::SortName, 0.0f, listW)) rebuild_rows();
+    ImGui::SameLine(0, S(30));
+    if (choice_row("Show", "##achshow", g_show, kShows, ach::ShowName, 0.0f, listW)) rebuild_rows();
     ImGui::Dummy(ImVec2(0, S(4)));
 
     // the list
