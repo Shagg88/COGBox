@@ -291,15 +291,20 @@ struct TexturePhases {
 double PhaseMs(std::chrono::steady_clock::time_point t0) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
+// Review 19 Nov #6: these scopes took two clock reads each, several per textured draw, whatever the diagnostics were
+// set to - now only while the renderer's CPU split is on (TextureCache::SetPhaseTiming); the sums stay 0 otherwise.
+bool g_phase_timing = false;
 struct PhaseScope {
   double& acc;
-  std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+  const bool on = g_phase_timing;
+  std::chrono::steady_clock::time_point t0 = on ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   explicit PhaseScope(double& a) : acc(a) {}
-  ~PhaseScope() { acc += PhaseMs(t0); }
+  ~PhaseScope() { if (on) acc += PhaseMs(t0); }
 };
 }  // namespace
 
 namespace xenos::renderer {
+void TextureCache::SetPhaseTiming(bool on) { g_phase_timing = on; }
 namespace {
 
 namespace tx = ::xenos::texture;

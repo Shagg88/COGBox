@@ -1871,6 +1871,16 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
                 g_warm_split.dxbc_hits.load(), ms(g_warm_split.dxbc_put_ns));
   }
   r.translate_ms = MsSince(t2);
+  uint64_t noat_warmed = 0;
+  {   // review 19 Nov #11: ucode/noat.list - u64 hashes, appended as variants are first drawn
+    std::vector<char> b;
+    if (ReadWholeFile(dir / "noat.list", b))
+      for (size_t at = 0; at + 8 <= b.size(); at += 8) {
+        uint64_t h;
+        std::memcpy(&h, b.data() + at, 8);
+        noat_.insert(h);
+      }
+  }
   const auto t3 = std::chrono::steady_clock::now();
   for (size_t i = 0; i < items.size(); ++i) {
     Item& it = items[i];
@@ -1912,8 +1922,16 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       else if (stats_.queued != queued) ++r.queued;
       if (s.state == ShaderState::kFailed) ++r.failed;
     }
+    // Review 19 Nov #11: the variant without the alpha test, for shaders an earlier session drew that way
+    if (ps_noat_warm_ && !it.is_vertex && noat_.count(it.hash)) {
+      GetImpl(it.hash, it.dwords.data(), it.dwords.size(), false, 1, true);
+      ++noat_warmed;
+    }
     std::vector<uint32_t>().swap(it.dwords);
   }
+  if (ps_noat_warm_)
+    REXLOG_INFO("gow2_renderer: shader warm-up: {} pixel-shader variants without the alpha test ({} listed)", noat_warmed,
+                noat_.size());
   r.make_ms = MsSince(t3);  // (the streaming adoption is inside translate_ms; its own time is logged above)
   r.ms = MsSince(t0);
   return r;
@@ -2134,6 +2152,19 @@ gpu::ShaderHandle ShaderCache::GetNativeSceneUi(const uint32_t* dwords, size_t c
   return shader;
 }
 
+void ShaderCache::NoteNoAlpha(uint64_t ucode_hash) {
+  if (!noat_.insert(ucode_hash).second || !record_ucode_ || !dir_ok_) return;
+  if (!noat_file_.is_open()) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir_ / "ucode", ec);
+    noat_file_.open(dir_ / "ucode" / "noat.list", std::ios::binary | std::ios::app);
+  }
+  if (noat_file_) {
+    noat_file_.write(reinterpret_cast<const char*>(&ucode_hash), sizeof(ucode_hash));
+    noat_file_.flush();
+  }
+}
+
 const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwords, size_t dword_count,
                                         bool is_vertex, uint32_t tess_quad_segments, bool warm, bool hlsl_path) {
   ++stats_.lookups;
@@ -2146,6 +2177,7 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
   auto it = map.find(key);
   if (it != map.end()) return *it->second;
   if (!warm && !hlsl_path && !tess_quad_segments) SaveUcode(ucode_hash, is_vertex, dwords, dword_count);
+  if (!warm && !is_vertex && tess_quad_segments) NoteNoAlpha(ucode_hash);
   auto s = std::make_unique<GuestShader>();
   s->ucode_hash = ucode_hash;
   s->is_vertex = is_vertex;

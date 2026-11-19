@@ -8,10 +8,13 @@
 
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
+#include <rex/runtime.h>
+#include <rex/system/function_dispatcher.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -134,6 +137,33 @@ std::string ThreadName(HANDLE h) {
 
 uint64_t FileTime100ns(const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; }
 
+// 19 Nov (speed study): the game's own code has no PDB names in a packaged build ("gow2.exe!?" for a whole thread).
+// The recompiled functions are named by their guest address instead: host function start (the unwind table) ->
+// "guest sub_XXXXXXXX"; other code of the exe is named by the start of its function ("gow2.exe+RVA").
+std::unordered_map<uint64_t, uint32_t> g_guest_by_host;
+void LoadGuestFunctions() {
+  if (!g_guest_by_host.empty()) return;
+  rex::Runtime* rt = rex::Runtime::instance();
+  auto* d = rt ? rt->function_dispatcher() : nullptr;
+  if (!d) return;
+  for (uint32_t a = 0x82000000u; a < 0x84000000u; a += 4)
+    if (auto* f = d->GetFunction(a)) g_guest_by_host.emplace(uint64_t(reinterpret_cast<uintptr_t>(f)), a);
+  REXLOG_INFO("gow2_profile: {} recompiled functions named by guest address", g_guest_by_host.size());
+}
+std::string ExeSymbol(uint64_t addr, const char* module) {
+  DWORD64 base = 0;
+  const RUNTIME_FUNCTION* rf = RtlLookupFunctionEntry(DWORD64(addr), &base, nullptr);
+  char b[64];
+  if (!rf) return std::string(module) + "!?";
+  const uint64_t begin = base + rf->BeginAddress;
+  if (const auto it = g_guest_by_host.find(begin); it != g_guest_by_host.end()) {
+    std::snprintf(b, sizeof(b), "guest sub_%08X", it->second);
+    return b;
+  }
+  std::snprintf(b, sizeof(b), "%s+%llX", module, static_cast<unsigned long long>(begin - base));
+  return b;
+}
+
 std::string Symbol(uint64_t addr) {
   alignas(SYMBOL_INFO) char storage[sizeof(SYMBOL_INFO) + 256] = {};
   auto* sym = reinterpret_cast<SYMBOL_INFO*>(storage);
@@ -146,6 +176,7 @@ std::string Symbol(uint64_t addr) {
       char path[MAX_PATH] = {};
       GetModuleFileNameA(reinterpret_cast<HMODULE>(uintptr_t(r.lo)), path, MAX_PATH);
       const char* slash = strrchr(path, '\\');
+      if (r.lo == uint64_t(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)))) return ExeSymbol(addr, slash ? slash + 1 : path);
       return std::string(slash ? slash + 1 : path) + "!?";
     }
   }
@@ -274,6 +305,7 @@ void Report(std::vector<Tracked>& threads, double wall_s) {
 void Run(int seconds, int start_swap) {
   while (XenosSwapCount() < uint64_t(start_swap)) Sleep(50);
   LoadModuleRanges();
+  LoadGuestFunctions();
   timeBeginPeriod(1);
   const DWORD self = GetCurrentThreadId();
   std::vector<Tracked> threads;

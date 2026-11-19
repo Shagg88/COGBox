@@ -1741,6 +1741,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     cache_->SetTexSignBySwizzle(REXCVAR_GET(gow2_renderer_tex_sign_swizzle));  // patch 0024
     cache_->SetCanaryR21(REXCVAR_GET(gow2_renderer_canary_r21));  // patch 0041
     cache_->SetPsR21(REXCVAR_GET(gow2_renderer_ps_r21));             // speed study
+    cache_->SetPsNoAlphaWarm(REXCVAR_GET(gow2_renderer_ps_no_alpha_variant));  // review 19 Nov #11
     cache_->SetCanaryDecode(REXCVAR_GET(gow2_renderer_canary_decode));  // patch 0041
     cache_->SetMulscTowardZero(REXCVAR_GET(gow2_renderer_mulsc_round_toward_zero));      // patch 0087
     cache_->SetMemexportF16NanZero(REXCVAR_GET(gow2_renderer_memexport_f16_nan_zero));  // patch 0087
@@ -2492,7 +2493,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           [](void* ctx, const XenosUcode& v, const XenosUcode& p) {
             auto* self = static_cast<ShadowRenderer*>(ctx);
             if (v.dwords && v.count) self->cache_->Get(v.hash, v.dwords, v.count, true, 0);
-            if (p.dwords && p.count) self->cache_->Get(p.hash, p.dwords, p.count, false);
+            if (p.dwords && p.count) {
+              self->cache_->Get(p.hash, p.dwords, p.count, false);
+              // review 19 Nov #11: most draws use the variant without the alpha test when the switch is on
+              if (self->ps_no_alpha_variant_) self->cache_->Get(p.hash, p.dwords, p.count, false, 1);
+            }
           },
           this);
     }
@@ -2779,6 +2784,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
 #endif
     part_level_ = std::clamp(REXCVAR_GET(gow2_renderer_cpu_split), 0, 2);  // patch 0153
+    rr::TextureCache::SetPhaseTiming(part_level_ != 0);  // review 19 Nov #6
     if (part_level_ == 2 && part_level_prev_ != 2 && backend_) part_upload_mark_ = backend_->Stats().upload_bytes;
     part_level_prev_ = part_level_;
     const uint64_t t0 = __rdtsc();
@@ -10119,7 +10125,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       Skip("no vertex shader");
       return;
     }
-    const rr::GuestShader& vsg0 = cache_->Get(vs_hash, vs_.dwords, vs_.count, true, tess_n);
+    // Review 19 Nov #8: the shader of the draw before is the common case - no map lookup (the references are stable).
+    if (vs_memo_ == nullptr || vs_memo_hash_ != vs_hash || vs_memo_tess_ != tess_n) {
+      vs_memo_ = &cache_->Get(vs_hash, vs_.dwords, vs_.count, true, tess_n);
+      vs_memo_hash_ = vs_hash;
+      vs_memo_tess_ = tess_n;
+    }
+    const rr::GuestShader& vsg0 = *vs_memo_;
     if (ps.skip) {
       if (rr::SkipUnlessVertexMemexport(ps.skip_reason) && vsg0.memexport) {
         if (memexport_) {
@@ -10136,8 +10148,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // Speed study: a draw with the alpha test off uses the pixel shader's variant without it (no discard, so the GPU
     // keeps early depth rejection; --gow2_renderer_ps_no_alpha_variant).
     const uint32_t ps_variant = ps_no_alpha_variant_ && ps.alpha_test.func == rr::CompareFunc::Always ? 1u : 0u;
-    const rr::GuestShader* psg =
-        ps_.dwords ? &cache_->Get(ps_hash, ps_.dwords, ps_.count, false, ps_variant) : nullptr;
+    if (ps_.dwords && (ps_memo_ == nullptr || ps_memo_hash_ != ps_hash || ps_memo_variant_ != ps_variant)) {
+      ps_memo_ = &cache_->Get(ps_hash, ps_.dwords, ps_.count, false, ps_variant);
+      ps_memo_hash_ = ps_hash;
+      ps_memo_variant_ = ps_variant;
+    }
+    const rr::GuestShader* psg = ps_.dwords ? ps_memo_ : nullptr;
     // A pipeline takes one bytecode kind: a DXBC vertex shader with an HLSL-path pixel shader (a PCSS replacement, notes/80;
     // a DXBC fallback) uses the vertex shader's DXIL twin, compiled once like any HLSL-path shader.
     const bool dxil_twin = dxil_twin_on_ && psg && vsg0.dxbc && !psg->dxbc;  // --gow2_dxil_vs_twin
@@ -10607,7 +10623,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                              : tcube ? 32u + 32u - uint32_t(std::countl_zero(tcube))
                                      : 32u - uint32_t(std::countl_zero(t2d));
       const uint32_t sampler_count = 32u - uint32_t(std::countl_zero(t2d | tcube | t3d));  // fetch slot = sampler
-      const auto st_t0 = std::chrono::steady_clock::now();  // 0.4.5 texture-time research
+      const auto st_t0 = part_level_ ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};  // 0.4.5 texture-time research; review 19 Nov #6: only with the CPU split on
       backend_->SetTextures(views, samplers, count, sampler_count);
       native_hdr_ui_views_current_=scene_ui_bind || native_ui_bind;
       if (native_hdr_ui_views_current_) {
@@ -10616,7 +10632,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         std::copy_n(views, count, native_hdr_ui_views_);
         std::copy_n(samplers, sampler_count, native_hdr_ui_samplers_);
       }
-      set_textures_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - st_t0).count();
+      if (part_level_) set_textures_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - st_t0).count();
       if (report_on_) RepNoteTextures(views, samplers, count, sampler_count);  // patch 0101
       if (texture_memo_) {
         tex_memo_valid_ = true;
@@ -10825,7 +10841,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     if (backend_->PipelineMisses() != misses_before) {
-      if (pipeline_list_) RecordPipeline(d, vs_hash, d.ps ? ps_hash : 0, tess_n);
+      if (pipeline_list_) RecordPipeline(d, vs_hash, d.ps ? ps_hash : 0, tess_n, ps_variant);
       if (prebuild_on_ && d.ps) {  // patch 0068: was this new pipeline's pixel shader built ahead from the package?
         ++pb_.new_ps_pipelines;
         if (const auto q = prebuild_queued_hashes_.find(ps_hash); q != prebuild_queued_hashes_.end()) {
@@ -12481,7 +12497,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // longer matches a draw costs one wasted build, nothing else. ----
   struct PipelineRecord {
     uint64_t vs_hash = 0, ps_hash = 0;
-    uint32_t tess_n = 0, flags = 0;  // flags: 1 = pixel shader, 2 = rect-list geometry shader
+    uint32_t tess_n = 0, flags = 0;  // flags: 1 = pixel shader, 2 = rect-list geometry shader, 4 = PS without alpha test
     gpu::GraphicsPipelineDesc desc;  // vs / ps / gs = 0
   };
   static constexpr uint32_t kPipelineListMagic = 0x4C50474Eu;  // "NGPL"
@@ -12524,7 +12540,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->SetPipelineBacklog(true);
       for (const PipelineRecord& r : records) {
         const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
-        const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
+        const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false, (r.flags >> 2) & 1) : nullptr;
         // 0.6.1 (async SPIR-V): both shaders are known and one is still being converted - the record waits
         // (RetryRecordedPipelines) instead of being dropped for this run.
         const auto pend = [](const rr::GuestShader* g) { return g && g->state == rr::ShaderState::kPending; };
@@ -12591,7 +12607,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (rec_wait_at_ >= rec_waiting_.size()) rec_wait_at_ = 0;
       const PipelineRecord& r = rec_waiting_[rec_wait_at_];
       const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
-      const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
+      const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false, (r.flags >> 2) & 1) : nullptr;
       const bool gone = !vsg || vsg->state == rr::ShaderState::kFailed ||
                         ((r.flags & 1) && (!psg || psg->state == rr::ShaderState::kFailed));
       const bool ready = !gone && vsg->ready() && (!(r.flags & 1) || psg->ready());
@@ -12659,12 +12675,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     std::fflush(nullptr);
     std::_Exit(0);  // the title never starts; nothing else of the process needs a clean shutdown
   }
-  void RecordPipeline(const gpu::GraphicsPipelineDesc& d, uint64_t vs_hash, uint64_t ps_hash, uint32_t tess_n) {
+  void RecordPipeline(const gpu::GraphicsPipelineDesc& d, uint64_t vs_hash, uint64_t ps_hash, uint32_t tess_n,
+                      uint32_t ps_variant = 0) {
     PipelineRecord r;
     r.vs_hash = vs_hash;
     r.ps_hash = ps_hash;
     r.tess_n = tess_n;
-    r.flags = (d.ps ? 1u : 0u) | (d.gs ? 2u : 0u);
+    // flag 4 (review 19 Nov #11): the pixel shader is the variant without the alpha test - the replay finds that one
+    r.flags = (d.ps ? 1u : 0u) | (d.gs ? 2u : 0u) | (d.ps && ps_variant ? 4u : 0u);
     r.desc = d;
     r.desc.vs = r.desc.ps = r.desc.gs = 0;
     if (!recorded_.insert(PipelineRecordKey(r)).second) return;
@@ -12958,7 +12976,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         if (rcp_state_[i] != 3) continue;  // moved back to the need queue (a shader arrived) or done
         const PipelineRecord& r = rcp_records_[i];
         const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
-        const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
+        const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false, (r.flags >> 2) & 1) : nullptr;
         if ((vsg && vsg->state == rr::ShaderState::kFailed) || (psg && psg->state == rr::ShaderState::kFailed)) {
           RecipeDone(i);
           ++rcp_n_.failed;
@@ -13284,7 +13302,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (rcp_state_[i] != 3 || !rcp_rec_want_[i]) continue;
       const PipelineRecord& r = rcp_records_[i];
       const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
-      const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
+      const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false, (r.flags >> 2) & 1) : nullptr;
       if (!vsg || ((r.flags & 1) && !psg)) {
         ++missing;
         continue;
@@ -13328,7 +13346,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
       if (!vsg || !vsg->ready()) continue;
       if (r.flags & 1) {
-        const rr::GuestShader* psg = cache_->Find(r.ps_hash, false);
+        const rr::GuestShader* psg = cache_->Find(r.ps_hash, false, (r.flags >> 2) & 1);
         if (!psg || !psg->ready() || (dxil_twin_on_ && psg->dxbc != vsg->dxbc)) continue;
       }
       ++n;
@@ -15039,6 +15057,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool tex_post_affine_ = false;  // job 634
   bool tex_frac16_ = true;        // speed study: --gow2_renderer_tex_frac16
   bool ps_no_alpha_variant_ = false;  // speed study: --gow2_renderer_ps_no_alpha_variant
+  const rr::GuestShader* vs_memo_ = nullptr;  // review 19 Nov #8
+  const rr::GuestShader* ps_memo_ = nullptr;
+  uint64_t vs_memo_hash_ = 0, ps_memo_hash_ = 0;
+  uint32_t vs_memo_tess_ = 0, ps_memo_variant_ = 0;
   uint32_t affine_key_[32][6] = {};  // job 634: the fetch dwords each slot's affine constants were worked out from
   bool affine_valid_[32] = {};
   // slots: the fetch slots the draw's shaders read (GuestShader::texture_slots) - job 634 works out and uploads the

@@ -220,6 +220,7 @@ class TextureCache {
   // compare with the texture the resolve wrote. Its texel size in bytes in `texel_bytes`. The caller destroys it.
   gpu::TextureHandle UntileCopyForCheck(const ResolveThrough& t, uint32_t& texel_bytes);
 
+  static void SetPhaseTiming(bool on);  // review 19 Nov #6: the load / bind / lookup timers (off = no clock reads)
   static void SetDynamicOverlay(uint64_t hash, std::vector<uint8_t> overlay_data) {
     ::xenos::renderer::SetDynamicOverlay(hash, std::move(overlay_data));
   }

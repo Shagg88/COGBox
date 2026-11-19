@@ -24,6 +24,7 @@
 //    compiled on the caller's thread, one already on a worker is waited for.
 #pragma once
 
+#include <unordered_set>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -237,6 +238,9 @@ class ShaderCache {
   void SetTexPostConstants(bool on) { tex_post_constants_ = on; }  // patch 0105
   void SetTexPostAffine(bool on) { tex_post_affine_ = on; }        // job 634
   void SetTexPostSkip(bool on) { tex_post_skip_ = on; }            // speed study
+  // Review 19 Nov #11: the warm-up also makes the no-alpha-test variant of each pixel shader an earlier session drew
+  // that way (ucode/noat.list), so recorded pipelines with that variant are found at the start.
+  void SetPsNoAlphaWarm(bool on) { ps_noat_warm_ = on; }
   void SetMulMinAbs(bool on) { mul_min_abs_ = on; }                // job 634
   // Job 636: the leaner DXBC forms (xenos::hlsl::HlslOptions dxbc_structured_jumps ... dxbc_coalesce_moves).
   struct Lean {
@@ -321,6 +325,10 @@ class ShaderCache {
   bool tex_sign_by_swizzle_ = false;  // patch 0024
   bool canary_r21_ = false;  // patch 0041
   bool ps_r21_ = true;       // speed study
+  bool ps_noat_warm_ = false;                 // review 19 Nov #11
+  std::unordered_set<uint64_t> noat_;         // pixel shaders drawn as the no-alpha-test variant (ucode/noat.list)
+  std::ofstream noat_file_;
+  void NoteNoAlpha(uint64_t ucode_hash);
   bool canary_decode_ = false;  // patch 0041
   bool mulsc_toward_zero_ = false, f16_nan_zero_ = false;  // patch 0087
   bool spirv_precise_ = true;  // patch 0088

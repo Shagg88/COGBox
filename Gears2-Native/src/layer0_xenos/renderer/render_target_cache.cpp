@@ -34,8 +34,9 @@ std::string RenderTarget::Describe() const {
 }
 
 RenderTarget* RenderTargetCache::Find(const RenderTargetKey& key) {
+  const uint32_t scale = ScaleFor(key);  // review 19 Nov #5: once, not per target
   for (auto& t : targets_)
-    if (t->key == key && t->scale == ScaleFor(key)) return t.get();  // patch 0141: the twin at the phase scale
+    if (t->scale == scale && t->key == key) return t.get();  // patch 0141: the twin at the phase scale
   return nullptr;
 }
 
