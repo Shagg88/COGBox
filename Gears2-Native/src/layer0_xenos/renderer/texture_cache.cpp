@@ -787,6 +787,38 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
     if (sc.valid)
       for (const Entry* se : sc.entries)
         if (se && se->load_failed) slot_load_failed = true;
+    // 19 Nov (review of 12 Nov, P5; job 2106: ~700 slot lookups a frame after ~17 watch-epoch changes a frame): the
+    // slot's result was made at an older epoch - a write or resolve SOMEWHERE since. If its own textures' pages were
+    // not written (the same version test Lookup makes) the result still holds: no map lookups, no sampler and view
+    // rebuild. Anything else (a scaled binding, a stand-in, a failed load, an overlay generation behind, the verify
+    // option, a probed texture, a base whose first page now holds scaled data) takes the full path as before.
+    if (sc.valid && !slot_load_failed && sc.kinds == kinds && sc.epoch != epoch && !sc.scaled && !sc.stand_ins &&
+        probe_bases_.empty() && std::memcmp(sc.tf, tf, sizeof(sc.tf)) == 0 &&
+        REXCVAR_GET(gow2_renderer_texture_verify_frames) <= 0) {
+      bool same = Bits(tf[0], 0, 2) == 2;
+      for (uint32_t kind = 0; kind < 3 && same; ++kind) {
+        if (!((kinds >> kind) & 1)) continue;
+        Entry* e = sc.entries[kind];
+        if (!e || !e->texture || !e->failure.empty() || e->load_failed || e->overlay_gen != ov_gen) {
+          same = false;
+        } else if (kind == 0 && scale_ > 1 && scaled_lookup_ && scaled_load_ &&
+                   watch_.ScaledCurrent(((Bits(tf[1], 12, 20) << 12) & 0x1FFFFFFFu) >> GuestWatch::kPageShift)) {
+          same = false;  // a resolve wrote scaled data at its base: LookupScaled decides
+        } else if (e->callbacks_at_check != epoch) {
+          if (watch_.Version(e->base_start, e->base_length) + watch_.Version(e->mip_start, e->mip_length) != e->version) {
+            same = false;
+          } else {
+            e->callbacks_at_check = epoch;
+            e->checked_frame = frame;
+            ++stats_.lookup_version_hits;
+          }
+        }
+      }
+      if (same) {
+        sc.epoch = epoch;
+        ++stats_.slot_revalidated;
+      }
+    }
     if (sc.valid && !slot_load_failed && sc.kinds == kinds && sc.epoch == epoch && std::memcmp(sc.tf, tf, sizeof(sc.tf)) == 0) {
       samplers[k] = sc.sampler;
       for (uint32_t kind = 0; kind < 3; ++kind)
