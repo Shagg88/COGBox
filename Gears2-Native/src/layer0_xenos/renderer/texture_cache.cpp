@@ -4,6 +4,7 @@
 // Ben Vanik and Xenia project contributors. All rights reserved. Redistribution and use in source and binary forms,
 // with or without modification, are permitted under the BSD 3-Clause licence (THIRD_PARTY_NOTICES.md). The rest is our
 // code (MIT).
+#include <xenos/site.h>
 #include <xenos/renderer/texture_cache.h>
 
 #include <xenos/formats.h>
@@ -761,6 +762,7 @@ uint32_t TextureCache::IndependentUiMask(uint32_t slots) {
 
 uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t slots_cube, uint32_t slots_3d,
                             uint64_t frame, gpu::TextureView views[96], gpu::SamplerDesc samplers[32]) {
+  XENOS_SITE(2);
   PhaseScope bind_time(stats_.bind_ms);  // 0.4.5 texture-time research
   uint32_t stand_ins = 0;
   last_scaled_mask_ = 0;
@@ -931,6 +933,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
     if (probe) Probe(r, tf, frame, what);
     return r;
   };
+  XENOS_SITE(2);
   PhaseScope lookup_time(stats_.lookup_ms);  // 0.4.5 texture-time research
   ++stats_.lookups;  // patch 0137
   auto it = entries_.find(key);
@@ -1130,6 +1133,7 @@ void TextureCache::Probe(const Entry& e, const uint32_t* tf, uint64_t frame, con
 }
 
 TextureCache::Entry* TextureCache::LookupScaled(const uint32_t* tf) {
+  XENOS_SITE(2);
   const uint32_t format = Bits(tf[1], 0, 6), endian = Bits(tf[1], 6, 2);
   const uint32_t dim = Bits(tf[5], 9, 2);
   const bool tiled = Bits(tf[0], 31, 1), stacked = Bits(tf[1], 10, 1), packed = Bits(tf[5], 11, 1);
@@ -1522,6 +1526,7 @@ void TextureCache::FailLoad(Entry& e, gpu::TextureHandle tex, bool created, cons
 }
 
 void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
+  XENOS_SITE(2);
   PhaseScope phase_load(g_phase.load);  // job 299
   PhaseScope load_time(stats_.load_ms);  // 0.4.5 texture-time research
   ++g_phase.loads;

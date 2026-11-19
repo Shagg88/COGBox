@@ -5,6 +5,7 @@
 // At the end: per-thread CPU time over the window (GetThreadTimes) and, per busy thread, the top functions by own
 // samples and by inclusive samples, names from the PDB (DbgHelp). Logged as "gow2_profile:" lines.
 #include <xenos/dev_tools.h>
+#include <xenos/site.h>
 
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
@@ -65,6 +66,8 @@ struct Tracked {
 };
 
 std::vector<Range> g_modules;
+std::unordered_map<uint32_t, uint64_t> g_site_samples;  // renderer thread: samples per XENOS_SITE
+uint64_t g_site_total = 0;
 
 bool InModule(uint64_t pc) {
   for (const Range& r : g_modules)
@@ -170,6 +173,9 @@ std::string Symbol(uint64_t addr) {
   sym->SizeOfStruct = sizeof(SYMBOL_INFO);
   sym->MaxNameLen = 255;
   DWORD64 disp = 0;
+  static const uint64_t exe_lo = uint64_t(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)));
+  for (const Range& r : g_modules)
+    if (r.lo == exe_lo && addr >= r.lo && addr < r.hi) return ExeSymbol(addr, "gow2.exe");  // never the PDB (job 2106: a stale one misnamed everything)
   if (SymFromAddr(GetCurrentProcess(), DWORD64(addr), &disp, sym)) return std::string(sym->Name, sym->NameLen);
   for (const Range& r : g_modules) {
     if (addr >= r.lo && addr < r.hi) {
@@ -335,6 +341,10 @@ void Run(int seconds, int start_swap) {
       uint64_t pc[kFrames];
       int n = 0;
       if (GetThreadContext(t.handle, &ctx)) n = Unwind(ctx, pc);
+      if (t.name.find("GPU Render (ours)") != std::string::npos) {
+        ++g_site_samples[uint32_t(g_xenos_site)];
+        ++g_site_total;
+      }
       ResumeThread(t.handle);
       if (!n) continue;
       uint64_t h = 1469598103934665603ull;
@@ -356,6 +366,16 @@ void Run(int seconds, int start_swap) {
   REXLOG_INFO("gow2_profile: done at swap {} - {} sweeps in {:.1f} s ({:.2f} ms apart)", XenosSwapCount(), sweeps, wall,
               sweeps ? 1000.0 * wall / double(sweeps) : 0.0);
   Report(threads, wall);
+  if (g_site_total) {
+    std::vector<std::pair<uint64_t, uint32_t>> v;
+    for (const auto& [site, n] : g_site_samples) v.push_back({n, site});
+    std::sort(v.rbegin(), v.rend());
+    REXLOG_INFO("gow2_profile: renderer thread by site ({} samples while it was running; tag 1 shadow_renderer.cpp, 2 "
+                "texture_cache.cpp, 3 pm4_shadow.cpp; a site holds until the next one is passed):", g_site_total);
+    for (size_t i = 0; i < v.size() && i < 80; ++i)
+      REXLOG_INFO("gow2_profile:   [site] {:5.1f}% {}:{}", 100.0 * double(v[i].first) / double(g_site_total), v[i].second >> 16,
+                  v[i].second & 0xFFFFu);
+  }
 }
 
 }  // namespace

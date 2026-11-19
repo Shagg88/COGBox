@@ -13,6 +13,7 @@
 // on every other existing target of the same storage class and tile pitch that overlaps those tiles. The 24-point no-op
 // draws are skipped and counted. Our code (MIT).
 #include <xenos/dev_tools.h>
+#include <xenos/site.h>
 #include <xenos/dxbc_gen.h>
 #include <xenos/dxbc_spirv.h>
 #include <xenos/display_size.h>
@@ -2566,6 +2567,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // Stage 4 (upl-s4c): every EVENT_WRITE_ZPD, after the SDK wrote its own (fake) answer (SDK patch 15).
   void OnZpd(const RegisterFile&, const rex::graphics::ObservedZpd& zpd) override {
+    XENOS_SITE(1);
     if (queries_mode_ == QueriesMode::kOff || !backend_ || backend_->IsLost()) return;
     const uint64_t t0 = __rdtsc();
     const bool strict = queries_mode_ == QueriesMode::kStrict;  // PR #43
@@ -2776,6 +2778,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return 0;
   }
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
+    XENOS_SITE(1);
     if (!backend_) return;
     if (!thread_cpu_base_) thread_cpu_base_ = ThreadCpuTicks();
 #if defined(GN_PGO_GEN)
@@ -9988,6 +9991,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
 
   void Draw(const uint32_t* r, uint32_t prim, uint32_t index_count, const ObservedIndexBuffer* ib, bool explicit_major) {
+    XENOS_SITE(1);
     ++stats_.draws;
     const uint64_t vs_hash = vs_.dwords ? vs_.hash : 0, ps_hash = ps_.dwords ? ps_.hash : 0;
     trace_draw_ = log_vs_hash_ && vs_hash == log_vs_hash_ && trace_logged_ < log_vs_max_;  // patch 0016
@@ -9995,16 +9999,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t surface_info = r[rr::reg::RB_SURFACE_INFO];
     const uint32_t msaa = Bits(surface_info, 16, 2);
     const uint32_t pitch = Bits(surface_info, 0, 14);
+    XENOS_SITE(1);
     // The D3D library's no-op single-point draws (notes/35): nothing to draw, state is in the register file anyway.
     if (prim == 0x01 && index_count == 1 && (!hints_.dummy_point_vs || vs_hash == hints_.dummy_point_vs)) {
       ++stats_.dummy_points;
       return;
     }
+    XENOS_SITE(1);
     // The D3D library's fast clear: fixed shader pair, a 3-vertex rectangle list at half pitch with 4x MSAA. Same
     // tiles as the 1x surface at full pitch (notes/35, Brief 8), so draw it at 2x scale onto that surface.
     const bool hint_clear = hints_.clear_vs && vs_hash == hints_.clear_vs && ps_hash == hints_.clear_ps && prim == 0x08 &&
                             msaa == 2;
     if (hint_clear) ++hint_clears_seen_;
+    XENOS_SITE(1);
     // Older XDK builds of D3D use a different fast-clear shader pair, so the hint pair never matches
     // (log: "clears 0" every window) and its half-pitch 4x clears of the scene depth/stencil, light-accumulation
     // target and shadow maps went to separate 4x textures - nothing was ever cleared. When no hint clear has been
@@ -10042,6 +10049,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     is_clear ? " FAST CLEAR, redirected to pitch x2 1x" : "", pitch, 1u << msaa);
       trace_ctx_ = b;
     }
+    XENOS_SITE(1);
     // Judgment's grading pass starts post-processing even in menus where DLSS
     // cannot evaluate. Keep grading, its HDR companion and FXAA at the output
     // scale; a skipped scene upscale must not leave them at the input scale.
@@ -10054,6 +10062,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       rts_->SetPhaseScale(res_scale_);
       UpdateMipBias();
     }
+    XENOS_SITE(1);
     // Per-target scale (notes/53b): the scale of the targets this draw renders into (colour and depth share the
     // surface pitch and MSAA, so one scale per draw).
     const uint32_t draw_scale = rts_->ScaleFor(is_clear ? pitch * 2 : pitch, is_clear ? 0u : msaa);
@@ -10070,6 +10079,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     rr::PipelineState ps = rr::TranslatePipelineState(r, in);
     uint32_t tess_n = 0;
+    XENOS_SITE(1);
     // Xenia's primitive processor also tessellates triangle and quad LISTS when the draw is in explicit major mode with
     // the tessellation path selected (control-point-indexed domain: the VS gets the domain location in r0 and the
     // control point indices in r1). We draw those as plain lists today: log each kind once (notes/51 section 14).
@@ -10134,6 +10144,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       Skip("no vertex shader");
       return;
     }
+    XENOS_SITE(1);
     // Review 19 Nov #8: the shader of the draw before is the common case - no map lookup (the references are stable).
     if (vs_memo_ == nullptr || vs_memo_hash_ != vs_hash || vs_memo_tess_ != tess_n) {
       vs_memo_ = &cache_->Get(vs_hash, vs_.dwords, vs_.count, true, tess_n);
@@ -10154,6 +10165,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     const uint32_t edram_mode = Bits(r[rr::reg::RB_MODECONTROL], 0, 3);
+    XENOS_SITE(1);
     // Speed study: a draw with the alpha test off uses the pixel shader's variant without it (no discard, so the GPU
     // keeps early depth rejection; --gow2_renderer_ps_no_alpha_variant).
     const uint32_t ps_variant = ps_no_alpha_variant_ && ps.alpha_test.func == rr::CompareFunc::Always ? 1u : 0u;
@@ -10163,12 +10175,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ps_memo_variant_ = ps_variant;
     }
     const rr::GuestShader* psg = ps_.dwords ? ps_memo_ : nullptr;
+    XENOS_SITE(1);
     // A pipeline takes one bytecode kind: a DXBC vertex shader with an HLSL-path pixel shader (a PCSS replacement, notes/80;
     // a DXBC fallback) uses the vertex shader's DXIL twin, compiled once like any HLSL-path shader.
     const bool dxil_twin = dxil_twin_on_ && psg && vsg0.dxbc && !psg->dxbc;  // --gow2_dxil_vs_twin
     const rr::GuestShader& vsg = dxil_twin ? cache_->GetDxilTwin(vs_hash, vs_.dwords, vs_.count, tess_n) : vsg0;
     if (dxil_twin) ++stats_.dxil_twins;
     if (rcp_on_ && ps_.dwords && ps_hash != rcp_last_ps_) MarkRecipeChapterHot(ps_hash);  // job 634
+    XENOS_SITE(1);
     // --gow2_upscale_scene_after_fog: the anchor pass, by its pixel shader (a fog draw skipped before this point is not
     // seen: that frame counts as one without the anchor - no copy taken - and the picker lets go after two)
     if (up_scene_copy_.anchored && !up_fog_seen_ && psg) {
@@ -10196,6 +10210,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         TraceDraw("depth binding dropped: shares a colour target's EDRAM base (patch 0025)");
       }
     }
+    XENOS_SITE(1);
     // Depth / stencil state (needed first: the Canary ownership rule binds depth whenever the test is on).
     const rr::DepthStencilState& ds = ps.depth_stencil;
     auto op_writes = [](const rr::StencilFace& f) {
@@ -10227,6 +10242,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // Job 188: its bounds also limit the draw's ownership rectangle (the tiles it really writes), when switched on.
     fill_.valid = false;
     fill_geom_.valid = false;
+    XENOS_SITE(1);
     // Gears 3 (job 032): the shadow-map fills draw 3 rectangles at once (9 vertices). With
     // --gow2_renderer_fill_rect_lists (default on) any whole number of rectangles (up to 16) bounds ownership by the
     // union of its vertices instead of falling back to the scissor; the exact fill_trim rectangle stays 3-vertex only.
@@ -10306,6 +10322,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         }
       }
     }
+    XENOS_SITE(1);
     // Colour targets (M2): every target the pixel shader writes with a non-zero mask (Canary/SDK: the others are
     // not bound and take no ownership). A slot with the same EDRAM base as a lower one is dropped (Canary
     // render_target_cache.cc 866-905). Formats not modelled yet keep tile ownership only.
@@ -10347,6 +10364,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       Skip("the game's AO chain (XeGTAO shown, notes/80)");
       return;
     }
+    XENOS_SITE(1);
     // Notes/81: a game's AO passes known by their shaders. Not until our AO exists this frame, so the game's stays if ours
     // has no camera.
     if (!ao_skip_ps_.empty() && ao_show_ != 2 && ao_ready_ && !(depth_bound && (ds.depth_write || stencil_writes)) &&
@@ -10402,11 +10420,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     if (is_clear && writes_colour) ++stats_.colour_clears;
+    XENOS_SITE(1);
     // Notes/80 s.5: XeGTAO where the game has no AO this frame, just before its fog pass (the scene target is current).
     if (AoAddWanted(ps, colour_rt[0], colour_count, ps_hash, prim, index_count)) AoAddPass(*colour_rt[0]);
 
     const bool depth_writes = ds.depth_write || stencil_writes;
     const Ownership own = OwnershipFor(ps, depth_writes, depth_bound, CanaryLimit(key.base_tiles, bound_bases, bound_count));
+    XENOS_SITE(1);
     // Stage 4 (upl-s4d, job 118): a draw inside an open occlusion query is drawn even when it writes nothing - UE3's
     // bounding-box proxies test depth with colour and depth writes off, and their passing samples ARE the query's
     // answer. It is drawn with the game's state (depth test, no writes), never into the comparison draw-ID target.
@@ -10437,6 +10457,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++stats_.empty;
       return;
     }
+    XENOS_SITE(1);
     // Job 184: what the rect-list fill/clear shader (the draw that asks for most remaining depth transfers) draws -
     // its vertices, so its exact coverage can be computed instead of assuming the scissor rectangle.
     if (vs_hash == 0x1E6883FCCDE1F688ull && fill_logged_ < 16) {
@@ -10506,6 +10527,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
     // Patch 0045 (Edge): would skipping this draw while its shaders / pipeline compile leave a hole that stays?
     const char* standin_wait = nullptr;
+    XENOS_SITE(1);
     // Job 621: a full-screen pass (rectangle list or a quad, to a colour target) has its own budget.
     double* standin_left = &standin_wait_left_ms_;
     if (standin_wait_budget_ms_ > 0.0) {
@@ -10531,6 +10553,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         standin_wait = nullptr;  // this frame's budget is spent: skip as before
       }
     }
+    XENOS_SITE(1);
     // Shaders. Compiles run on worker threads: a draw whose shaders are not ready yet is skipped (by default never
     // waited for; --gow2_renderer_shader_wait_ms gives it a per-frame budget), and the resolves after it are reported
     // as incomplete rather than as differences.
@@ -10583,6 +10606,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       Skip("depth-writing pixel shader without the D24FS8 remap hook");
       return;
     }
+    XENOS_SITE(1);
     // Textures (M2 texture cache) for the shaders that run: the vertex shader always, the pixel shader if bound.
     uint32_t t2d = vsg.texture_slots_2d, tcube = vsg.texture_slots_cube, t3d = vsg.texture_slots_3d;
     if (needs_ps) {
@@ -10592,6 +10616,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     uint32_t stand_ins = 0;
     PartScope textures_part(*this, kPartTextures);
+    XENOS_SITE(1);
     // Job 181: the same texture fetch constants as the draw before, in the same frame and release epoch, with no resolve
     // or other texture binding since: the backend still holds exactly these views - skip the lookups and the bind.
     const bool effect_bind=hdr_ && needs_ps && NativeSceneEffectsEnabled() && rr::native_hdr::FindSceneEffect(psg->ucode_hash);
@@ -10623,6 +10648,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       // counted as texture loads until another part changed the category).
       backend_->SetGpuCategory(3);
       stand_ins = textures_->Bind(&r[kRegFetchConst], t2d, tcube, t3d, frame_, views, samplers);
+      XENOS_SITE(1);
       backend_->SetGpuCategory(gpu_cat_ != 0xFF ? gpu_cat_ : 0);
       scaled_mask = textures_->LastScaledMask();
       if (ao_override_base_) AoOverrideViews(&r[kRegFetchConst], t2d, views, scaled_mask);  // notes/80 s.4
@@ -10633,7 +10659,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                      : 32u - uint32_t(std::countl_zero(t2d));
       const uint32_t sampler_count = 32u - uint32_t(std::countl_zero(t2d | tcube | t3d));  // fetch slot = sampler
       const auto st_t0 = part_level_ ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};  // 0.4.5 texture-time research; review 19 Nov #6: only with the CPU split on
+      XENOS_SITE(1);
       backend_->SetTextures(views, samplers, count, sampler_count);
+      XENOS_SITE(1);
       native_hdr_ui_views_current_=scene_ui_bind || native_ui_bind;
       if (native_hdr_ui_views_current_) {
         native_hdr_ui_view_count_ = count;
@@ -10700,6 +10728,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     d.wireframe = ps.raster.fill_mode == rr::FillMode::Wireframe;
     d.depth_bias = ps.raster.depth_bias;
     d.depth_bias_slope = ps.raster.depth_bias_slope_scaled;
+    XENOS_SITE(1);
     // Job 713: UE3 decals (Gears 1 blood) carry a polygon offset of ~0.00005 - enough on the console, z-fighting here.
     // On a float24 target, an offset that is on but below gow2_renderer_decal_min_bias is raised to it (same sign).
     if (decal_min_bias_ && d.depth_bias != 0 && target && (target->key.storage_class & 1) &&
@@ -10711,6 +10740,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       d.depth_bias = d.depth_bias < 0 ? -decal_min_bias_ : decal_min_bias_;
       ++stats_.decal_bias_raised;
     }
+    XENOS_SITE(1);
     // Job 712 (Gears 1 blood flicker, also in Canary / Edge): decals and other overlays are drawn with no depth write and
     // a less/greater-or-equal test on the same surface as the floor, relying on both depths rounding to the same 20e4
     // value on the console. Kept as float32 here, two shaders' depths differ in the last bits and the winner flips as the
@@ -10728,6 +10758,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         default: break;
       }
     }
+    XENOS_SITE(1);
     // Occlusion boxes: slope-scaled bias toward passing (--gow2_renderer_occlusion_slope_bias, see there).
     if (occ_slope_bias_ > 0.0f && occ_open_.open && occ_open_.handle && !depth_writes && !draw_colour && ds.depth_enable) {
       switch (ds.depth_func) {
@@ -10753,6 +10784,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     };
     d.stencil_front = face(ds.front);
     d.stencil_back = face(ds.back);
+    XENOS_SITE(1);
     // Colour outputs: slot i = the guest's colour target i (SV_Target i), with its blending and write mask.
     d.color_count = 0;
     for (uint32_t i = 0; i < 4; ++i) {
@@ -10764,6 +10796,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       d.color_count = i + 1;
     }
     d.depth_format = target ? target->format : gpu::Format::kUnknown;
+    XENOS_SITE(1);
     // The diagnostic target: the first colour target drawn, else the depth target.
     uint32_t colour_msaa = 0;  // a colour-only 2x MSAA draw needs the colour target's sample count
     for (uint32_t i = 0; i < 4 && !target; ++i)
@@ -10774,6 +10807,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     d.samples = 1u << (target ? key.msaa : colour_msaa);
     textures_part.Switch(kPartRecord);
     bool async_pso = REXCVAR_GET(gow2_renderer_async_pipelines);
+    XENOS_SITE(1);
     // Job 037: a per-frame budget for waiting on new pipelines (--gow2_renderer_pipeline_wait_ms). While this frame has
     // waited less than the budget, pipelines are created (or waited for) synchronously; past it, as before.
     const double pw = REXCVAR_GET(gow2_renderer_pipeline_wait_ms);  // patch 0047: negative = no cap
@@ -10781,6 +10815,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const bool budget_sync = wait_budget > 0.0 && pipeline_wait_ms_frame_ < wait_budget;
     if (budget_sync) async_pso = false;
     if (export_wait) async_pso = false;  // patch 0024: exporting draws create their pipeline synchronously
+    XENOS_SITE(1);
     // 0.5.1: on a backend that can wait on its workers, a stand-in draw keeps async_pso and waits (bounded) below
     // (review: decided independently of the budget left - the shader waits above can spend it, and the old synchronous
     // build would then come back unbounded)
@@ -10796,6 +10831,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                                      : std::chrono::steady_clock::time_point{};
     bool pipeline_pending = false;
     const uint64_t misses_before = backend_->PipelineMisses();  // patch 0058
+    XENOS_SITE(1);
     // Patch 0068: the first real DXBC scene draw gives the warm-only pipelines their vertex shader and state.
     if (prebuild_on_ && !warm_template_set_ && vsg.dxbc && d.ps && psg->dxbc && !d.gs && d.color_count &&
         d.color_formats[0] != gpu::Format::kUnknown && d.topology == gpu::Topology::kTriangleList)
@@ -10836,6 +10872,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         ++stats_.standin_bounded_skips;
       }
     }
+    XENOS_SITE(1);
     // Patch 0132: a depth-only / shadow draw may wait briefly for its pipeline to come off a worker.
     if (pipeline_pending && colour_count == 0 && depth_bound && depth_wait_left_ms_ > 0.0) {
       const auto t0 = std::chrono::steady_clock::now();
@@ -10889,6 +10926,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
     if (ProbeFrame()) NoteProbeDraw(r, vsg, ps, target, depth_writes);
     CameraLog(r, vsg, ps, target, depth_writes);  // GitHub #132 (off by default)
+    XENOS_SITE(1);
     // Constants.
     textures_part.Switch(kPartConstants);
     rr::ViewportState v = ps.viewport;
@@ -10931,11 +10969,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       sc.ndc_scale[i] = v.ndc_scale[i];
       sc.ndc_offset[i] = v.ndc_offset[i];
     }
+    XENOS_SITE(1);
     // Stage 7: the scale of scaled textures (texel maths of the slots in ndc_offset.w); the draw's own pixel scale
     // (param gen's guest pixel position) is in system flags w bits 8-11 - they differ for a 1x target (notes/53b).
     sc.ndc_scale[3] = float(res_scale_);
     sc.ndc_offset[3] = std::bit_cast<float>(scaled_mask);  // Stage 7: slots whose texture is at the scale
     sc.sys0[3] |= std::min(draw_scale, 15u) << 8;
+    XENOS_SITE(1);
     // 2^RB_COLOR_INFO.color_exp_bias per target (exact powers of two, as the reference builds them from the bits).
     for (uint32_t i = 0; i < 4; ++i) {
       const uint32_t ci = r[rr::reg::kColorInfo[i]];
@@ -10953,12 +10993,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       sc.color_exp_scale[i] = std::ldexp(1.0f, bias) * fixed16_scale;
     }
     sc.sys1[0] = uint32_t(ps.alpha_test.func);
+    XENOS_SITE(1);
     // Patch 0027 (Canary dxbc_shader_translator_om.cc, Gears 3 review 04-x): the alpha test only applies when the pixel
     // shader writes oC0; a depth-only shader with leftover alpha-test state would otherwise discard every pixel.
     if (alpha_test_rt0_ && psg && !(psg->color_targets_written & 1u)) sc.sys1[0] = uint32_t(rr::CompareFunc::Always);
     sc.sys1[1] = std::bit_cast<uint32_t>(ps.alpha_test.ref);
     sc.sys1[2] = XenosPcssMode();  // notes/80 s.16: read by the PCSS shadow shaders, unused by every other shader
     sc.sys1[3] = std::bit_cast<uint32_t>(XenosPcssRadius());
+    XENOS_SITE(1);
     // Job 177: system and bool/loop constants are the same for both stages - one compare and upload for both.
     if (d.ps) {
       backend_->SetConstantsBoth(gpu::kCbSystem, &sc, sizeof(sc));
@@ -10967,6 +11009,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->SetConstants(gpu::ShaderStage::kVertex, gpu::kCbSystem, &sc, sizeof(sc));
       backend_->SetConstants(gpu::ShaderStage::kVertex, gpu::kCbBoolLoop, &r[kRegBoolConst], 40 * 4);
     }
+    XENOS_SITE(1);
     // Only the float constants the shader can read (job 166: the full 4 KB per stage per draw was ~6% of the GPU thread
     // in compares and copies); a relative read anywhere means all 256.
     // Job 250+: a compacted shader (gow2_renderer_compact_constants) reads c[0, low) then c[high, n) back to back; its
@@ -11009,6 +11052,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     textures_part.Switch(kPartVertex);
     std::memcpy(fetch_, &r[kRegFetchConst], 192 * 4);
     UploadVertexData(r, vsg);
+    XENOS_SITE(1);
     if (log_vs_hash_ && vs_.hash == log_vs_hash_ && log_vs_logged_ <= log_vs_max_)  // patch 0015 v2: the draw's state
       REXLOG_INFO("gow2_renderer: vs-log frame {} draw {}: prim {} count {} | viewport {} {} {} {} z {} {} scale {} {} "
                   "offset {} {} xy_div_w {} clip_disabled {} | scissor {},{} {}x{} | alpha test func {}",
@@ -11032,6 +11076,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     index_ptr_ = &indices_;
     cached_ib_ = nullptr;
     bool indexed = false;
+    XENOS_SITE(1);
     // Job 178: small index ranges drawn again in the same command list and release epoch reuse their converted ring
     // copy (same rule as vertex reuse; converted fans / quad lists excluded).
     uint64_t idx_key = 0;
@@ -11096,6 +11141,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->SetPipeline(pipeline);
     backend_->SetStencilRef(ds.single_ref);
     if (draw_colour) backend_->SetBlendConstant(ps.blend.constant);
+    XENOS_SITE(1);
     // depth: the depth target to bind (null: none); repeats of a clear onto aliases pass their own target.
     auto issue = [&](rr::RenderTarget* depth, int32_t dy, gpu::TextureHandle hdr_target = 0, gpu::TextureHandle hdr_second = 0,bool original_written=false) {
       gpu::TextureHandle rts[gpu::GraphicsPipelineDesc::kMaxColor] = {};
@@ -11151,6 +11197,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         for (rr::RenderTarget* c : colour_rt) if (c) Wrote(*c);
       }
     };
+    XENOS_SITE(1);
     // An exporting shader reads and writes the guest-memory buffer through u0, so it needs the UAV state even with
     // the switch off (then system flag 128 is clear and it writes nothing).
     const bool export_shader = vsg.memexport || (needs_ps && psg->memexport);
@@ -11212,6 +11259,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       };
       ObjMotionDraw(r, vsg, psg, needs_ps, d, v, ps, target, ib, index_count, vs_hash, ps_hash, draw_again);
     }
+    XENOS_SITE(1);
     // Gears 3 (job 028, Gears 2 chat's diagnosis): the fast clear's half-pitch 4x MSAA surface is redirected to the 1x
     // target at pitch x2 - right for Gears 2, where that 4x surface is only a stand-in. Gears 3 also has REAL 4x targets
     // at that key (the 640x360 7e3 translucency target, base 720 pitch 640), which then never got cleared and kept
@@ -11513,6 +11561,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // class wrote last are copied in (M2 build A). Other sources (depth, other colour formats) are build B: counted,
   // labelled "other unmodelled source" and tainted.
   void PrepareColourTarget(rr::RenderTarget& t, const Ownership& own, bool known, uint32_t bits, bool read_only = false) {
+    XENOS_SITE(1);
     PartScope part(*this, kPartOwnership);
     colour_sources_.clear();
     if (own.active[0])
@@ -11728,6 +11777,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // overwrites_all: the access replaces every bit (depth and stencil) of the tiles it covers completely.
   void PrepareDepthTarget(rr::RenderTarget& t, const Ownership& own, bool overwrites_all, bool is_clear = false,
                           bool read_only = false) {
+    XENOS_SITE(1);
     PartScope part(*this, kPartOwnership);
     tile_sources_.clear();
     alt_sources_.clear();
@@ -12204,6 +12254,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     std::memcpy(fetch_, &r[kRegFetchConst], 192 * 4);
     UploadVertexData(r, vsg);
+    XENOS_SITE(1);
     backend_->SetConstants(gpu::ShaderStage::kVertex, gpu::kCbFetch, fetch_, FetchUploadBytes(vsg.texture_slots));
     bool indexed = false;
     indices_.clear();
@@ -13467,6 +13518,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
 
   void UploadVertexData(const uint32_t* r, const rr::GuestShader& s) {
+    XENOS_SITE(1);
     const uint8_t* base = memory_->TranslatePhysical<const uint8_t*>(0);
     // Job 175: with vertex reuse, a slot whose fetch constant is the same as at its last use in this command list and
     // release epoch gets the same result again - no map or watch lookups (same rule as the ring-copy reuse).
@@ -13718,6 +13770,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
 
   void Resolve(const uint32_t* r) {
+    XENOS_SITE(1);
     ++tex_gen_;  // job 181: a resolve can change what a texture holds
     ++stats_.copies;
     const uint32_t copy = copy_index_++;

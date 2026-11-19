@@ -4,6 +4,7 @@
 // loop constants), the draw initiator and the active shaders' ucode. Behind --gow2_pm4_shadow=N (summary every N
 // frames, 0 = off). Our code (MIT).
 #include <xenos/dev_tools.h>
+#include <xenos/site.h>
 #include <xenos/display_gamma.h>
 #include <xenos/gpu_system.h>
 #include <xenos/pm4.h>
@@ -414,6 +415,7 @@ class RenderPipe {
     for (;;) {
       std::unique_ptr<Block> b;
       {
+        XENOS_SITE(3);  // waiting for the game's next block
         for (int i = 0; i < kSpin && !queued_.load(std::memory_order_acquire); ++i) _mm_pause();
         std::unique_lock<std::mutex> lock(mutex_);
         if (queue_.empty()) {
@@ -463,7 +465,9 @@ class RenderPipe {
         queued_.store(uint32_t(queue_.size()), std::memory_order_release);
         if (producer_waiting_ && queue_.size() < kMaxQueued / 2) done_cv_.notify_all();
       }
+      XENOS_SITE(3);  // running a block
       RunBlock(*b);
+      XENOS_SITE(3);  // block done (freeing)
       b->items.clear();
       b->changes.clear();
       std::lock_guard<std::mutex> lock(mutex_);
@@ -504,6 +508,7 @@ class RenderPipe {
     for (size_t index = 0; index < b.items.size(); ++index) {
       const Item& it = b.items[index];
       running_item_ = index;
+      XENOS_SITE(3);  // register changes of an item
       for (; c < it.changes_end; ++c) {
         regs.values[b.changes[c].first] = b.changes[c].second;
         BumpConstGen(b.changes[c].first);
@@ -527,7 +532,9 @@ class RenderPipe {
                              uint32_t(it.vs->dwords.size())};
           const XenosUcode p{it.ps->hash, it.ps->dwords.empty() ? nullptr : it.ps->dwords.data(),
                              uint32_t(it.ps->dwords.size())};
+          XENOS_SITE(3);  // dispatch (hub, other observers) until the renderer's first site
           XenosDispatchOurDraw(regs, prim, num_indices, it.d ? &ib : nullptr, major != 0 || prim >= 0x10, v, p);
+          XENOS_SITE(3);  // after the draw returned
           break;
         }
         case kZpd:

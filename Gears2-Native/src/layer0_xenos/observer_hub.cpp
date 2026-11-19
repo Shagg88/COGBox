@@ -39,6 +39,7 @@ class ObserverHub final : public DrawObserver {
   void Add(DrawObserver* o) {
     std::lock_guard<std::mutex> lock(mutex_);
     observers_.push_back(o);
+    sinks_.push_back(dynamic_cast<XenosUcodeSink*>(o));  // 19 Nov: once here, not a dynamic_cast per observer per draw
     wants_images_ = wants_images_ || o->WantsFrameImages();
   }
   void OnDraw(const RegisterFile& regs, xenos::PrimitiveType primitive, uint32_t index_count,
@@ -77,8 +78,9 @@ class ObserverHub final : public DrawObserver {
                const XenosUcode& ps) {
     if (observers_.empty()) return;
     const uint64_t t0 = timing_ ? __rdtsc() : 0;
-    for (DrawObserver* o : observers_) {
-      if (auto* sink = dynamic_cast<XenosUcodeSink*>(o)) sink->OnDrawUcode(vs, ps);
+    for (size_t i = 0; i < observers_.size(); ++i) {
+      DrawObserver* o = observers_[i];
+      if (XenosUcodeSink* sink = sinks_[i]) sink->OnDrawUcode(vs, ps);
       else o->OnDrawShaders(nullptr, nullptr);
       o->OnDraw(regs, primitive, index_count, index_buffer, major_mode_explicit);
     }
@@ -135,6 +137,7 @@ class ObserverHub final : public DrawObserver {
 
   std::mutex mutex_;
   std::vector<DrawObserver*> observers_;  // only appended before the guest starts
+  std::vector<XenosUcodeSink*> sinks_;    // observers_[i] as a ucode sink, or nullptr
   bool wants_images_ = false;
   bool timing_ = false;
   int every_ = 0;
