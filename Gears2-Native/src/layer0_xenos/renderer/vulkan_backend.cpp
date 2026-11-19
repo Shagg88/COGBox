@@ -3246,9 +3246,31 @@ class VulkanBackend final : public Backend {
         wi.semaphoreCount = 1;
         wi.pSemaphores = &sem;
         wi.pValues = &submitted_;
-        if (timeline_ && submitted_) vk_.vkWaitSemaphores(device_, &wi, 5'000'000'000ull);
+        // 0.6.6 (review #1): the result counts. A timeout used to fall through to destroying pipelines, buffers and
+        // images the GPU may still be using. Keep waiting (up to 2 minutes, as the D3D12 backend does); if our work
+        // still hasn't finished, leave our objects alone - the device isn't ours, and the process is ending anyway.
+        // VK_ERROR_DEVICE_LOST is fine to tear down after: a lost device has finished with everything.
+        VkResult r = VK_SUCCESS;
+        if (timeline_ && submitted_) {
+          r = vk_.vkWaitSemaphores(device_, &wi, 5'000'000'000ull);
+          for (int more = 0; r == VK_TIMEOUT && more < 23; ++more) {
+            REXLOG_WARN("gow2_renderer: Vulkan shutdown - the GPU has not finished value {} after {} s, waiting on",
+                        submitted_, 5 * (more + 1));
+            r = vk_.vkWaitSemaphores(device_, &wi, 5'000'000'000ull);
+          }
+        }
+        if (r == VK_TIMEOUT) {
+          REXLOG_ERROR("gow2_renderer: Vulkan shutdown - the GPU did not finish our work in 2 minutes; our objects are "
+                       "left as they are instead of destroyed while in use");
+          device_ = VK_NULL_HANDLE;
+          instance_ = VK_NULL_HANDLE;  // external device: not ours either way
+          ready_ = false;
+          return;
+        }
+        if (r != VK_SUCCESS) REXLOG_WARN("gow2_renderer: Vulkan shutdown wait returned {}", int(r));
       } else {
-        vk_.vkDeviceWaitIdle(device_);
+        const VkResult r = vk_.vkDeviceWaitIdle(device_);  // DEVICE_LOST: everything is finished, destroying is allowed
+        if (r != VK_SUCCESS) REXLOG_WARN("gow2_renderer: Vulkan shutdown vkDeviceWaitIdle returned {}", int(r));
       }
       if (present_pipeline_) vk_.vkDestroyPipeline(device_, present_pipeline_, nullptr);
       if (ts_pool_) vk_.vkDestroyQueryPool(device_, ts_pool_, nullptr);

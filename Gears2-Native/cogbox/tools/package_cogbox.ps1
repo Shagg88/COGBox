@@ -366,18 +366,26 @@ public static class CogBoxPack {
 }
 '@
 }
-if ($un -and $un.Length -ge 3) {
-  $rep = ('user' + ('1' * 40)).Substring(0, $un.Length)
+# 0.6.6 (review #6): a one- or two-letter name used to skip both the replacement and the check. A short name can't be
+# searched for alone (it is in every program by chance), so it is searched for as the folder the compiler writes:
+# Users\<name>\ and Users/<name>/ - the same number of letters swapped in, as for longer names.
+$pairs = @()
+if ($un -and $un.Length -ge 3) { $pairs += ,@($un, ('user' + ('1' * 40)).Substring(0, $un.Length)) }
+elseif ($un) {
+  $r = ('u' * $un.Length)
+  foreach ($sep in '\', '/') { $pairs += ,@("Users$sep$un$sep", "Users$sep$r$sep") }
+}
+if ($pairs.Count) {
   # NVIDIA's signed DLLs are never rewritten (a changed byte breaks the signature the port checks)
   foreach ($f in @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' -and $_.Name -notmatch $slPattern })) {
     $b = [IO.File]::ReadAllBytes($f.FullName); $n = 0
     foreach ($enc in @([Text.Encoding]::ASCII, [Text.Encoding]::Unicode)) {
-      $n += [CogBoxPack]::Swap($b, $enc.GetBytes($un.ToLower()), $enc.GetBytes($un.ToUpper()), $enc.GetBytes($rep))
+      foreach ($pr in $pairs) { $n += [CogBoxPack]::Swap($b, $enc.GetBytes($pr[0].ToLower()), $enc.GetBytes($pr[0].ToUpper()), $enc.GetBytes($pr[1])) }
     }
     if ($n) { [IO.File]::WriteAllBytes($f.FullName, $b); Write-Host "  user name replaced $n time(s) in $($f.FullName.Substring($stage.Length + 1))" }
   }
   # the check: the name must be gone from every file in the package
-  $left = @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object { $_.Name -notmatch $slPattern } | Where-Object { $t = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($_.FullName)); $u = [Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($_.FullName)); $t -match [regex]::Escape($un) -or $u -match [regex]::Escape($un) -or $t -match [regex]::Escape($env:COMPUTERNAME) -or $u -match [regex]::Escape($env:COMPUTERNAME) })   # -match ignores case; both names in both encodings
+  $left = @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object { $_.Name -notmatch $slPattern } | Where-Object { $t = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($_.FullName)); $u = [Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($_.FullName)); @($pairs | Where-Object { $t -match [regex]::Escape($_[0]) -or $u -match [regex]::Escape($_[0]) }).Count -or $t -match [regex]::Escape($env:COMPUTERNAME) -or $u -match [regex]::Escape($env:COMPUTERNAME) })   # -match ignores case; both names in both encodings
   if ($left.Count) { $left | ForEach-Object { Write-Host "PROBLEM: the user or PC name is still in $($_.FullName)" }; Write-Host 'RESULT: FAIL'; exit 1 }
   Write-Host '  check: no user name or PC name left in any file of the package'
 }

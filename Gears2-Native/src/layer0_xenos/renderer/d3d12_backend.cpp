@@ -3455,6 +3455,17 @@ class D3D12Backend final : public Backend {
     }
     proxy_.Stop();  // the recording thread is idle after the last Submit; nothing may reach it after this
     copies_.Stop();
+    // 0.6.6 (review #11): "lost" after a fence timeout with the device still there means the GPU may still be using
+    // our heaps and resources - releasing them now is undefined behaviour (a driver crash on exit at best). A removed
+    // device has finished with everything, so only that case tears down; otherwise the objects are left to the
+    // process exit.
+    if (lost_ && fence_ && device_ && SUCCEEDED(device_->GetDeviceRemovedReason()) &&
+        fence_->GetCompletedValue() < last_submitted_) {
+      REXLOG_ERROR("gow2_renderer: shutdown with GPU work unfinished (fence {} of {}) and the device not removed - "
+                   "GPU objects are not released",
+                   fence_->GetCompletedValue(), last_submitted_);
+      return;
+    }
     for (auto& d : deferred_releases_) ReleaseDeferred(d);
     deferred_releases_.clear();
     for (Texture& t : textures_) SafeRelease(t.resource);

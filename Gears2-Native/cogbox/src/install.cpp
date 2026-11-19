@@ -147,6 +147,24 @@ static void worker(App *ap)
             j.state = j.cancel ? 4 : 3;
             return;
         }
+        // 0.6.6 (review #4): a DLC's content header is written next to its final name first, so a header that can't be
+        // written fails here - with the old copy and its header untouched - instead of after the old copy is gone.
+        std::wstring hdrTmp;
+        if (p.dlc) {
+            make_dirs(p.headerFile.substr(0, p.headerFile.find_last_of('\\')));
+            hdrTmp = widen(p.headerFile) + L".new";
+            FILE *f = _wfopen(hdrTmp.c_str(), L"wb");
+            bool wrote = f && fwrite(p.header.data(), 1, p.header.size(), f) == p.header.size();
+            if (f && fclose(f) != 0) wrote = false;
+            if (!wrote) {
+                DeleteFileW(hdrTmp.c_str());
+                remove_tree(part);
+                std::lock_guard<std::mutex> l(j.m);
+                j.error = "The content was unpacked, but its header file couldn't be written to " + p.headerFile + " - nothing was changed.";
+                j.state = 3;
+                return;
+            }
+        }
         // into place: the old copy (COGBox's own) out of the way first, removed once the new one is there
         std::wstring fin = widen(p.finalDir), old = fin + L".old-" + widen(now_stamp());
         bool hadOld = dir_exists(p.finalDir);
@@ -157,6 +175,7 @@ static void worker(App *ap)
             return;
         }
         if (!MoveFileExW(part.c_str(), fin.c_str(), 0)) {
+            if (!hdrTmp.empty()) DeleteFileW(hdrTmp.c_str());
             // outside review: say so if the old copy can't go back, and where it is
             bool restored = !hadOld || MoveFileExW(old.c_str(), fin.c_str(), 0);
             std::lock_guard<std::mutex> l(j.m);
@@ -165,17 +184,23 @@ static void worker(App *ap)
             j.state = 3;
             return;
         }
+        // the content header the runtime reads (ContentManager::ReadContentHeaderFile / LoadPackageLicenseMask)
+        if (!hdrTmp.empty() && !MoveFileExW(hdrTmp.c_str(), widen(p.headerFile).c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            // put the old copy back (its header was never touched)
+            std::wstring failed = fin + L".failed-" + widen(now_stamp());
+            bool restored = !hadOld || (MoveFileExW(fin.c_str(), failed.c_str(), 0) && MoveFileExW(old.c_str(), fin.c_str(), 0));
+            if (restored) remove_tree(dir_exists(narrow(failed)) ? failed : fin);
+            DeleteFileW(hdrTmp.c_str());
+            std::lock_guard<std::mutex> l(j.m);
+            j.error = restored ? "The content header couldn't be written to " + p.headerFile + " - the content is as it was before." :
+                                 "The content header couldn't be written to " + p.headerFile + ", and the old copy couldn't be put back - it is safe in " + narrow(old) + ".";
+            j.state = 3;
+            return;
+        }
         if (hadOld) remove_tree(old);
     }
     if (p.dlc) {
-        // the content header the runtime reads (ContentManager::ReadContentHeaderFile / LoadPackageLicenseMask)
-        std::string hd = p.headerFile.substr(0, p.headerFile.find_last_of('\\'));
-        make_dirs(hd);
-        FILE *f = _wfopen(widen(p.headerFile).c_str(), L"wb");
-        bool wrote = f && fwrite(p.header.data(), 1, p.header.size(), f) == p.header.size();
-        if (f) fclose(f);
         std::lock_guard<std::mutex> l(j.m);
-        if (!wrote) { j.error = "The content was unpacked, but its header file couldn't be written to " + p.headerFile + "."; j.state = 3; return; }
         j.result = (p.dlcTitle.empty() ? std::string("The downloadable content") : "\"" + p.dlcTitle + "\"") + " is added to " + game_def(p.game).name +
                    ". The game finds it the next time it starts." +
                    (p.untested ? " It is for a version COGBox hasn't been tested with, so you may experience problems." : "");
@@ -651,8 +676,10 @@ void dlc_remove_confirmed(App &a)
 {
     if (g_dlcRemoveGame < 0) return;
     if (a.run.proc) { set_message(a, "Close the game first.", true); return; }
-    bool ok = remove_tree(widen(g_dlcRemove.dir));
-    DeleteFileW(widen(g_dlcRemove.header).c_str());
+    // 0.6.6 (review #12): the header goes only once the files are gone, so a half-removed DLC still shows (and can be
+    // removed again) instead of leaving files the launcher no longer lists
+    bool ok = remove_tree(widen(g_dlcRemove.dir)) || !dir_exists(g_dlcRemove.dir);
+    if (ok && !DeleteFileW(widen(g_dlcRemove.header).c_str()) && GetLastError() != ERROR_FILE_NOT_FOUND) ok = false;
     set_message(a, ok ? "\"" + g_dlcRemove.title + "\" is removed." : "It couldn't be removed completely - is a file from it open?", !ok);
     g_dlcRemoveGame = -1;
     dlc_refresh();

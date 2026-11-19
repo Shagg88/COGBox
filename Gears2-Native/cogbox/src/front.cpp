@@ -1081,7 +1081,14 @@ void front_draw(App &a, ImVec2 size)
             float prog = 0; std::string uerr;
             const int us_state = update_install_state(&prog, &uerr);
             static bool restarting = false;
-            if (us_state == 3 && !restarting) { restarting = true; if (update_restart()) a.quit = true; }
+            if (us_state == 3 && !restarting) {
+                restarting = true;
+                if (update_restart()) a.quit = true;
+                else {   // 0.6.6 (review #23): say so instead of showing RESTARTING for ever; the update stays in place
+                    set_message(a, "The update is installed, but the new COGBox couldn't be started (error " + std::to_string(GetLastError()) +
+                                       ") - close COGBox and start it again.", true);
+                }
+            }
             char pct[16];
             snprintf(pct, sizeof pct, "%d%%", int(prog * 100.0f + 0.5f));
             std::string lbl = us_state == 1 ? tr("DOWNLOADING") + std::string(" ") + pct
