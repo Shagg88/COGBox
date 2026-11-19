@@ -16,7 +16,7 @@ import { Registry } from './social/registry.js';
 import { notifyPresence } from './social/presence.js';
 import { ErrorRing } from './admin/error_ring.js';
 import { buildPrivateApi } from './admin/private_api.js';
-import { clearLobbies, sweepOrphanLobbies, Heartbeat, SWEEP_INTERVAL_MS, HEARTBEAT_INTERVAL_MS } from './social/lobby_cleanup.js';
+import { sweepOrphanLobbies, Heartbeat, SWEEP_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, STARTUP_SWEEP_MS } from './social/lobby_cleanup.js';
 import path from 'node:path';
 
 // The private admin listener stays on loopback unless ADMIN_HOST says otherwise.
@@ -32,6 +32,10 @@ export interface ServerOptions {
   // The games' lobby search needs a signed-in player. Off by default: 0.6.0 runtimes search without signing in, so it
   // is turned on as a release decision once most players are past 0.6.0 (LOBBY_SEARCH_REQUIRES_SIGN_IN=true).
   lobbySearchRequiresSignIn?: boolean;
+  // Stale lobbies (lobby_cleanup.ts): the timings, for tests only
+  heartbeatIntervalMs?: number;
+  sweepIntervalMs?: number;
+  startupSweepMs?: number;
 }
 
 export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInstance> {
@@ -56,8 +60,6 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   });
 
   const db: DatabaseInstance = initDb(opts.dbPath);
-  // Stale lobbies (lobby_cleanup.ts): nobody is connected yet, so none of the stored lobbies can be live.
-  clearLobbies(db);
 
   // Decorate server with db
   server.decorate('db', db);
@@ -116,15 +118,19 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   });
   const heartbeat = new Heartbeat();
   await server.register(signalingRoutes, { prefix: '/ws', db, registry, heartbeat });
-  // Stale lobbies: dead connections are closed by the heartbeat, and a lobby whose host has no game connection goes
-  // after an hour without changes.
-  const clock = opts.now ?? Date.now;
-  const beat = setInterval(() => heartbeat.tick(), HEARTBEAT_INTERVAL_MS);
-  const sweep = setInterval(() => {
-    try { sweepOrphanLobbies(db, (uuid) => registry.game(uuid) !== undefined, clock()); } catch { /* next time */ }
-  }, SWEEP_INTERVAL_MS);
+  // Stale lobbies (lobby_cleanup.ts): dead connections are closed by the heartbeat; a lobby whose host has no game
+  // connection goes after an hour without changes, and - once, after a restart - as soon as live games have had time to
+  // reconnect. updated_at is written with Date.now(), so that is the clock here too.
+  const online = (uuid: string) => registry.game(uuid) !== undefined;
+  const sweepNow = (idleMs?: number) => {
+    try { sweepOrphanLobbies(db, online, Date.now(), idleMs); } catch { /* next time */ }
+  };
+  const beat = setInterval(() => heartbeat.tick(), opts.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
+  const sweep = setInterval(() => sweepNow(), opts.sweepIntervalMs ?? SWEEP_INTERVAL_MS);
+  const startupSweep = setTimeout(() => sweepNow(0), opts.startupSweepMs ?? STARTUP_SWEEP_MS);
   beat.unref();
   sweep.unref();
+  startupSweep.unref();
   server.get('/api/v1/population/regions', async () => registry.regionCounts());
   server.get<{ Querystring: { title_id?: string; region?: string } }>('/api/v1/population', async (req) =>
     registry.population(String(req.query.title_id ?? '').toUpperCase(), req.query.region));
@@ -144,6 +150,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   server.addHook('onClose', async () => {
     clearInterval(beat);
     clearInterval(sweep);
+    clearTimeout(startupSweep);
     db.close();
   });
 

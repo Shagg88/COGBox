@@ -3,18 +3,17 @@ import { DatabaseInstance } from '../db.js';
 // Stale lobbies. A host's lobbies are deleted when its game's connection to us closes (signaling.ts). That close never
 // came for the lobbies open when the server restarted, nor for a game whose PC dropped off the network: those stayed
 // listed for days. Three safety nets:
-//  - at start-up every lobby is cleared: no game is connected yet, and each re-creates its own when it reconnects;
-//  - every few minutes a lobby whose host has no game connection and that has not changed for LOBBY_IDLE_MS goes;
+//  - STARTUP_SWEEP_MS after start-up, the lobbies whose host has not reconnected go. Not at start-up itself: a game
+//    reconnects its socket within seconds but never re-creates its lobby, so clearing them would delist every live
+//    match on each restart;
+//  - every SWEEP_INTERVAL_MS a lobby whose host has no game connection and that has not changed for LOBBY_IDLE_MS goes;
 //  - connections are pinged, and one that misses HEARTBEAT_MISSES pings in a row is closed (its normal cleanup runs).
 
 export const LOBBY_IDLE_MS = 60 * 60 * 1000;      // an hour without its host before a lobby counts as stale
+export const STARTUP_SWEEP_MS = 2 * 60 * 1000;   // after a restart, time for live games to reconnect
 export const SWEEP_INTERVAL_MS = 5 * 60 * 1000;   // how often that is checked
 export const HEARTBEAT_INTERVAL_MS = 60 * 1000;   // a ping a minute...
 export const HEARTBEAT_MISSES = 3;                // ...and a connection is closed after three unanswered
-
-export function clearLobbies(db: DatabaseInstance): number {
-  return db.prepare('DELETE FROM lobbies').run().changes;
-}
 
 // Deletes the lobbies idle for `idleMs` whose host `isOnline` says has no game connection. Returns how many.
 export function sweepOrphanLobbies(db: DatabaseInstance, isOnline: (uuid: string) => boolean, now: number,
