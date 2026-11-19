@@ -135,7 +135,7 @@ int ApplyPackagePatches(std::vector<uint8_t>& data, const std::string& file, con
   for (const PackagePatch& p : patches)
     if (AsciiLower(p.file) == want) mine.push_back(&p);
   for (const PackagePatch* p : mine) {  // check every one first: all or nothing
-    if (p->offset + p->expect.size() > data.size() ||
+    if (p->offset > data.size() || p->expect.size() > data.size() - p->offset ||  // 0.6.6 (review #35): no wrap-around
         std::memcmp(data.data() + p->offset, p->expect.data(), p->expect.size()) != 0) {
       if (log) {
         const size_t n = p->offset < data.size() ? std::min(p->expect.size(), size_t(data.size() - p->offset)) : 0;
