@@ -3,10 +3,12 @@ import WebSocket from 'ws';
 import { DatabaseInstance } from '../db.js';
 import { AuthedUser, checkToken } from '../auth.js';
 import { Registry, Role } from '../social/registry.js';
+import { Heartbeat } from '../social/lobby_cleanup.js';
 
 interface SignalingPluginOptions {
   db: DatabaseInstance;
   registry?: Registry;
+  heartbeat?: Heartbeat;   // closes connections that stop answering pings (stale lobbies, lobby_cleanup.ts)
 }
 
 interface Candidate { ip: string; port: number; kind: 'host' | 'srflx' | 'upnp' }
@@ -117,7 +119,10 @@ export const signalingRoutes: FastifyPluginAsync<SignalingPluginOptions> = async
       }
     });
 
+    opts.heartbeat?.add(socket);
+    socket.on('pong', () => opts.heartbeat?.pong(socket));
     const drop = () => {
+      opts.heartbeat?.remove(socket);
       // A host whose game is gone has no lobby any more (the launcher closing changes nothing there).
       if (registry.remove(user.uuid, role, socket) && role === 'game') {
         db.prepare('DELETE FROM lobbies WHERE host_uuid = ?').run(user.uuid);

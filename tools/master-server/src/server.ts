@@ -16,6 +16,7 @@ import { Registry } from './social/registry.js';
 import { notifyPresence } from './social/presence.js';
 import { ErrorRing } from './admin/error_ring.js';
 import { buildPrivateApi } from './admin/private_api.js';
+import { clearLobbies, sweepOrphanLobbies, Heartbeat, SWEEP_INTERVAL_MS, HEARTBEAT_INTERVAL_MS } from './social/lobby_cleanup.js';
 import path from 'node:path';
 
 // The private admin listener stays on loopback unless ADMIN_HOST says otherwise.
@@ -55,6 +56,8 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   });
 
   const db: DatabaseInstance = initDb(opts.dbPath);
+  // Stale lobbies (lobby_cleanup.ts): nobody is connected yet, so none of the stored lobbies can be live.
+  clearLobbies(db);
 
   // Decorate server with db
   server.decorate('db', db);
@@ -111,7 +114,17 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
     inContact: (a: string, b: string) => registry.inContact(a, b),
     searchRequiresSignIn: opts.lobbySearchRequiresSignIn ?? /^(1|true|yes|on)$/i.test(process.env.LOBBY_SEARCH_REQUIRES_SIGN_IN ?? '')
   });
-  await server.register(signalingRoutes, { prefix: '/ws', db, registry });
+  const heartbeat = new Heartbeat();
+  await server.register(signalingRoutes, { prefix: '/ws', db, registry, heartbeat });
+  // Stale lobbies: dead connections are closed by the heartbeat, and a lobby whose host has no game connection goes
+  // after an hour without changes.
+  const clock = opts.now ?? Date.now;
+  const beat = setInterval(() => heartbeat.tick(), HEARTBEAT_INTERVAL_MS);
+  const sweep = setInterval(() => {
+    try { sweepOrphanLobbies(db, (uuid) => registry.game(uuid) !== undefined, clock()); } catch { /* next time */ }
+  }, SWEEP_INTERVAL_MS);
+  beat.unref();
+  sweep.unref();
   server.get('/api/v1/population/regions', async () => registry.regionCounts());
   server.get<{ Querystring: { title_id?: string; region?: string } }>('/api/v1/population', async (req) =>
     registry.population(String(req.query.title_id ?? '').toUpperCase(), req.query.region));
@@ -129,6 +142,8 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
 
   // Clean shutdown hook
   server.addHook('onClose', async () => {
+    clearInterval(beat);
+    clearInterval(sweep);
     db.close();
   });
 
