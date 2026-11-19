@@ -4010,6 +4010,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool present_native_logged_ = false;
   // ---- Stage 7.2: SMAA on the presented image (smaa/smaa_passes.h, notes/54) ----
   bool smaa_ = false, smaa_failed_logged_ = false, smaa_tables_uploaded_ = false, smaa_ready_ = false;
+  int smaa_tries_ = 0;  // 0.6.6: EnsureSmaa attempts
   bool hdr_ = false;  // Stage 7.3: --present_hdr (SDK patch 24)
   gpu::PipelineHandle hdr_encode_ = 0, hdr_encode_matching_size_ = 0;
   gpu::PipelineHandle hdr_encode_legacy_ = 0;  // 0.6.1: Stage 7.3's encoder, for games without native profiles
@@ -4614,8 +4615,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t smaa_w_ = 0, smaa_h_ = 0;
   uint64_t smaa_frames_ = 0;
   bool EnsureSmaa(uint32_t w, uint32_t h) {
-    if (!smaa_ready_) {
-      smaa_ready_ = true;  // once: pipelines and tables
+    // 0.6.6 (review #25): a pipeline or table that failed to be made is tried again (three times in all) instead of
+    // turning SMAA off for the whole session after one failure; what was made is kept
+    if (!smaa_ready_ && smaa_tries_ < 3) {
+      ++smaa_tries_;
       auto pipe = [&](const char* name, const char* vs, const char* ps, gpu::Format fmt) -> gpu::PipelineHandle {
         const gpu::ShaderHandle v =
             cache_->GetBuiltin(std::string(name) + "_vs", rr::smaa::Source(vs), gpu::ShaderStage::kVertex);
@@ -4632,25 +4635,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         d.color_write_masks[0] = 0xF;
         return backend_->GetGraphicsPipeline(d);
       };
-      smaa_edge_ = pipe("smaa_edge", rr::smaa::kEdgeVs, rr::smaa::kEdgePs, gpu::Format::kR8G8B8A8Unorm);
-      smaa_weight_ = pipe("smaa_weight", rr::smaa::kWeightVs, rr::smaa::kWeightPs, gpu::Format::kR8G8B8A8Unorm);
-      smaa_blend_ = pipe("smaa_blend", rr::smaa::kBlendVs, rr::smaa::kBlendPs, gpu::Format::kR32Uint);
+      if (!smaa_edge_) smaa_edge_ = pipe("smaa_edge", rr::smaa::kEdgeVs, rr::smaa::kEdgePs, gpu::Format::kR8G8B8A8Unorm);
+      if (!smaa_weight_) smaa_weight_ = pipe("smaa_weight", rr::smaa::kWeightVs, rr::smaa::kWeightPs, gpu::Format::kR8G8B8A8Unorm);
+      if (!smaa_blend_) smaa_blend_ = pipe("smaa_blend", rr::smaa::kBlendVs, rr::smaa::kBlendPs, gpu::Format::kR32Uint);
       gpu::TextureDesc ad;
       ad.width = AREATEX_WIDTH;
       ad.height = AREATEX_HEIGHT;
       ad.format = gpu::Format::kR8G8Unorm;
       ad.usage = gpu::kUsageSampled;
       ad.debug_name = "SMAA area table";
-      smaa_area_ = backend_->CreateTexture(ad);
+      if (!smaa_area_) smaa_area_ = backend_->CreateTexture(ad);
       gpu::TextureDesc sd;
       sd.width = SEARCHTEX_WIDTH;
       sd.height = SEARCHTEX_HEIGHT;
       sd.format = gpu::Format::kR8Unorm;
       sd.usage = gpu::kUsageSampled;
       sd.debug_name = "SMAA search table";
-      smaa_search_ = backend_->CreateTexture(sd);
+      if (!smaa_search_) smaa_search_ = backend_->CreateTexture(sd);
       REXLOG_INFO("gow2_present: SMAA pipelines {} {} {}, tables {} {}", smaa_edge_ != 0, smaa_weight_ != 0,
                   smaa_blend_ != 0, smaa_area_ != 0, smaa_search_ != 0);
+      smaa_ready_ = smaa_edge_ && smaa_weight_ && smaa_blend_ && smaa_area_ && smaa_search_;
     }
     if (!smaa_edge_ || !smaa_weight_ || !smaa_blend_ || !smaa_area_ || !smaa_search_ || !present_unpack_) return false;
     if (!smaa_tables_uploaded_) {

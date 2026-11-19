@@ -367,10 +367,13 @@ bool settings_save(App &a, int prefer)
         gs::sync_shared(a.store, a.env, a.cur, a.dirty, prefer >= 0 ? prefer : a.page, changed);
         for (int g = 0; g < G_COUNT; g++) if (changed[g]) env_refresh(a, g);   // (Monitor is Shared)
     }
+    bool was[G_COUNT] = {};
     for (int g = 0; g < G_COUNT; g++)
-        if (a.dirty[g]) { a.store.commit((gs::Game)g, a.cur[g], a.env[g]); a.dirty[g] = false; }
+        if (a.dirty[g]) { a.store.commit((gs::Game)g, a.cur[g], a.env[g]); a.dirty[g] = false; was[g] = true; }
     a.store.last_game = a.page;
     bool ok = write_file(join(exe_dir(), "settings.ini"), a.store.save_ini());
+    // 0.6.6 (review #20): a failed write leaves the pages unsaved, so the next save (and the one on exit) tries again
+    if (!ok) for (int g = 0; g < G_COUNT; g++) if (was[g]) a.dirty[g] = true;
     if (!ok) set_message(a, "The settings couldn't be saved - is the COGBox folder read-only?", true);
     a.saves++;   // 0.6.3 r48: the controller layout's Undo lasts until a save
     return ok;
