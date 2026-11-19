@@ -12933,7 +12933,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (rcp_state_[i] != 1) continue;
       const PipelineRecord& r = rcp_records_[i];
       made += EnsureRecipeShader(r.vs_hash, true, r.tess_n) ? 1 : 0;
-      if (r.flags & 1) made += EnsureRecipeShader(r.ps_hash, false, 0) ? 1 : 0;
+      if (r.flags & 1) made += EnsureRecipeShader(r.ps_hash, false, (r.flags >> 2) & 1) ? 1 : 0;  // flag 4: without the alpha test
       rcp_state_[i] = 3;
       rcp_waiting_.push_back(i);
     }
@@ -13385,7 +13385,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         [](void* ctx, const XenosUcode& v, const XenosUcode& p) {
           auto* self = static_cast<ShadowRenderer*>(ctx);
           if (v.dwords && v.count) self->cache_->Get(v.hash, v.dwords, v.count, true, 0);
-          if (p.dwords && p.count) self->cache_->Get(p.hash, p.dwords, p.count, false);
+          if (p.dwords && p.count) {
+            self->cache_->Get(p.hash, p.dwords, p.count, false);
+            if (self->ps_no_alpha_variant_) self->cache_->Get(p.hash, p.dwords, p.count, false, 1);
+          }
         },
         this, 16384);
     ++stats_.lookaheads;
