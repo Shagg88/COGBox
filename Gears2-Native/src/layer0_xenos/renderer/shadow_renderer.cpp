@@ -187,6 +187,9 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_skip, false, "Gears2",
                     "Speed study (with --gow2_renderer_tex_post_affine): a texture fetch whose slot needs no "
                     "post-processing (no sign / gamma / integer step, exponent adjust 1) skips it in one uniform branch. "
                     "Same values. Changes the pixel shaders (pipelines rebuild once)");
+REXCVAR_DEFINE_INT32(gow2_renderer_ps_no_alpha_from_swap, 0, "Gears2",
+                     "Speed study (picture check): with --gow2_renderer_ps_no_alpha_variant, the variant is used only from "
+                     "this swap on - a still scene's screenshots before and after it compare the two paths in one run");
 REXCVAR_DEFINE_BOOL(gow2_renderer_ps_no_alpha_variant, false, "Gears2",
                     "Speed study: a draw whose alpha test is off (ALWAYS) uses a variant of its pixel shader without the "
                     "alpha test - no discard instruction, so the GPU keeps early depth rejection (every pixel shader "
@@ -1785,6 +1788,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     cache_->SetTexPostSkip(REXCVAR_GET(gow2_renderer_tex_post_skip));  // speed study
     tex_frac16_ = REXCVAR_GET(gow2_renderer_tex_frac16);
     ps_no_alpha_variant_ = REXCVAR_GET(gow2_renderer_ps_no_alpha_variant);
+    ps_noat_from_swap_ = uint64_t(std::max(REXCVAR_GET(gow2_renderer_ps_no_alpha_from_swap), 0));
+    if (ps_noat_from_swap_) ps_no_alpha_variant_ = false;  // on from that swap (the warm-up still makes the variants)
     cache_->SetMulMinAbs(REXCVAR_GET(gow2_renderer_dxbc_mul_min_abs));  // job 634
     {
       rr::ShaderCache::Lean lean;  // job 636
@@ -2802,6 +2807,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       cache_->Poll();
     }
     ++frame_;
+    if (ps_noat_from_swap_ && !ps_no_alpha_variant_ && XenosSwapCount() >= ps_noat_from_swap_) {
+      ps_no_alpha_variant_ = true;
+      REXLOG_INFO("gow2_renderer: pixel shaders without the alpha test from swap {} on (picture check)", XenosSwapCount());
+    }
     if (XenosPcssTakeTrace()) pcss_trace_frame_ = frame_ + 1;  // notes/80 s.16: Ctrl+Shift+F12 traces the next frame
     if (report_first_) ReportFrame();  // patch 0101
     DrainCreatedShaders();  // patch 0066
@@ -15057,6 +15066,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool tex_post_affine_ = false;  // job 634
   bool tex_frac16_ = true;        // speed study: --gow2_renderer_tex_frac16
   bool ps_no_alpha_variant_ = false;  // speed study: --gow2_renderer_ps_no_alpha_variant
+  uint64_t ps_noat_from_swap_ = 0;  // --gow2_renderer_ps_no_alpha_from_swap
   const rr::GuestShader* vs_memo_ = nullptr;  // review 19 Nov #8
   const rr::GuestShader* ps_memo_ = nullptr;
   uint64_t vs_memo_hash_ = 0, ps_memo_hash_ = 0;
