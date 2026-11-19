@@ -120,14 +120,19 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   await server.register(signalingRoutes, { prefix: '/ws', db, registry, heartbeat });
   // Stale lobbies (lobby_cleanup.ts): dead connections are closed by the heartbeat; a lobby whose host has no game
   // connection goes after an hour without changes, and - once, after a restart - as soon as live games have had time to
-  // reconnect. updated_at is written with Date.now(), so that is the clock here too.
+  // reconnect. updated_at is written with Date.now(), so that is the clock here too. The after-restart sweep only
+  // looks at lobbies from before the restart (cut-off: start time), never at ones made since.
   const online = (uuid: string) => registry.game(uuid) !== undefined;
-  const sweepNow = (idleMs?: number) => {
-    try { sweepOrphanLobbies(db, online, Date.now(), idleMs); } catch { /* next time */ }
+  const bootedAt = Date.now();
+  const sweepNow = (now: number, idleMs?: number) => {
+    try {
+      const n = sweepOrphanLobbies(db, online, now, idleMs);
+      if (n > 0) server.log.info({ removed: n }, 'stale lobbies removed');
+    } catch { /* next time */ }
   };
   const beat = setInterval(() => heartbeat.tick(), opts.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
-  const sweep = setInterval(() => sweepNow(), opts.sweepIntervalMs ?? SWEEP_INTERVAL_MS);
-  const startupSweep = setTimeout(() => sweepNow(0), opts.startupSweepMs ?? STARTUP_SWEEP_MS);
+  const sweep = setInterval(() => sweepNow(Date.now()), opts.sweepIntervalMs ?? SWEEP_INTERVAL_MS);
+  const startupSweep = setTimeout(() => sweepNow(bootedAt, 0), opts.startupSweepMs ?? STARTUP_SWEEP_MS);
   beat.unref();
   sweep.unref();
   startupSweep.unref();
@@ -146,7 +151,8 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
     dataDir: path.dirname(path.resolve(opts.dbPath ?? process.env.DB_PATH ?? 'master.db'))
   });
 
-  // Clean shutdown hook
+  // Clean shutdown hook. Note: closing the game sockets here (e.g. a graceful app.close() on SIGTERM) would run each
+  // one's drop handler and delete its host's lobbies, delisting live matches on every deploy - see lobby_cleanup.ts.
   server.addHook('onClose', async () => {
     clearInterval(beat);
     clearInterval(sweep);

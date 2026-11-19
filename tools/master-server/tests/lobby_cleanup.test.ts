@@ -88,26 +88,26 @@ describe('stale lobby cleanup with game connections', () => {
   const db = () => app.db as DatabaseInstance;
 
   it('closes a game that stops answering pings, and its lobby goes with it', async () => {
-    await start({ heartbeatIntervalMs: 40 });
+    await start({ heartbeatIntervalMs: 100 });
     const quiet = await claim('Quiet');
     const live = await claim('Live');
-    await game(quiet, false);   // never answers a ping
-    await game(live);           // answers, as WinHTTP does
     addLobby(db(), 'quiet-lobby', quiet.uuid, Date.now());
     addLobby(db(), 'live-lobby', live.uuid, Date.now());
-    await wait(400);            // ten beats: three misses close it
+    await game(quiet, false);   // never answers a ping
+    await game(live);           // answers, as WinHTTP does
+    await wait(900);            // nine beats: three misses close it
     expect(ids(db())).toEqual(['live-lobby']);
   });
 
   it('keeps the lobby of a game that reconnected when its old socket is closed', async () => {
-    await start({ heartbeatIntervalMs: 40 });
+    await start({ heartbeatIntervalMs: 100 });
     const host = await claim('Host');
     const first = await game(host, false);   // the old socket, about to be replaced and then go quiet
     const replaced = new Promise((r) => first.once('close', r));
     await game(host);                         // the new socket replaces it (4002)
     await replaced;
     addLobby(db(), 'host-lobby', host.uuid, Date.now());
-    await wait(300);
+    await wait(700);
     expect(ids(db())).toEqual(['host-lobby']);
   });
 
@@ -122,11 +122,12 @@ describe('stale lobby cleanup with game connections', () => {
     addLobby(db(), 'gone-lobby', gone.uuid, Date.now());
     await app.close();
     // The restart: both lobbies are still listed until the sweep...
-    await start({ startupSweepMs: 300 }, file);
+    await start({ startupSweepMs: 1000 }, file);
     expect(ids(db())).toEqual(['back-lobby', 'gone-lobby']);
     await game(back);                                   // ...and one host's game reconnects in time
-    await wait(500);
-    expect(ids(db())).toEqual(['back-lobby']);
+    addLobby(db(), 'new-lobby', 'no-socket-yet', Date.now() + 1);   // made after the restart: not the sweep's business
+    await wait(1300);
+    expect(ids(db())).toEqual(['back-lobby', 'new-lobby']);
 
   });
 
