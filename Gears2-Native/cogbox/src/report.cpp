@@ -341,6 +341,21 @@ std::string report_anonymise(const std::string &text)
         replace_all_ci(s, "/home/" + u, "/home/%USERNAME%");   // Wine shows Linux paths as Z:\home\name
         replace_all_ci(s, "\\home\\" + u, "\\home\\%USERNAME%");
     }
+    // 0.6.6 (review #7): under Wine / Proton the Linux account name can differ from USERNAME - the folder after
+    // /home/ (or \home\) is replaced whatever it is called
+    for (const char *home : { "/home/", "\\home\\" }) {
+        const size_t hl = strlen(home);
+        auto find_ci = [](const std::string &h, const char *n, size_t from) {
+            auto it = std::search(h.begin() + std::min(from, h.size()), h.end(), n, n + strlen(n),
+                                  [](char x, char y) { return std::tolower((unsigned char)x) == std::tolower((unsigned char)y); });
+            return it == h.end() ? std::string::npos : size_t(it - h.begin());
+        };
+        for (size_t at = 0; (at = find_ci(s, home, at)) != std::string::npos; at += hl) {
+            const size_t b = at + hl, e = s.find_first_of("/\\\"'\r\n ", b);
+            const size_t end = e == std::string::npos ? s.size() : e;
+            if (end > b && s.compare(b, end - b, "%USERNAME%") != 0) s.replace(b, end - b, "%USERNAME%");
+        }
+    }
     // Outside review: a name with non-English letters - the logs are UTF-8, the A calls above give the ANSI form.
     for (const wchar_t *var : { L"USERNAME", L"COMPUTERNAME" }) {
         wchar_t w[256] = L"";

@@ -23,9 +23,15 @@ $k = Get-Content -LiteralPath (Join-Path $Kit 'kit.json') -Raw | ConvertFrom-Jso
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 $work = Join-Path $Out 'build'
-if (Test-Path $work) { Remove-Item -LiteralPath $work -Recurse -Force }
+# 0.6.6 (review #17): only a build folder this script made is removed (its marker); anything else there stops the build
+$marker = Join-Path $work '.cogbox-kit-build'
+if (Test-Path -LiteralPath $work) {
+  if (-not (Test-Path -LiteralPath $marker)) { Write-Host "BUILD STOP: $work exists and wasn't made by kit_build.ps1 - choose another -Out or empty it yourself"; exit 2 }
+  Remove-Item -LiteralPath $work -Recurse -Force
+}
 $gameDir = Join-Path $work 'game'; $gen = Join-Path $work 'generated'; $objDir = Join-Path $work 'obj'
 New-Item -ItemType Directory -Force $gameDir, $gen, $objDir | Out-Null
+Set-Content -LiteralPath $marker -Value 'made by kit_build.ps1'
 function Phase($what) { Write-Host ("[{0,5:N0} s] {1}" -f ((Get-Date) - $t0).TotalSeconds, $what) }
 
 # ---- toolchain: the kit's clang, the Windows SDK / CRT from Visual Studio
