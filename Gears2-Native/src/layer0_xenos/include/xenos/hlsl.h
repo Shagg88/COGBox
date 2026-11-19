@@ -86,6 +86,9 @@ struct HlslOptions {
   // Job 634 (DXBC back end, with tex_post_constants): the post-processing as multiply-adds and selects on per-slot
   // constants (TexPostAffine below) - ~45 instructions a fetch instead of ~100, the same values bit for bit.
   bool tex_post_affine = false;
+  // Speed study (19 Nov, with tex_post_affine): the whole post-processing inside one uniform branch, skipped when the
+  // slot's step masks are all 0 and its exponent adjust is 1 (the fetch's value is used as sampled). Same values.
+  bool tex_post_skip_identity = false;
   // Job 634 (DXBC back end): the legacy multiply's zero rule as min(|x|, |y|) != 0 (four instructions, same bits).
   bool dxbc_mul_min_abs = false;
   // Job 634 (DXBC back end): forward-jump-only programs as nested if / else instead of the pc loop.

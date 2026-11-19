@@ -1330,7 +1330,7 @@ uint64_t ShaderCache::DxbcStoreKey(const uint32_t* dwords, size_t dword_count, b
   k.b(o.dxbc_slim_prologue); k.b(o.kill_as_demote); k.str(o.entry); k.u32(o.tess_quad_segments);
   k.b(o.compact_float_constants); k.b(o.tex_sign_by_swizzle); k.b(o.canary_r21); k.b(o.tex_num_format);
   k.b(o.vertex_index_clamp); k.b(o.canary_tfetch1d_xy); k.b(o.mulsc_round_toward_zero); k.b(o.memexport_f16_nan_zero);
-  k.b(o.spirv_precise); k.b(o.ps_refactoring_allowed); k.b(o.tex_post_constants); k.b(o.tex_post_affine);
+  k.b(o.spirv_precise); k.b(o.ps_refactoring_allowed); k.b(o.tex_post_constants); k.b(o.tex_post_affine); k.b(o.tex_post_skip_identity);
   k.b(o.dxbc_mul_min_abs); k.b(o.dxbc_structured_jumps); k.b(o.dxbc_mul_movc); k.b(o.dxbc_short_r21);
   k.b(o.dxbc_short_swap); k.b(o.dxbc_short_degamma); k.b(o.dxbc_coalesce_moves); k.b(o.dxbc_dead_stores);
   k.b(o.dxbc_vertex_words_vector); k.b(o.dxbc_fold_modifiers); k.b(o.dxbc_merge_movs); k.b(o.clamp_ui_output);
@@ -1975,6 +1975,7 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
   options.tex_num_format = tex_num_format_;  // patch 0040
   options.tex_post_constants = tex_post_constants_;  // patch 0105
   options.tex_post_affine = tex_post_affine_;        // job 634
+  options.tex_post_skip_identity = tex_post_affine_ && tex_post_skip_;  // speed study
   options.dxbc_mul_min_abs = mul_min_abs_;           // job 634
   options.dxbc_structured_jumps = lean_.structured_jumps;  // job 636
   options.dxbc_mul_movc = lean_.mul_movc;

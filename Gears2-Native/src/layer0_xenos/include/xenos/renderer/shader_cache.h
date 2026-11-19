@@ -232,6 +232,7 @@ class ShaderCache {
   void SetTexNumFormat(bool on) { tex_num_format_ = on; }  // patch 0040
   void SetTexPostConstants(bool on) { tex_post_constants_ = on; }  // patch 0105
   void SetTexPostAffine(bool on) { tex_post_affine_ = on; }        // job 634
+  void SetTexPostSkip(bool on) { tex_post_skip_ = on; }            // speed study
   void SetMulMinAbs(bool on) { mul_min_abs_ = on; }                // job 634
   // Job 636: the leaner DXBC forms (xenos::hlsl::HlslOptions dxbc_structured_jumps ... dxbc_coalesce_moves).
   struct Lean {
@@ -322,6 +323,7 @@ class ShaderCache {
   bool tex_num_format_ = false;  // patch 0040
   bool tex_post_constants_ = false;  // patch 0105
   bool tex_post_affine_ = false, mul_min_abs_ = false;  // job 634
+  bool tex_post_skip_ = false;                           // speed study
   Lean lean_;                                            // job 636
   bool vertex_index_clamp_ = false;   // patch 0028
   bool dxbc_ = false;

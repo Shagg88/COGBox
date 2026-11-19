@@ -183,6 +183,14 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_canary_maths, true, "Gears2",  // job 634
                     "instead of the exact FTZ / total-order / NaN emulation - ~17% smaller DXBC. Job 634 ran both forms "
                     "of all 3,423 shaders of a Judgment run on the same inputs: the same values everywhere but a "
                     "denormal passed through instead of flushed (0x00000001 for 0) in 7 vertex shaders");
+REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_skip, false, "Gears2",
+                    "Speed study (with --gow2_renderer_tex_post_affine): a texture fetch whose slot needs no "
+                    "post-processing (no sign / gamma / integer step, exponent adjust 1) skips it in one uniform branch. "
+                    "Same values. Changes the pixel shaders (pipelines rebuild once)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_tex_frac16, true, "Gears2",
+                    "Speed study: false = a fixed-point texture's filtered value is not rounded to 16 fractional bits "
+                    "(Canary's emulation of the hardware's filter precision). Differences are below 1/65536 - with "
+                    "--gow2_renderer_tex_post_skip most fetches then skip the post-processing");
 REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_affine, true, "Gears2",
                     "Job 634 (DXBC back end, with --gow2_renderer_tex_post_constants): the texture-fetch "
                     "post-processing as multiply-adds and selects on per-slot constants the renderer works out from the "
@@ -1763,6 +1771,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     cache_->SetTexPostConstants(tex_post_constants_);  // patch 0105
     tex_post_affine_ = tex_post_constants_ && REXCVAR_GET(gow2_renderer_tex_post_affine);  // job 634
     cache_->SetTexPostAffine(tex_post_affine_);
+    cache_->SetTexPostSkip(REXCVAR_GET(gow2_renderer_tex_post_skip));  // speed study
+    tex_frac16_ = REXCVAR_GET(gow2_renderer_tex_frac16);
     cache_->SetMulMinAbs(REXCVAR_GET(gow2_renderer_dxbc_mul_min_abs));  // job 634
     {
       rr::ShaderCache::Lean lean;  // job 636
@@ -15013,6 +15023,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Patch 0105: with --gow2_renderer_tex_post_constants, fetch_[192 + 2k] / [193 + 2k] = TexPostConstants of slot k.
   bool tex_post_constants_ = false, tex_sign_swizzle_ = false;
   bool tex_post_affine_ = false;  // job 634
+  bool tex_frac16_ = true;        // speed study: --gow2_renderer_tex_frac16
   uint32_t affine_key_[32][6] = {};  // job 634: the fetch dwords each slot's affine constants were worked out from
   bool affine_valid_[32] = {};
   // slots: the fetch slots the draw's shaders read (GuestShader::texture_slots) - job 634 works out and uploads the
@@ -15031,6 +15042,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       std::memcpy(affine_key_[k], &fetch_[6 * k], 24);
       affine_valid_[k] = true;
       xenos::hlsl::TexPostAffine(&fetch_[6 * k], tex_sign_swizzle_, &fetch_[192 + kDw * k]);
+      if (!tex_frac16_) for (uint32_t c = 0; c < 4; ++c) fetch_[192 + kDw * k + c] &= ~32u;  // no 16-bit rounding step
     }
     return (192 + kDw * (top + 1)) * 4;
   }

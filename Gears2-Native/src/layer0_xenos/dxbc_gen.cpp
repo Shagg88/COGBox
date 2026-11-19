@@ -1600,6 +1600,16 @@ struct Gen {
     const uint32_t base = kTexAffineBase + slot * kTexAffineVec;
     const uint32_t f = Push(), c = Push(), g = Push(), t = Push(), q = Push(), y = Push();
     a.OpMov(R(f), Cb(kCbFetch, base));                     // the step masks of the four components
+    if (opt.tex_post_skip_identity) {
+      // Speed study: identity slots (no step, exponent adjust 1 - most of a frame's fetches) skip the ~45 instructions.
+      // The test reads constants only, so every pixel of the draw takes the same side (no divergence).
+      a.OpOr(R(c, kXY), S(f, Sw(0, 1, 0, 0)), S(f, Sw(2, 3, 0, 0)));
+      a.OpNE(R(q), Cb(kCbFetch, base + 7), LF(1.0f));
+      a.OpOr(R(q, kXY), S(q, Sw(0, 1, 0, 0)), S(q, Sw(2, 3, 0, 0)));
+      a.OpOr(R(c, kXY), S(c), S(q));
+      a.OpOr(R(c, kX), S1(c, 0), S1(c, 1));
+      a.OpIf(true, S1(c, 0));
+    }
     // Gamma (s == 3).
     Degamma(g, S(v), kXYZW);
     a.OpAnd(R(c), S(f), LU(1));
@@ -1639,6 +1649,7 @@ struct Gen {
     a.OpMovC(R(v), S(c), S(t), S(v));
     // Exponent adjust: 2^((int(dw3 << 13)) >> 26).
     a.OpMul(R(v), S(v), Cb(kCbFetch, base + 7));
+    if (opt.tex_post_skip_identity) a.OpEndIf();
   }
 
   // xe_tex_post(v, slot) in place on temp v.
