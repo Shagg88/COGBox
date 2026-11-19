@@ -77,7 +77,8 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/layer2_ue3/config_bundle.cpp
             src/layer2_ue3/config_install.cpp src/layer2_ue3/package_patch.cpp src/layer2_ue3/lzx.cpp
             src/layer2_ue3/mod_extras.cpp src/layer2_ue3/objects.cpp src/layer2_ue3/script_input.cpp
-            src/layer2_ue3/modcore/modcore.cpp)
+            src/layer2_ue3/modcore/modcore.cpp
+            src/layer2_ue3/playlist_names.cpp)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 # modcore (MIT, from KiltedKernel's Gears 3 port): mod.ini rules, config fragments, bare-file mods (ue3/mod_extras.h)
 target_include_directories(gn_layer2_ue3 PRIVATE src/layer2_ue3)
@@ -361,8 +362,11 @@ if(GN_BUILD_TESTS)
         ${GN_LAYER0_TESTS}/layer0_texture_pack_test.cpp
         ${GN_LAYER0_DIR}/renderer/texture_pack.cpp
         tests/modcore_campaigns_test.cpp
-        src/layer2_ue3/modcore/modcore.cpp)
-    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS} src/layer2_ue3)
+        src/layer2_ue3/modcore/modcore.cpp
+        tests/playlist_names_test.cpp
+        src/layer2_ue3/playlist_names.cpp
+        src/layer2_ue3/config_bundle.cpp)
+    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS} src/layer2_ue3 src/layer2_ue3/include)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(gn_tests PRIVATE -ffp-contract=off)
     elseif(MSVC)
