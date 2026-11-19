@@ -192,6 +192,10 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_ps_no_alpha_variant, false, "Gears2",
                     "alpha test - no discard instruction, so the GPU keeps early depth rejection (every pixel shader "
                     "that writes colour 0 otherwise carries the discard, whether the test is on or not). Same pictures; "
                     "a second variant of such shaders is translated on first use");
+REXCVAR_DEFINE_BOOL(gow2_renderer_ps_r21, true, "Gears2",
+                    "Speed study (with --gow2_renderer_canary_r21): false = the 21-bit rounding of exp / log / rcp / rsq "
+                    "/ sqrt only in vertex shaders, as Xenia Edge does (b13a0478d: in pixel shaders 'the extra "
+                    "instructions cost too much per pixel'). Changes the pixel shaders");
 REXCVAR_DEFINE_BOOL(gow2_renderer_tex_frac16, true, "Gears2",
                     "Speed study: false = a fixed-point texture's filtered value is not rounded to 16 fractional bits "
                     "(Canary's emulation of the hardware's filter precision). Differences are below 1/65536 - with "
@@ -1736,6 +1740,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     cache_->SetPrepareNativeUi(hints_.native_hdr && REXCVAR_GET(present_hdr) && REXCVAR_GET(gow2_hdr_ui_automatic));
     cache_->SetTexSignBySwizzle(REXCVAR_GET(gow2_renderer_tex_sign_swizzle));  // patch 0024
     cache_->SetCanaryR21(REXCVAR_GET(gow2_renderer_canary_r21));  // patch 0041
+    cache_->SetPsR21(REXCVAR_GET(gow2_renderer_ps_r21));             // speed study
     cache_->SetCanaryDecode(REXCVAR_GET(gow2_renderer_canary_decode));  // patch 0041
     cache_->SetMulscTowardZero(REXCVAR_GET(gow2_renderer_mulsc_round_toward_zero));      // patch 0087
     cache_->SetMemexportF16NanZero(REXCVAR_GET(gow2_renderer_memexport_f16_nan_zero));  // patch 0087

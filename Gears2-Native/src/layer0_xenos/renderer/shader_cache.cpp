@@ -1967,7 +1967,7 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
   else options.no_alpha_test = tess_quad_segments != 0;  // speed study: the variant without the alpha test
   options.compact_float_constants = compact_float_constants_;
   options.tex_sign_by_swizzle = tex_sign_by_swizzle_;  // patch 0024
-  options.canary_r21 = canary_r21_;  // patch 0041
+  options.canary_r21 = canary_r21_ && (is_vertex || ps_r21_);  // patch 0041; speed study: pixel shaders optional
   options.canary_tfetch1d_xy = canary_decode_;          // patch 0087: the decode's two tfetch1D coordinates, used
   options.mulsc_round_toward_zero = mulsc_toward_zero_;  // patch 0087
   options.memexport_f16_nan_zero = f16_nan_zero_;        // patch 0087

@@ -211,6 +211,7 @@ class ShaderCache {
   void SetCompactFloatConstants(bool on) { compact_float_constants_ = on; }
   void SetTexSignBySwizzle(bool on) { tex_sign_by_swizzle_ = on; }  // patch 0024
   void SetCanaryR21(bool on) { canary_r21_ = on; }  // patch 0041
+  void SetPsR21(bool on) { ps_r21_ = on; }          // speed study: false = vertex shaders only (Edge b13a0478d)
   void SetCanaryDecode(bool on) { canary_decode_ = on; }  // patch 0041
   void SetMulscTowardZero(bool on) { mulsc_toward_zero_ = on; }   // patch 0087
   void SetMemexportF16NanZero(bool on) { f16_nan_zero_ = on; }    // patch 0087
@@ -319,6 +320,7 @@ class ShaderCache {
   bool compact_float_constants_ = false;
   bool tex_sign_by_swizzle_ = false;  // patch 0024
   bool canary_r21_ = false;  // patch 0041
+  bool ps_r21_ = true;       // speed study
   bool canary_decode_ = false;  // patch 0041
   bool mulsc_toward_zero_ = false, f16_nan_zero_ = false;  // patch 0087
   bool spirv_precise_ = true;  // patch 0088
