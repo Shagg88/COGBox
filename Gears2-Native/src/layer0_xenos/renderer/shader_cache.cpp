@@ -1327,7 +1327,7 @@ uint64_t ShaderCache::DxbcStoreKey(const uint32_t* dwords, size_t dword_count, b
   // every HlslOptions field (hlsl.h: a new field must be added here too)
   k.u32(uint32_t(sizeof(hlsl::HlslOptions)));
   k.b(o.dxbc_loop_only_if_needed); k.b(o.dxbc_canary_minmax); k.u32(o.dxbc_salt); k.b(o.dxbc_direct_operands);
-  k.b(o.dxbc_slim_prologue); k.b(o.kill_as_demote); k.str(o.entry); k.u32(o.tess_quad_segments);
+  k.b(o.dxbc_slim_prologue); k.b(o.kill_as_demote); k.str(o.entry); k.u32(o.tess_quad_segments); k.b(o.no_alpha_test);
   k.b(o.compact_float_constants); k.b(o.tex_sign_by_swizzle); k.b(o.canary_r21); k.b(o.tex_num_format);
   k.b(o.vertex_index_clamp); k.b(o.canary_tfetch1d_xy); k.b(o.mulsc_round_toward_zero); k.b(o.memexport_f16_nan_zero);
   k.b(o.spirv_precise); k.b(o.ps_refactoring_allowed); k.b(o.tex_post_constants); k.b(o.tex_post_affine); k.b(o.tex_post_skip_identity);
@@ -1964,6 +1964,7 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
   // selected by GetNativeHdr only while replaying the identified post-tonemap
   // Canvas draws; never clamp all uses of a shader by its hash alone.
   if (is_vertex) options.tess_quad_segments = tess_quad_segments;
+  else options.no_alpha_test = tess_quad_segments != 0;  // speed study: the variant without the alpha test
   options.compact_float_constants = compact_float_constants_;
   options.tex_sign_by_swizzle = tex_sign_by_swizzle_;  // patch 0024
   options.canary_r21 = canary_r21_;  // patch 0041
@@ -2139,11 +2140,12 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
   auto& map = shaders_[is_vertex ? 1 : 0];
   // Quad-patch tessellation variants (notes/51 section 10) live under their own key.
   uint64_t key = (is_vertex && tess_quad_segments) ? ucode_hash ^ (0x7E55ull << 48) ^ (uint64_t(tess_quad_segments) << 40)
+                 : (!is_vertex && tess_quad_segments) ? ucode_hash ^ (0xA17Full << 48)  // speed study: no alpha test
                                                     : ucode_hash;
   if (hlsl_path) key ^= 0xD1D1ull << 32;  // GetDxilTwin: the HLSL-path twin under its own key
   auto it = map.find(key);
   if (it != map.end()) return *it->second;
-  if (!warm && !hlsl_path && !(is_vertex && tess_quad_segments)) SaveUcode(ucode_hash, is_vertex, dwords, dword_count);
+  if (!warm && !hlsl_path && !tess_quad_segments) SaveUcode(ucode_hash, is_vertex, dwords, dword_count);
   auto s = std::make_unique<GuestShader>();
   s->ucode_hash = ucode_hash;
   s->is_vertex = is_vertex;
@@ -2256,6 +2258,8 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
   char stem[48];
   if (is_vertex && tess_quad_segments)
     std::snprintf(stem, sizeof(stem), "vs-tess%u-%016llX", tess_quad_segments, static_cast<unsigned long long>(ucode_hash));
+  else if (tess_quad_segments)
+    std::snprintf(stem, sizeof(stem), "ps-noat-%016llX", static_cast<unsigned long long>(ucode_hash));
   else
     std::snprintf(stem, sizeof(stem), "%s-%016llX", is_vertex ? "vs" : "ps", static_cast<unsigned long long>(ucode_hash));
   const gpu::ShaderStage stage = is_vertex ? gpu::ShaderStage::kVertex : gpu::ShaderStage::kPixel;

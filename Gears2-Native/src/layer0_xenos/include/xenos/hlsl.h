@@ -50,6 +50,9 @@ struct HlslOptions {
   // inputs: patch index as float, domain location u/v, r1.x the corner-swizzle selector = identity) - for an N x N
   // grid of two triangles per cell. The first patch comes from xe_sys0.y (VGT_INDX_OFFSET), as the vertex offset does.
   uint32_t tess_quad_segments = 0;
+  // Speed study (pixel shaders): no alpha test in the epilogue (no discard, so early depth rejection stays on). For
+  // draws whose alpha test is off; the renderer picks this variant per draw.
+  bool no_alpha_test = false;
   // Float-constant compaction (speed; off by default until a renderer run proves it): when a shader reads no
   // constant relatively and its reads leave a gap of kCompactMinGap+ registers, absolute reads index a compacted
   // array - c[0, float_constants_low) then c[float_constants_high, float_constants) - see Translation.

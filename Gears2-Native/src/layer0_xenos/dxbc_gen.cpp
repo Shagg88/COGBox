@@ -2839,6 +2839,7 @@ struct Gen {
       // Alpha test (xe_alpha_test(xe_oc[0].w)).
       const Src al = S1(Oc(0), 3), ref = Sys(4).Select(1);
       const uint32_t r = Push(), f = Push();
+      if (!opt.no_alpha_test) {
       a.OpAnd(R(f, kX), Sys(4).Select(0), LU(7));
       a.OpMov(R(r, kX), LU(0));                                   // 0: never
       a.OpLT(R(t, kX), al, ref);                                  // 1: a < ref
@@ -2856,6 +2857,7 @@ struct Gen {
       a.OpNot(R(r, kX), S1(r, 0));
       a.OpAnd(R(r, kX), S1(r, 0), S1(f, 2));
       a.OpDiscard(true, S1(r, 0));
+      }  // speed study: the no-alpha-test variant has no discard here
       for (uint32_t i = 0; i < 4; ++i)
         a.OpMul(Dest::O(i), S(Oc(i)), Sys(3).Select(i), opt.clamp_ui_output);
       if (opt.native_hdr_linear && !opt.native_hdr_filter) {

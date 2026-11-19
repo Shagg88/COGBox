@@ -128,6 +128,8 @@ class ShaderCache {
   // `dwords` in host byte order (rex::graphics::Shader::ucode_dwords()). Returns a stable reference; its state moves
   // from kPending to kReady/kFailed in a later Poll().
   // tess_quad_segments > 0 (vertex shaders): the quad-patch tessellation variant with N segments per patch edge.
+  // Pixel shaders: tess_quad_segments = 1 is the variant without the alpha test (speed study: no discard, so the GPU
+  // keeps early depth rejection) - for draws whose alpha test is off.
   const GuestShader& Get(uint64_t ucode_hash, const uint32_t* dwords, size_t dword_count, bool is_vertex,
                          uint32_t tess_quad_segments = 0) {
     return GetImpl(ucode_hash, dwords, dword_count, is_vertex, tess_quad_segments, false);
@@ -144,6 +146,7 @@ class ShaderCache {
     const auto& map = shaders_[is_vertex ? 1 : 0];
     const uint64_t key = (is_vertex && tess_quad_segments)
                              ? ucode_hash ^ (0x7E55ull << 48) ^ (uint64_t(tess_quad_segments) << 40)
+                             : (!is_vertex && tess_quad_segments) ? ucode_hash ^ (0xA17Full << 48)  // no alpha test
                              : ucode_hash;  // the same key as GetImpl
     const auto it = map.find(key);
     return it == map.end() ? nullptr : it->second.get();

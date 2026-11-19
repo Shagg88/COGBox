@@ -187,6 +187,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_skip, false, "Gears2",
                     "Speed study (with --gow2_renderer_tex_post_affine): a texture fetch whose slot needs no "
                     "post-processing (no sign / gamma / integer step, exponent adjust 1) skips it in one uniform branch. "
                     "Same values. Changes the pixel shaders (pipelines rebuild once)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_ps_no_alpha_variant, false, "Gears2",
+                    "Speed study: a draw whose alpha test is off (ALWAYS) uses a variant of its pixel shader without the "
+                    "alpha test - no discard instruction, so the GPU keeps early depth rejection (every pixel shader "
+                    "that writes colour 0 otherwise carries the discard, whether the test is on or not). Same pictures; "
+                    "a second variant of such shaders is translated on first use");
 REXCVAR_DEFINE_BOOL(gow2_renderer_tex_frac16, true, "Gears2",
                     "Speed study: false = a fixed-point texture's filtered value is not rounded to 16 fractional bits "
                     "(Canary's emulation of the hardware's filter precision). Differences are below 1/65536 - with "
@@ -1773,6 +1778,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     cache_->SetTexPostAffine(tex_post_affine_);
     cache_->SetTexPostSkip(REXCVAR_GET(gow2_renderer_tex_post_skip));  // speed study
     tex_frac16_ = REXCVAR_GET(gow2_renderer_tex_frac16);
+    ps_no_alpha_variant_ = REXCVAR_GET(gow2_renderer_ps_no_alpha_variant);
     cache_->SetMulMinAbs(REXCVAR_GET(gow2_renderer_dxbc_mul_min_abs));  // job 634
     {
       rr::ShaderCache::Lean lean;  // job 636
@@ -10122,8 +10128,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     const uint32_t edram_mode = Bits(r[rr::reg::RB_MODECONTROL], 0, 3);
+    // Speed study: a draw with the alpha test off uses the pixel shader's variant without it (no discard, so the GPU
+    // keeps early depth rejection; --gow2_renderer_ps_no_alpha_variant).
+    const uint32_t ps_variant = ps_no_alpha_variant_ && ps.alpha_test.func == rr::CompareFunc::Always ? 1u : 0u;
     const rr::GuestShader* psg =
-        ps_.dwords ? &cache_->Get(ps_hash, ps_.dwords, ps_.count, false) : nullptr;
+        ps_.dwords ? &cache_->Get(ps_hash, ps_.dwords, ps_.count, false, ps_variant) : nullptr;
     // A pipeline takes one bytecode kind: a DXBC vertex shader with an HLSL-path pixel shader (a PCSS replacement, notes/80;
     // a DXBC fallback) uses the vertex shader's DXIL twin, compiled once like any HLSL-path shader.
     const bool dxil_twin = dxil_twin_on_ && psg && vsg0.dxbc && !psg->dxbc;  // --gow2_dxil_vs_twin
@@ -15024,6 +15033,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool tex_post_constants_ = false, tex_sign_swizzle_ = false;
   bool tex_post_affine_ = false;  // job 634
   bool tex_frac16_ = true;        // speed study: --gow2_renderer_tex_frac16
+  bool ps_no_alpha_variant_ = false;  // speed study: --gow2_renderer_ps_no_alpha_variant
   uint32_t affine_key_[32][6] = {};  // job 634: the fetch dwords each slot's affine constants were worked out from
   bool affine_valid_[32] = {};
   // slots: the fetch slots the draw's shaders read (GuestShader::texture_slots) - job 634 works out and uploads the
