@@ -314,7 +314,7 @@ inline void ViewportAxisHook(PPCContext& ctx, uint8_t* base) {
   if (!g_injecting && ctx.r5.u32 == 0) {  // player 1, once per frame (the first event that finds banked motion)
     double x = 0, y = 0;
     uint64_t mx, my;
-    if (Take(&x, &y) && NamesOk(base, &mx, &my)) {
+    if (NamesOk(base, &mx, &my) && Take(&x, &y)) {
       bool sent = true;
       g_injecting = true;
       if (x != 0) sent &= SendViewport(ctx, base, mx, x);
@@ -361,9 +361,9 @@ inline void InjectViewport(PPCContext& ctx, uint8_t* base, uint32_t viewport, do
   }
   double x = 0, y = 0;
   uint64_t mx, my;
-  if (!viewport || !Take(&x, &y)) return;
+  // 0.6.6 (review #30): the names first - movement banked before UE3 has made MouseX / MouseY is kept, not dropped
+  if (!viewport || !NamesOk(base, &mx, &my) || !Take(&x, &y)) return;
   g_d_taken.fetch_add(1, std::memory_order_relaxed);
-  if (!NamesOk(base, &mx, &my)) return;
   bool sent = false;
   PPCFunc* fn = nullptr;
   if (fa) fn = (fa == g_client_axis_addr && g_client_axis_orig) ? g_client_axis_orig : g_dispatcher->GetFunction(fa);

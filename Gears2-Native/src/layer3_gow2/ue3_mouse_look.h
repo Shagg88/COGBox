@@ -309,7 +309,7 @@ inline void ViewportAxisHook(PPCContext& ctx, uint8_t* base) {
   if (!g_injecting && ctx.r5.u32 == 0) {  // player 1, once per frame (the first event that finds banked motion)
     double x = 0, y = 0;
     uint64_t mx, my;
-    if (Take(&x, &y) && NamesOk(base, &mx, &my)) {
+    if (NamesOk(base, &mx, &my) && Take(&x, &y)) {
       bool sent = true;
       g_injecting = true;
       if (x != 0) sent &= SendViewport(ctx, base, mx, x);
@@ -343,7 +343,7 @@ inline void ProcessInputHook(PPCContext& ctx, uint8_t* base) {
   const uint32_t viewport = ctx.r3.u32;
   double x = 0, y = 0;
   uint64_t mx, my;
-  if (viewport && Take(&x, &y) && NamesOk(base, &mx, &my)) {
+  if (viewport && NamesOk(base, &mx, &my) && Take(&x, &y)) {
     bool sent = false;
     const uint32_t client = Load32(base, viewport + kViewportClientOff);
     const uint32_t vt = client ? Load32(base, client) : 0;

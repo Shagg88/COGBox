@@ -31,6 +31,20 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <memory>
+
+// 0.6.6: PNG through a wide-path FILE (stb's own writer opens a narrow path, which fails for names outside the code page).
+static bool WritePngWide(const std::filesystem::path& path, int w, int h, const uint8_t* rgb) {
+#ifdef _WIN32
+  FILE* f = _wfopen(path.c_str(), L"wb");
+#else
+  FILE* f = std::fopen(path.string().c_str(), "wb");
+#endif
+  if (!f) return false;
+  const int ok = stbi_write_png_to_func([](void* c, void* d, int n) { std::fwrite(d, 1, size_t(n), static_cast<FILE*>(c)); }, f, w,
+                                        h, 3, rgb, w * 3);
+  return std::fclose(f) == 0 && ok != 0;
+}
 
 REXCVAR_DEFINE_INT32(gow2_frame_shots, 0, "Gears2", "Save every Nth finished frame as PNG (0 = off)");
 REXCVAR_DEFINE_STRING(gow2_frame_dir, "", "Gears2", "Folder for --gow2_frame_shots (default: <exe dir>\\frames)");
@@ -56,7 +70,7 @@ class FrameCapture final : public DrawObserver {
   bool WantsFrameImages() const override { return true; }
   void OnFrameImage(const uint8_t* src, uint32_t width, uint32_t height, uint32_t row_pitch, uint64_t frame) override {
     if (frame < first_ || (last_ && frame > last_)) return;
-    if (frame % uint64_t(every_) != 0 || in_flight_.load() > (last_ ? 16 : 2)) return;
+    if (frame % uint64_t(every_) != 0 || in_flight_->load() > (last_ ? 16 : 2)) return;
     // R10G10B10A2_UNORM -> RGB8 (top 8 bits of each 10-bit channel).
     std::vector<uint8_t> rgb(size_t(width) * height * 3);
     for (uint32_t y = 0; y < height; ++y) {
@@ -72,11 +86,14 @@ class FrameCapture final : public DrawObserver {
     }
     char name[64];
     std::snprintf(name, sizeof(name), "frame-%06llu.png", static_cast<unsigned long long>(frame));
-    std::string path = (dir_ / name).string();
-    ++in_flight_;
-    std::thread([this, rgb = std::move(rgb), width, height, path]() {
-      stbi_write_png(path.c_str(), int(width), int(height), 3, rgb.data(), int(width) * 3);
-      --in_flight_;
+    // 0.6.6 (review #14 / #29): the counter is shared with the worker (it outlives this object at exit), and the file is
+    // opened by its wide path (a Pictures folder with letters outside the code page).
+    const std::filesystem::path path = dir_ / name;
+    ++*in_flight_;
+    std::thread([count = in_flight_, rgb = std::move(rgb), width, height, path]() {
+      if (!WritePngWide(path, int(width), int(height), rgb.data()))
+        REXLOG_WARN("gow2_frame_shots: could not write {}", path.string());
+      --*count;
     }).detach();
   }
 
@@ -84,7 +101,7 @@ class FrameCapture final : public DrawObserver {
   int every_;
   std::filesystem::path dir_;
   uint64_t first_ = 0, last_ = 0;
-  std::atomic<int> in_flight_{0};
+  std::shared_ptr<std::atomic<int>> in_flight_ = std::make_shared<std::atomic<int>>(0);
 };
 
 // To-do 8: the renderer reads the presented image back for the screenshot (XenosScreenshotSetPresented); a global, so
@@ -130,7 +147,7 @@ class Screenshot final : public DrawObserver {
     for (int i = 2; std::filesystem::exists(path, ec) && i < 100; ++i)
       path = dir / (game_ + "-" + stamp + "-" + std::to_string(i) + ".png");
     std::thread([rgb = std::move(rgb), width, height, path]() {
-      const bool ok = stbi_write_png(path.string().c_str(), int(width), int(height), 3, rgb.data(), int(width) * 3) != 0;
+      const bool ok = WritePngWide(path, int(width), int(height), rgb.data());
       REXLOG_INFO("cogbox_screenshot: {} {} ({}x{})", ok ? "saved" : "could not save", path.string(), width, height);
     }).detach();
   }
