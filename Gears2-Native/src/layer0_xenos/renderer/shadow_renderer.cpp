@@ -2593,6 +2593,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (zpd.answer == rex::graphics::ZpdAnswer::kHost) ++occ_stats_.sdk_host;
     const OpenOcclusion q = occ_open_;
     occ_open_ = OpenOcclusion{};
+    XENOS_SITE(1);
     // Complete = every draw inside the query was really drawn by us (a draw skipped for a pending shader/pipeline
     // would make our count too small: such a count is never learned, never written).
     const bool counted = q.open && stats_.draws >= q.draws && stats_.drawn >= q.drawn;
@@ -2798,6 +2799,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint64_t t0 = __rdtsc();
     BeginParts();
     PartScope frame_scope(*this, kPartFrame);
+    XENOS_SITE(1);
     // Stall attribution (PR #43, legoliamneeson): these ran before the frame timer started, so a slow readback map or
     // retirement showed as time between frames that no counter owned. Inside it, and named as slow steps.
     FrameStep("export readback results", [&] { PollExportReadbacks(); });  // job 041
@@ -2818,6 +2820,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (report_first_) ReportFrame();  // patch 0101
     DrainCreatedShaders();  // patch 0066
     DrainPrebuild();        // patch 0068
+    XENOS_SITE(1);
     // Patch 0062: the on-screen "Building shaders" note (fps_bar.cpp) - pipelines still queued or being built, and how
     // many were ever queued (both games; no game data).
     // Job 633 (Shagg: "always 64 left"): the recipe pack tops the build queue up to its cap as it drains, so the queue
@@ -2878,6 +2881,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     const double fl_pipe_wait_ms = pipeline_wait_ms_frame_;  // frame log: this frame's, before the reset below
     const uint32_t fl_draws = uint32_t(draw_index_), fl_skipped = uint32_t(pending_this_frame_);
+    XENOS_SITE(1);
     // 0.6.3 (low-core CPUs): a frame of play (64+ draws, the line DecideChapterHold and the recipe pack draw between
     // play and a loading screen / video / 2D menu). Layer 2's package reader paces itself by it (XenosRendererInPlay),
     // and the pipeline workers keep part of themselves free of the start-up backlog for the next half second.
@@ -3087,6 +3091,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if ((frame_ & 511u) == 0) EvictStaleUploads();  // patch 0149 (the stats copy that stood here was never read)
     std::copy(std::begin(part_ticks_), std::end(part_ticks_), std::begin(hitch_ticks_));  // patch 0010 (after the
+    XENOS_SITE(1);
     // summary, which zeroes part_ticks_): the next frame's parts are measured from here
     // The next frame's draw records, if it is a comparison frame (shared with its pending resolves).
     BeginTraceFrame();
@@ -13520,6 +13525,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void UploadVertexData(const uint32_t* r, const rr::GuestShader& s) {
     XENOS_SITE(1);
     const uint8_t* base = memory_->TranslatePhysical<const uint8_t*>(0);
+    XENOS_SITE(1);
     // Job 175: with vertex reuse, a slot whose fetch constant is the same as at its last use in this command list and
     // release epoch gets the same result again - no map or watch lookups (same rule as the ring-copy reuse).
     if (vertex_reuse_) {

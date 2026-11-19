@@ -235,6 +235,13 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
     ++fast_hits_;
     return;
   }
+  RenderTarget::OwnedCache& cc = target.clean[bi];
+  if (!traced && !take_ownership && cc.valid && cc.epoch == book_epoch_[bi] && c0 >= cc.c0 && c1 <= cc.c1 &&
+      r0 >= cc.r0 && r1 <= cc.r1 && tile_limit <= cc.limit) {
+    ++fast_hits_;
+    return;
+  }
+  bool foreign = false;
   bool changed = false;
   uint32_t run_owner = 0, run_tiles = 0;
   // FindById searches every target: neighbouring tiles almost always share an owner, so remember the last one.
@@ -273,6 +280,7 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
       if (trace_tiles_ && trace_fn_ && trace_tiles_->test(tile))
         trace_fn_(tile, rel, book, o ? FindById(o) : nullptr, target, take_ownership);
       if (o && o != target.id) {
+        foreign = true;
         if (o != run_owner) {
           flush();
           run_owner = o;
@@ -299,6 +307,8 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
   } else if (take_ownership) {
     oc.valid = false;  // a clear-known write: a later plain write must reset those tiles' clear state
   }
+  // A look that found no other owner: true for every range inside this one until a book changes (the epoch).
+  if (!take_ownership && !foreign && !traced) cc = {true, book_epoch_[bi], c0, c1, r0, r1, tile_limit};
 }
 
 void RenderTargetCache::ForEachOverlap(uint32_t first_tile, uint32_t tile_count, const RenderTarget* except,

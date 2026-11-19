@@ -75,6 +75,11 @@ struct RenderTarget {
     uint32_t c0 = 0, c1 = 0, r0 = 0, r1 = 0, limit = 0;
   };
   OwnedCache owned[2];
+  // 19 Nov (speed study, job 2108: 15% of the renderer thread): the same for a look that takes no ownership (a
+  // test-only draw's depth target) - at this book epoch no tile of the range belongs to another target, so a look
+  // inside it has nothing to report. The owned cache above is only refreshed by writes; after another target took
+  // tiles anywhere, every test-only draw walked all its tiles again (720 for a 1280x720 target).
+  OwnedCache clean[2];
   std::string Describe() const;
 };
 
