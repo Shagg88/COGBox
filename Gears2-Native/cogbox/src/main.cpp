@@ -923,7 +923,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         for (int g = 0; g < G_ALL; g++) {
             if (g_playArg != game_def(g).key) continue;
             a.front = g; a.carPos = (float)std::max(0, library_slot(a, g));
-            if (a.st[g].ready == R_READY && !a.modal.open) play_start(a, g);
+            // 0.6.6 (GitHub #374): a front end (Playnite, Steam) that starts COGBox with --play waits for COGBox to
+            // close; when the game ends normally COGBox closes too. A crash keeps it open to show what happened.
+            if (a.st[g].ready == R_READY && !a.modal.open) { play_start(a, g); a.closeAfterPlay = a.run.proc != nullptr; }
         }
     }
     refresh_pads(a);

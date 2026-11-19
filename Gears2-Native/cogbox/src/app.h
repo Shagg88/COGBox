@@ -73,6 +73,7 @@ struct App {
     SDL_Window *win = nullptr;
     SDL_Renderer *ren = nullptr;
     bool quit = false;
+    bool closeAfterPlay = false;   // 0.6.6 (GitHub #374): started with --play - close once that game ends normally
     Ini ini;
     GameState st[G_ALL];
     Cover cover[G_ALL];

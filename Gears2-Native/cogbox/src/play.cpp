@@ -633,6 +633,7 @@ void play_poll(App &a)
     bool restart = apply_menu_changes(a, g, a.run.logDir);
     if (known && code == 0 && crash.empty()) {
         if (restart) { append_line(join(a.run.logDir, "args.txt"), "launcher: restarting the game (in-game menu)"); play_start(a, g); }
+        else if (a.closeAfterPlay) { append_line(join(a.run.logDir, "args.txt"), "launcher: started with --play - closing"); a.quit = true; }
         return;
     }
     // 0.2.0 (GitHub #6): the game closed because FSR crashed inside the graphics driver - FSR off for this game (SMAA)
