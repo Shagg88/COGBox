@@ -2135,7 +2135,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // GitHub #60: the picture widens to the monitor's own shape (21:9, 32:9...), not a fixed 21:9, when the build can
     if (on("Ultrawide")) {
         const char *k = isG3 ? "gow3_aspect" : isGJ ? "gowj_aspect" : isG1 ? "gow1_aspect" : "gow2_aspect";
-        if (cap_exe(env, k)) a.push_back(std::string("--") + k + "=auto");
+        // 0.6.6 (review #24): "auto" in the game measures the main monitor (the window doesn't exist yet); the launcher
+        // knows the monitor chosen in Display > Monitor, so its own shape is passed ("3440:1440"). auto when unknown.
+        const std::string shape = env.monitor_w > 0 && env.monitor_h > 0
+                                      ? std::to_string(env.monitor_w) + ":" + std::to_string(env.monitor_h) : std::string("auto");
+        if (cap_exe(env, k)) a.push_back(std::string("--") + k + "=" + shape);
     }
     if (on("Ultrawide")) a.push_back(isG3 ? "--gow3_ultrawide=true" : isGJ ? "--gowj_ultrawide=true" : isG1 ? "--gow1_ultrawide=true" : "--gow2_ultrawide=true");
     // 0.4.9: 4:3 (SDK patch 70). Gears 2 / 3 / Judgment make a 4:3 back buffer (720 x w / h wide) only for a mode that is
