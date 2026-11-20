@@ -8,6 +8,7 @@
 #include <rex/audio/flags.h>
 #include <rex/cvar.h>
 #include <rex/rex_app.h>
+#include <xenos/utf8_paths.h>
 #include "mouse_look.h"
 #include "main_menu_exit.h"
 #include "profile_log.h"
@@ -63,6 +64,8 @@ class GowjApp : public rex::ReXApp {
   // XenosLogSystemReport (Gears 2 launcher patch 0131, layer 0 system_report.cpp, picked up by our layer 0 glob): one
   // read-only report of Windows / CPU / memory / graphics cards + drivers / screens / controllers / build, for problem
   // reports.
+  // GitHub #389: path switches with non-ASCII letters, read as UTF-8 (xenos/utf8_paths.h)
+  void OnConfigurePaths(rex::PathConfig& paths) override { xenos::Utf8PathArguments(paths); }
   void OnPostInitLogging() override {
     XenosInstallCrashHandler();
     XenosLogSystemReport("Gears of War: Judgment");
