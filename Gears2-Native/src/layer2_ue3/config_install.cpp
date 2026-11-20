@@ -465,6 +465,16 @@ std::string RelKey(std::string rel) {
 REXCVAR_DEFINE_STRING(gow2_movie_voice_group, "auto", "Gears2",
                       "Ticket 1 / #103: movie voices from Bink track group N (auto = the only extra group when the game "
                       "language is not English; off; 1..n)");
+// GitHub #375: the pre-rendered movies follow the Voice language, not the text language. The game asks Bink for the
+// track IDs of its TEXT language's group; with --ue3_voice_language set to another language the header is shown with
+// that group's IDs swapped with the voice language's (the same 12-byte swap as above, between two groups, or a group
+// and the base mix for English). That needs to know which language each group holds, which the file does not say:
+// --gow2_movie_voice_order lists the languages of groups 1..n as the voice codes, e.g. "FRA,ITA,DEU,ESN,ESM". Empty
+// (default) = unknown, the movies keep the text language as before. Only with --gow2_movie_voice_group=auto, and only
+// for a movie with exactly as many groups as the list.
+REXCVAR_DEFINE_STRING(gow2_movie_voice_order, "", "Gears2",
+                      "GitHub #375: the languages of the movies' voice groups 1..n (e.g. FRA,ITA,DEU,ESN,ESM), so "
+                      "movies play in --ue3_voice_language; empty = movies keep the text language");
 
 namespace {
 // -1 off, 0 auto, n forced
@@ -483,12 +493,47 @@ bool MovieGameLanguageNotEnglish() {
   const std::string ul = rex::cvar::GetFlagByName("user_language");
   return !ul.empty() && ul != "0" && ul != "1";
 }
+// GitHub #375. The voice groups' languages in upper case (--gow2_movie_voice_order), group 1 first.
+std::vector<std::string> MovieVoiceOrder() {
+  std::vector<std::string> out;
+  std::string cur;
+  for (char c : std::string(REXCVAR_GET(gow2_movie_voice_order)) + ",") {
+    if (c == ',' || c == ';' || c == ' ') {
+      if (!cur.empty()) out.push_back(cur);
+      cur.clear();
+    } else {
+      cur += char(std::toupper(uint8_t(c)));
+    }
+  }
+  return out;
+}
+// GitHub #375: which group the game asks for (its text language) and which one should play (the voice language);
+// 0 = the base mix (English), 1..n = a group of `order`. False when the movies need no change or it cannot be told.
+bool MovieVoiceSwap(const std::vector<std::string>& order, uint32_t* asked, uint32_t* wanted) {
+  std::string voice = REXCVAR_GET(ue3_voice_language);
+  for (char& c : voice) c = char(std::toupper(uint8_t(c)));
+  if (order.empty() || voice.size() != 3) return false;
+  const std::string ul = rex::cvar::GetFlagByName("user_language");
+  // the console language as the first two letters of the game's language code (as AddVoiceLanguage does)
+  const char* text = ul == "2" ? "JP" : ul == "3" ? "DE" : ul == "4" ? "FR" : ul == "5" ? "ES" : ul == "6" ? "IT" : "IN";
+  auto group = [&](const std::string& lang, size_t letters, uint32_t* g) {
+    if (lang.compare(0, letters, "INT", letters) == 0) { *g = 0; return true; }
+    for (size_t i = 0; i < order.size(); ++i)
+      if (order[i].compare(0, letters, lang, 0, letters) == 0) { *g = uint32_t(i + 1); return true; }
+    return false;
+  };
+  // a text language the movies have no group for plays the base mix (ticket 1: the US game with Japanese text)
+  if (!group(text, 2, asked)) *asked = 0;
+  if (!group(voice, 3, wanted)) return false;   // the movies have no such voices: left as they are
+  return *asked != *wanted;
+}
 }  // namespace
 
 // Whether any movie may change (decides whether the folder view is needed when nothing else needs it).
 static bool MovieVoiceWanted() {
   const int s = MovieVoiceSetting();
-  return s > 0 || (s == 0 && MovieGameLanguageNotEnglish());
+  uint32_t asked = 0, wanted = 0;
+  return s > 0 || (s == 0 && (MovieGameLanguageNotEnglish() || MovieVoiceSwap(MovieVoiceOrder(), &asked, &wanted)));
 }
 
 // The header bytes to change for this .bik (offset -> value), or none. `why` says what was chosen.
@@ -513,6 +558,25 @@ static std::vector<std::pair<size_t, uint8_t>> MovieVoicePatch(const std::filesy
   if (got < ids + 4 * size_t(n)) return out;
   for (uint32_t i = 0; i < n; ++i)
     if (le32(ids + 4 * i) != i) { *why = "track IDs are not 0..n-1 - left as it is"; return out; }
+  // the three tracks (L, R, C) of group x; 0 = the base mix
+  auto track = [](uint32_t x, int k) { return x ? 6 + 3 * (x - 1) + uint32_t(k) : (k == 2 ? 5u : uint32_t(k)); };
+  if (s == 0) {   // GitHub #375: the voice language's group plays where the game asks for its text language's
+    const std::vector<std::string> order = MovieVoiceOrder();
+    uint32_t asked = 0, wanted = 0;
+    if (order.size() == groups && MovieVoiceSwap(order, &asked, &wanted)) {
+      for (int k = 0; k < 3; ++k) {
+        const uint32_t a = track(asked, k), b = track(wanted, k);
+        for (int byte = 0; byte < 4; ++byte) {
+          out.emplace_back(ids + 4 * a + byte, uint8_t(b >> (8 * byte)));
+          out.emplace_back(ids + 4 * b + byte, uint8_t(a >> (8 * byte)));
+        }
+      }
+      *why = std::format("{} audio tracks ({} voice group(s)) - voice language: tracks {},{},{} play as {},{},{} "
+                         "(--gow2_movie_voice_order, GitHub #375)", n, groups, track(wanted, 0), track(wanted, 1),
+                         track(wanted, 2), track(asked, 0), track(asked, 1), track(asked, 2));
+      return out;
+    }
+  }
   uint32_t g = 0;
   if (s > 0) g = uint32_t(s) <= groups ? uint32_t(s) : 0;
   else if (groups == 1 && MovieGameLanguageNotEnglish()) g = 1;
