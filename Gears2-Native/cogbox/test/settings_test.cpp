@@ -402,6 +402,20 @@ int summary() {
             const std::string want = "--gow2_texture_pack_dirs=\"C:/G/mods/C;C:/G/mods/A\"";
             if (cap && packs ? got != want : !got.empty()) { std::cout << "FAIL texture pack folders (" << got << ")\n"; ++fails; }
         }
+    // GitHub #397: AMD FSR frame generation is not offered on Windows with under 3.5 GB of the card's own video memory
+    // (unknown size and Proton / Wine are left alone), and a saved choice sends nothing there
+    for (int vk = 0; vk <= 1; ++vk)
+        for (int wine = 0; wine <= 1; ++wine)
+            for (unsigned vram : { 0u, 2048u, 3499u, 3500u, 8192u }) {
+                Environment e; e.update_ready = true; e.vram_mb = vram; e.wine = wine != 0;
+                e.cap.exe_has = [](const std::string&) { return true; };
+                e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+                const bool want = wine || !vram || vram >= 3500;
+                const Availability av = framegen_choice_available(1, e, vk != 0);
+                if (av.ok != want || (!want && av.why.find("4 GB") == std::string::npos)) {
+                    std::cout << "FAIL frame generation gate (vulkan " << vk << ", wine " << wine << ", vram " << vram
+                              << "): ok " << av.ok << " '" << av.why << "'\n"; ++fails; }
+            }
     // 0.6.4 (GitHub #341): the texture cache - Auto sends nothing (512) without a texture pack and 2048 with one; a size
     // other than 512 is sent as picked; nothing for an exe without the cvar
     for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })

@@ -70,6 +70,10 @@
 
 REXCVAR_DECLARE(int32_t, gow2_fg_debug);  // frame_generation.cpp
 // Notes/83 (Judgment freezes, jobs 1389-1390): A/B switches for AMD's Vulkan swap chain; the defaults are 0.4.8's.
+REXCVAR_DEFINE_BOOL(gow2_frame_generation_low_memory, false, "Gears2",
+                    "GitHub #397: try AMD frame generation on Vulkan even on integrated graphics with under 3.5 GB of "
+                    "their own video memory (Windows), where it is otherwise left off because AMD's library ended the "
+                    "game while starting");
 REXCVAR_DEFINE_STRING(gow2_fg_vk_present_queue, "graphics", "Gears2",
                       "Vulkan frame generation: which spare queue AMD's swap chain presents on - graphics = one of the "
                       "graphics family's (AMD then composes on it), compute = a compute-only family's when it can "
@@ -630,6 +634,34 @@ bool MakeSwapChain(rex::VulkanSwapChainHook* io) {
       } else {
         REXLOG_INFO("gow2_frame_generation: Vulkan: NVIDIA card, overlay capture hook (nvspcap64.dll) not loaded");
       }
+    }
+  }
+  if (io->physical_device && !REXCVAR_GET(gow2_frame_generation_low_memory)) {
+    // GitHub #397 (Ryzen 5 3500U, Vega 8 with 2 GB of its own, Windows): the game ended (0xC0000409) inside AMD's
+    // library while the frame-generation context was made - a fail-fast there cannot be caught, so it is not tried on
+    // integrated graphics with under 3.5 GB of their own memory. Proton / Wine is left alone (the Steam Deck runs it,
+    // notes/83). The launcher's Frame generation option says the same (framegen_choice_available).
+    HMODULE vk = GetModuleHandleW(L"vulkan-1.dll");
+    HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+    const bool wine = nt && GetProcAddress(nt, "wine_get_version");
+    auto props = vk ? reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(GetProcAddress(vk, "vkGetPhysicalDeviceProperties"))
+                    : nullptr;
+    auto mem = vk ? reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(
+                        GetProcAddress(vk, "vkGetPhysicalDeviceMemoryProperties"))
+                  : nullptr;
+    if (props && mem && !wine) {
+      VkPhysicalDeviceProperties pp{};
+      VkPhysicalDeviceMemoryProperties mp{};
+      props(static_cast<VkPhysicalDevice>(io->physical_device), &pp);
+      mem(static_cast<VkPhysicalDevice>(io->physical_device), &mp);
+      uint64_t own = 0;
+      for (uint32_t i = 0; i < mp.memoryHeapCount; ++i)
+        if (mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) own = std::max<uint64_t>(own, mp.memoryHeaps[i].size);
+      REXLOG_INFO("gow2_frame_generation: Vulkan: {} graphics, {} MB of its own",
+                  pp.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "integrated" : "separate", own >> 20);
+      if (pp.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU && own && own < (3500ull << 20))
+        return off("integrated graphics with under 3.5 GB of their own memory (AMD frame generation ended the game "
+                   "there, GitHub #397; --gow2_frame_generation_low_memory=true tries it anyway)");
     }
   }
   if (!Load()) return off("AMD's Vulkan loader missing");

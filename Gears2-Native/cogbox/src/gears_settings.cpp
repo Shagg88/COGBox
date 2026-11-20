@@ -748,6 +748,16 @@ bool fg_vk_nvidia_warning(const Settings& s, const Environment& env) {
 
 Availability framegen_choice_available(int index, const Environment& env, bool vulkan) {
     Availability a;
+    // GitHub #397: AMD FSR frame generation on a Ryzen 5 3500U's Vega 8 (2 GB of its own, Windows) - slow, late
+    // controls, and the game ended (0xC0000409) inside AMD's library as the frame-generation context was made. Frame
+    // generation needs spare GPU time and video memory that such graphics do not have (AMD lists RX 5000 and up), so
+    // on Windows it is not offered below 3.5 GB of the card's own memory. Unknown size (0) and Proton / Wine (the
+    // Steam Deck runs it, notes/83) are left alone; DLSS and XeSS have their own hardware checks.
+    if (index == 1 && !env.wine && env.vram_mb && env.vram_mb < 3500) {
+        a.ok = false;
+        a.why = "Needs a graphics card with 4 GB or more of its own video memory.";
+        return a;
+    }
     if (vulkan) {   // notes/83: AMD FSR frame generation only (DLSS-G and XeSS-FG are DirectX 12 only); experimental
         if (index >= 2) { a.ok = false; a.why = "DirectX 12 only."; }
         else if (index == 1 && (!cap_file(env, "amd_fidelityfx_framegeneration_vk.dll") ||
