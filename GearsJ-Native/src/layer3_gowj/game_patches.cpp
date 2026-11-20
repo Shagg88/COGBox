@@ -935,7 +935,48 @@ void GowjUltrawideFov(PPCRegister& f0, PPCRegister& f31) {
   LogOnce(l, "field-of-view factor", f0.f64, f);
   f0.f64 = f;
 }
+// ---- Experiment (Shagg, 20 Nov): true 1080p, as Gears 2's --gow2_native_lines ---------------------------------------
+// sub_829925D0 (the function of the scene-height site): the height `li r11,720` at 0x82992664; the width = aspect x 720
+// clamped to 904..1280 in r5, both paths meeting at 0x82992694 (`lis r11,-31925`), stored at 0x829926A8; `li r6,720` at
+// 0x829926A4 and r5 go to a call (0x822FE3E8) as height and width; the stored width is read back at 0x829926B8
+// (`lwz r11,0(r30)`) and compared with 1280 - any other width takes the narrow-screen path (two values set to 800), so
+// that read gets 1280 when the width is ours. --gowj_native_lines=1080 gives 1920x1080. Needs
+// --gow2_renderer_edram_extended=true. Not with --gowj_ultrawide. NOT RUN YET: written from the generated code.
+REXCVAR_DEFINE_INT32(gowj_native_lines, 0, "Judgment",
+                     "Experiment (true 1080p): the game's own screen height in lines, 0 = 720 as on the console. 1080 "
+                     "makes the game draw 1920x1080 itself (width = lines x 16 / 9, a multiple of 8). Needs "
+                     "--gow2_renderer_edram_extended=true. Not with --gowj_ultrawide")
+    .range(0, 1440);
+namespace {
+uint32_t GowjNativeLines() {
+  static const uint32_t lines = [] {
+    const int v = REXCVAR_GET(gowj_native_lines);
+    if (v <= 720 || REXCVAR_GET(gowj_ultrawide)) return 0u;
+    return uint32_t(v + 7) / 8u * 8u;
+  }();
+  return lines;
+}
+uint32_t GowjNativeWidth() { return (GowjNativeLines() * 16u / 9u + 7u) / 8u * 8u; }
+}  // namespace
+void GowjNativeSceneWidth(PPCRegister& r5) {  // before `lis r11,-31925` at 0x82992694: the clamped width
+  if (!GowjNativeLines()) return;
+  static bool l = false;
+  LogOnce(l, "native lines: screen width", uint32_t(r5.u32), GowjNativeWidth());
+  r5.u64 = GowjNativeWidth();
+}
+void GowjNativeCallHeight(PPCRegister& r6) {  // after `li r6,720` at 0x829926A4: the height passed with the width
+  if (GowjNativeLines()) r6.u64 = GowjNativeLines();
+}
+void GowjNativeWidthCheck(PPCRegister& r11) {  // after `lwz r11,0(r30)` at 0x829926B8: compared with 1280
+  if (GowjNativeLines() && r11.u32 == GowjNativeWidth()) r11.u64 = 1280;
+}
 void GowjUltrawideSceneHeight(PPCRegister& r11) {
+  if (GowjNativeLines()) {
+    static bool n = false;
+    LogOnce(n, "native lines: screen height", uint32_t(r11.u32), GowjNativeLines());
+    r11.u64 = GowjNativeLines();
+    return;
+  }
   if (!REXCVAR_GET(gowj_ultrawide)) return;
   static bool l = false;
   LogOnce(l, "scene buffer height", uint32_t(r11.u32), GowjWideHeight());

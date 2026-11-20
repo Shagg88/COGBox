@@ -213,7 +213,43 @@ bool Gow3VoiceCallbackGone(PPCRegister& r3) {
   return true;
 }
 bool Gow3UltrawideNoConstrain() { return Wide(); }  // jump_address_on_true: the beq at 0x8261BE60 is taken
+
+// ---- Experiment (Shagg, 20 Nov): true 1080p, as Gears 2's --gow2_native_lines ---------------------------------------
+// The same function as Gears 2's sub_82816638 (TU6 sub_82971BC0, disc sub_82960BE8): it makes the screen height 720
+// (`li r11,720`, the Gow3UltrawideSceneHeight site) and the width aspect x 720 clamped to 900..1280 - stored at
+// TU6 0x82971C80 / disc 0x82960CA8 (`stw r11,...(r10)`, below 1280) or, after `li r11,1280` at TU6 0x82971F3C / disc
+// 0x82960F64, at the next instruction. --gow3_native_lines=1080 gives both numbers: 1920x1080. Needs
+// --gow2_renderer_edram_extended=true (10 MiB of EDRAM cannot hold 1080p). Not with a wider picture shape
+// (--gow3_ultrawide / --gow3_aspect). NOT RUN YET: written from the generated code, to be proven by a gameplay run.
+REXCVAR_DEFINE_INT32(gow3_native_lines, 0, "Gears3",
+                     "Experiment (true 1080p): the game's own screen height in lines, 0 = 720 as on the console. 1080 "
+                     "makes the game draw 1920x1080 itself (width = lines x 16 / 9, a multiple of 8). Needs "
+                     "--gow2_renderer_edram_extended=true. Not with --gow3_ultrawide / --gow3_aspect")
+    .range(0, 1440);
+namespace {
+uint32_t Gow3NativeLines() {
+  static const uint32_t lines = [] {
+    const int v = REXCVAR_GET(gow3_native_lines);
+    if (v <= 720 || Wide()) return 0u;
+    return uint32_t(v + 7) / 8u * 8u;
+  }();
+  return lines;
+}
+uint32_t Gow3NativeWidth() { return (Gow3NativeLines() * 16u / 9u + 7u) / 8u * 8u; }
+}  // namespace
+void Gow3NativeSceneWidth(PPCRegister& r11) {  // before the width's store (below 1280)
+  if (!Gow3NativeLines()) return;
+  GOW3_LOG_ONCE("gow3_native_lines: screen width {} -> {}", r11.u32, Gow3NativeWidth());
+  r11.u64 = Gow3NativeWidth();
+}
+void Gow3NativeSceneWidthMax(PPCRegister& r11) { Gow3NativeSceneWidth(r11); }  // after `li r11,1280` (one name per hook)
+
 void Gow3UltrawideSceneHeight(PPCRegister& r11) {  // after `li r11,720` at 0x82960C78
+  if (Gow3NativeLines()) {
+    GOW3_LOG_ONCE("gow3_native_lines: screen height {} -> {}", r11.u32, Gow3NativeLines());
+    r11.u64 = Gow3NativeLines();
+    return;
+  }
   if (!Wide()) return;
   GOW3_LOG_ONCE("gow3_aspect: scene buffer height {} -> {}", r11.u32, WideHeight());
   r11.u64 = WideHeight();

@@ -281,6 +281,18 @@ name = "Gow3UltrawideNoConstrain"
 registers = []
 jump_address_on_true = 0x8262CE80
 
+# Experiment --gow3_native_lines (game_patches.cpp): the screen width, at its two stores.
+[[entrypoint.midasm_hook]]
+address = 0x82971C80  # `stw r11,...(r10)`: the width when below 1280 (before the store)
+name = "Gow3NativeSceneWidth"
+registers = ["r11"]
+
+[[entrypoint.midasm_hook]]
+address = 0x82971F3C  # `li r11,1280`: the width's upper clamp (after it, before its store)
+name = "Gow3NativeSceneWidthMax"
+registers = ["r11"]
+after_instruction = true
+
 [[entrypoint.midasm_hook]]
 address = 0x82971C50
 name = "Gow3UltrawideSceneHeight"

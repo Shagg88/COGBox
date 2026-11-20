@@ -298,6 +298,24 @@ name = "GowjUltrawideFov"
 registers = ["f0", "f31"]  # 0.5.0: f31 = the player's view FOV (PlayerController +936), for aim / zoom sensitivity
 after_instruction = true
 
+# Experiment --gowj_native_lines (game_patches.cpp): true 1080p - the screen width and what follows it.
+[[entrypoint.midasm_hook]]
+address = 0x82992694  # `lis r11,-31925`: the clamped width in r5 (before it)
+name = "GowjNativeSceneWidth"
+registers = ["r5"]
+
+[[entrypoint.midasm_hook]]
+address = 0x829926A4  # `li r6,720`: the height passed along with the width (after it)
+name = "GowjNativeCallHeight"
+registers = ["r6"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x829926B8  # `lwz r11,0(r30)`: the stored width, compared with 1280 next (after it)
+name = "GowjNativeWidthCheck"
+registers = ["r11"]
+after_instruction = true
+
 [[entrypoint.midasm_hook]]
 address = 0x82992664  # `li r11,720`: the scene buffer height
 name = "GowjUltrawideSceneHeight"
