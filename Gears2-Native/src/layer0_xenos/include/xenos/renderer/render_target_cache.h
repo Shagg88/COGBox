@@ -253,9 +253,14 @@ class RenderTargetCache {
   uint64_t SlowTiles() const { return slow_tiles_; }
   uint64_t TakenTiles() const { return taken_tiles_; }
   uint64_t BookChanges() const { return book_changes_; }
+  // --gow2_renderer_ownership_targeted: a change of the book ends the fast path only of the targets whose owned tiles
+  // it can have touched, instead of every target's (job 2155: at true 1080p the slow path walks 1632 tiles a claim).
+  void SetTargetedInvalidation(bool on) { targeted_invalidation_ = on; }
+  uint64_t TargetedInvalidations() const { return targeted_invalidations_; }
  private:
   uint64_t fast_hits_ = 0;
-  uint64_t slow_claims_ = 0, slow_tiles_ = 0, taken_tiles_ = 0, book_changes_ = 0;
+  uint64_t slow_claims_ = 0, slow_tiles_ = 0, taken_tiles_ = 0, book_changes_ = 0, targeted_invalidations_ = 0;
+  bool targeted_invalidation_ = false;
   uint32_t next_id_ = 1;
   const std::bitset<edram::kTileCountMax>* trace_tiles_ = nullptr;
   TraceFn trace_fn_;

@@ -295,7 +295,38 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
     }
   }
   flush();
-  if (changed) ++book_epoch_[bi], ++book_changes_;
+  if (changed) {
+    ++book_changes_;
+    if (!targeted_invalidation_) {
+      ++book_epoch_[bi];   // every target's fast path is re-checked (as before)
+    } else if (r1 > r0 && c1 > c0) {
+      // Only the targets whose owned tiles this claim can have touched lose their fast path. The claim's tiles lie in
+      // [first, first + len) on the tile circle (the span from its first tile to its last - wider than the rectangle,
+      // never narrower); a target's owned tiles in the same kind of span. A target whose span does not meet it still
+      // owns every tile it took, with the clear state it left - exactly what its fast path assumes.
+      auto span = [&](const RenderTarget& t, uint32_t tc0, uint32_t tc1, uint32_t tr0, uint32_t tr1, uint32_t limit,
+                      uint32_t* first, uint32_t* len) {
+        const uint32_t lo = tr0 * t.pitch_tiles + tc0;
+        const uint32_t hi = std::min<uint32_t>((tr1 - 1) * t.pitch_tiles + tc1, limit);
+        *first = (t.key.base_tiles + lo) & tile_mask;
+        *len = hi > lo ? hi - lo : 0;
+      };
+      auto inside = [&](uint32_t x, uint32_t start, uint32_t len) { return ((x - start) & tile_mask) < len; };
+      uint32_t first = 0, len = 0;
+      span(target, c0, c1, r0, r1, tile_limit, &first, &len);
+      for (auto& other : targets_) {
+        if (other.get() == &target) continue;
+        RenderTarget::OwnedCache& o2 = other->owned[bi];
+        if (!o2.valid) continue;
+        uint32_t f2 = 0, l2 = 0;
+        span(*other, o2.c0, o2.c1, o2.r0, o2.r1, o2.limit, &f2, &l2);
+        if (len && l2 && (inside(first, f2, l2) || inside(f2, first, len))) {
+          o2.valid = false;
+          ++targeted_invalidations_;
+        }
+      }
+    }
+  }
   if (take_ownership && !clear_known) {
     // Now the owner of all of [c0,c1) x [r0,r1) within the limit.
     oc = {true, book_epoch_[bi], c0, c1, r0, r1, tile_limit};

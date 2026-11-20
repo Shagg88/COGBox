@@ -822,6 +822,10 @@ REXCVAR_DEFINE_INT32(gow2_renderer_resolution_scale, 1, "Gears2",
                      "Stage 7: render at N x the console's resolution on each axis (1-4; 2 = 2560x1440 from 1280x720, "
                      "3 = 3840x2160). Render targets, viewports, scissors and EDRAM transfers are scaled (notes/53). "
                      "0 = auto (\"Match my monitor\"): the smallest N whose image covers the monitor the game is on");
+REXCVAR_DEFINE_BOOL(gow2_renderer_ownership_targeted, false, "Gears2",
+                    "Experiment (job 2155): a change of EDRAM tile ownership re-checks only the targets whose tiles it "
+                    "can have touched, not every target - fewer walks over a target's tiles (the 'ownership' CPU part, "
+                    "which grows with the picture size at true 1080p). Off: as before");
 REXCVAR_DEFINE_BOOL(gow2_renderer_edram_extended, false, "Gears2",
                     "Experiment (true 1080p, Shagg 20 Nov): model 40 MiB of EDRAM in 8192 tiles instead of the console's "
                     "10 MiB in 2048, as Xenia Canary's edram_tile_count = extended - room for a game patched to draw "
@@ -1840,6 +1844,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     const uint32_t scale_threshold = uint32_t(std::max(REXCVAR_GET(gow2_renderer_resolution_scale_threshold), 0));
     rts_ = std::make_unique<rr::RenderTargetCache>(*backend_, REXCVAR_GET(gow2_renderer_d24s8_exact), res_scale_,
                                                    scale_threshold);
+    rts_->SetTargetedInvalidation(REXCVAR_GET(gow2_renderer_ownership_targeted));
+    if (REXCVAR_GET(gow2_renderer_ownership_targeted))
+      REXLOG_INFO("gow2_renderer: ownership fast path - targeted invalidation on (experiment)");
     if (res_scale_ > 1 && scale_threshold) {  // GitHub #105
       std::vector<uint32_t> pitches;
       // Notes/80 s.16: --gow2_pcss=ultra draws Gears 3's shadow maps (pitch 1120, the only target that wide) at the scale.
@@ -14609,7 +14616,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "skipped {:.1f}/frame ({:.2f} Mpx/frame), texture memo hits {:.0f}/frame, fill transfers skipped {:.1f}/frame "
                   "({:.2f} Mpx/frame) + passes {:.1f}/frame, fill-bounded ownership draws {:.1f}/frame (multi-rect {:.1f}), float-constant uploads skipped by generation {:.0f}/frame, compacted {:.0f}/frame ({:.2f} KB/frame not uploaded) | of which blocked "
                   "on our GPU {:.3f} ({} waits) | texture tables reused {} | state calls skipped {} | constant uploads "
-                  "skipped {} | ownership fast path {} (slow claims {}, tiles walked {}, tiles that changed owner {}, book changes {}) | transfer runs {} | alternate rule {} | descriptors {} (ring waits {}) | "
+                  "skipped {} | ownership fast path {} (slow claims {}, tiles walked {}, tiles that changed owner {}, book changes {}, targeted invalidations {}) | transfer runs {} | alternate rule {} | descriptors {} (ring waits {}) | "
                   "pipelines {} (same as the previous draw {}) | upload-ring waits {}",
                   frame_ - uint64_t(log_every_) + 1, frame_, split, total / log_every_,
                   (bs.gpu_ms - gpu_ms_base_) / log_every_, bs.gpu_lists_timed - gpu_lists_base_,
@@ -14629,7 +14636,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   double(stats_.fill_transfers_skipped) / log_every_, double(stats_.fill_px_skipped) / 1e6 / log_every_,
                   double(stats_.fill_passes_skipped) / log_every_, double(stats_.fill_ownership_draws) / log_every_, double(stats_.fill_multi_rect_draws) / log_every_, double(stats_.const_gen_skips) / log_every_, double(stats_.compacted_uploads) / log_every_, double(stats_.compacted_bytes_saved) / 1024.0 / log_every_,
                   (bs.fence_wait_ms - gpu_wait_base_ms_) / log_every_, bs.fence_waits, bs.texture_tables_reused,
-                  bs.state_calls_skipped, bs.constant_uploads_skipped, rts_->FastHits(), rts_->SlowClaims(), rts_->SlowTiles(), rts_->TakenTiles(), rts_->BookChanges(),
+                  bs.state_calls_skipped, bs.constant_uploads_skipped, rts_->FastHits(), rts_->SlowClaims(), rts_->SlowTiles(), rts_->TakenTiles(), rts_->BookChanges(), rts_->TargetedInvalidations(),
                   stats_.transfer_passes,
                   alt_mode_ == 2 ? "always" : "off", bs.descriptors_allocated,
                   bs.descriptor_ring_waits, bs.pipelines, bs.pipeline_memo_hits, bs.ring_waits);
