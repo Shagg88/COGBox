@@ -2,6 +2,7 @@
 # Usage: tools\build.ps1 [-Config RelWithDebInfo|Release|Debug] [-Jobs N]
 # Measures the time of each phase and the lowest free RAM seen while building (R12: size jobs so nothing swaps).
 param([string]$Config = 'RelWithDebInfo', [int]$Jobs = 0, [switch]$KeepGoing, [switch]$DebugSdk, [switch]$Tu6, [string]$CMakeDefs = '')   # -CMakeDefs 'A=ON B=OFF': extra -D options (kept in the CMake cache)
+$Tu6 = $true   # 0.6.6: Title Update 6 is the only version built (the disc version is gone); -Tu6 is kept so old command lines still work
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 $tp = Join-Path $root 'third_party'

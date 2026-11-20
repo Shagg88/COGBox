@@ -295,7 +295,6 @@ Start at = Indítás itt:
 Main menu, or straight into a chapter from its beginning (it opens paused: press A / Start). Your saves are not changed. = Főmenü, vagy közvetlenül egy fejezet elejére (szüneteltetve nyílik meg: nyomd meg az A / Start gombot). A mentéseid nem változnak.
 Game version = Játékverzió
 Title Update (latest) = Title Update (legújabb)
-Disc (original release) = Lemez (eredeti kiadás)
 players = játékos
 2 (split-screen) = 2 (osztott képernyő)
 3 (split-screen) = 3 (osztott képernyő)

@@ -7,6 +7,7 @@
 #   -Layer0Home: build layer 0 from another folder (default: the shared copy in Gears2-Native, see CMakeLists.txt);
 #   -Name: build folder name under build\ (default = Config), so an A/B build doesn't overwrite the normal one.
 param([string]$Config = 'RelWithDebInfo', [int]$Jobs = 0, [switch]$KeepGoing, [switch]$Tu6, [string]$Layer0Home = '', [string]$Name = '')
+$Tu6 = $true   # 0.6.6: Title Update 6 is the only version built (the disc version is gone); -Tu6 is kept so old command lines still work
 . "$PSScriptRoot\env.ps1"
 Use-VsEnv
 if ($Jobs -le 0) { $Jobs = [Environment]::ProcessorCount }

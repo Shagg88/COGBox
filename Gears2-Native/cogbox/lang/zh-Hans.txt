@@ -298,7 +298,6 @@ Start at = 起始位置
 Main menu, or straight into a chapter from its beginning (it opens paused: press A / Start). Your saves are not changed. = 主菜单,或从某一章节开头直接进入(以暂停状态打开:按 A / Start)。你的存档不会被更改。
 Game version = 游戏版本
 Title Update (latest) = 标题更新(最新)
-Disc (original release) = 光盘(原始版本)
 Players = 玩家数
 2 (split-screen) = 2(分屏)
 3 (split-screen) = 3(分屏)

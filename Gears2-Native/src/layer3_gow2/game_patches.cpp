@@ -472,13 +472,7 @@ uint32_t Gow2NativeLines() {
   static const uint32_t lines = [] {
     const int v = REXCVAR_GET(gow2_native_lines);
     if (v <= 720 || REXCVAR_GET(gow2_ultrawide)) return 0u;
-#if defined(GOW2_TU6) && GOW2_TU6
     return uint32_t(v + 7) / 8u * 8u;
-#else
-    // review 20 Nov: the two width hooks are in the TU6 manifest only - on the disc build the height alone would change
-    REXLOG_WARN("gow2_native_lines: Title Update 6 only - ignored on the disc version");
-    return 0u;
-#endif
   }();
   return lines;
 }

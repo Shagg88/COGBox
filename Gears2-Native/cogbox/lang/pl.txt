@@ -298,7 +298,6 @@ Start at = Zacznij od
 Main menu, or straight into a chapter from its beginning (it opens paused: press A / Start). Your saves are not changed. = Menu główne lub prosto do rozdziału od jego początku (otwiera się wstrzymany: naciśnij A / Start). Twoje zapisy nie są zmieniane.
 Game version = Wersja gry
 Title Update (latest) = Aktualizacja tytułu (najnowsza)
-Disc (original release) = Dysk (oryginalne wydanie)
 Players = Gracze
 2 (split-screen) = 2 (podzielony ekran)
 3 (split-screen) = 3 (podzielony ekran)

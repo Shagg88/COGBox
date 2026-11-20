@@ -525,7 +525,7 @@ std::vector<Option> make_options(Game g) {
     // 0.3.0 (Shagg 13:43): no "Start at" chapter option in any game - a level opened by its URL skips the game's own
     // chapter start (checkpoint, scripting), so a chapter could look broken that plays fine from the game's Chapter
     // Select. A player's older saved "Start" value is ignored (below).
-    add(choice("Version", "Game version", Tab::Gameplay, OWN, { "Title Update (latest)", "Disc (original release)" },
+    add(choice("Version", "Game version", Tab::Gameplay, OWN, { "Title Update (latest)", "(no longer offered)" },   // 0.6.6: one version; the option is not shown
                0,   // COGBox (Shagg 19:46): the PGO build is the default - Gears 2's and Gears 3's title-update builds
                     // (the PS1 has G3Version = 1, the disc; Gears 3's chat built both its exes with PGO, job 143)
                "Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: "
@@ -1346,7 +1346,7 @@ std::vector<std::pair<std::string, double>> proton_recommended(Game g, const Env
 Version effective_version(Game g, const Settings& s, const Environment& env) {   // PS1 459
     if (g == Game::Judgment || g == Game::Gears1) return Version::TitleUpdate;   // one build (disc + its title update)
     if (!env.update_ready) return Version::Disc;
-    // Title updates required (0.4.0): an older saved "Disc (original release)" choice is no longer followed.
+    // Title updates required (0.4.0): an older saved choice 1 (the disc version) is no longer followed.
     (void)s;
     return Version::TitleUpdate;
 }

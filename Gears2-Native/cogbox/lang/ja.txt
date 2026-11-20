@@ -298,7 +298,6 @@ Start at = 開始位置
 Main menu, or straight into a chapter from its beginning (it opens paused: press A / Start). Your saves are not changed. = メインメニュー、またはチャプターの冒頭から直接開始します（ポーズ状態で開くので、A / Startを押してください）。セーブは変更されません。
 Game version = ゲームバージョン
 Title Update (latest) = タイトルアップデート（最新）
-Disc (original release) = ディスク（オリジナルリリース）
 Players = プレイヤー数
 2 (split-screen) = 2（画面分割）
 3 (split-screen) = 3（画面分割）

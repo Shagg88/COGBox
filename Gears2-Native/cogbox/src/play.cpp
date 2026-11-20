@@ -263,6 +263,7 @@ static void write_menu_file(App &a, int g, gs::Version ver, const std::string &l
     const std::map<std::string, std::vector<std::string>> live = gs::live_lines(G, ver, a.cur[g], a.env[g]);
     for (const gs::Option &o : gs::options(G)) {
         if (o.kind == gs::Kind::Text) continue;   // 0.4.8: typed in the launcher only (the in-game menu has no text field)
+        if (o.id == "Version") continue;          // 0.6.6: one version (the title update) - nothing to choose
         gs::Availability av = gs::available(o, G, ver, a.cur[g], a.env[g]);
         double v = a.cur[g].has(o.id) ? a.cur[g].f(o.id) : o.def;
         std::vector<std::string> choices = o.id == "Monitor" ? monitor_choices() : o.choices;

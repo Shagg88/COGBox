@@ -55,14 +55,11 @@ endif()
 
 # Game version (notes/24, as Gears 2's notes/63): base = the disc (0.0.0.11, gow3_manifest.toml, generated/default);
 # tu6 = Title Update 6 (0.0.6.11, gow3_manifest_tu6.toml, generated/tu6; tools\build.ps1 -Tu6).
-set(GN_GAME_VERSION "base" CACHE STRING "Game version: base (disc 0.0.0.11) or tu6 (Title Update 6)")
-if(GN_GAME_VERSION STREQUAL "tu6")
-    set(GN_GEN_DIR generated/tu6)
-    set(GN_MANIFEST gow3_manifest_tu6.toml)
-else()
-    set(GN_GEN_DIR generated/default)
-    set(GN_MANIFEST gow3_manifest.toml)
-endif()
+# 0.6.6 (Shagg 20 Nov: "There should be NO DISC VERSION, only TU versions"): Title Update 6 is the only version built.
+# The disc manifest (gow3_manifest.toml) and generated/default are gone; a build folder that cached "base" is moved to tu6.
+set(GN_GAME_VERSION "tu6" CACHE STRING "Game version: tu6 (Title Update 6) - the only one" FORCE)
+set(GN_GEN_DIR generated/tu6)
+set(GN_MANIFEST gow3_manifest_tu6.toml)
 
 # Include entrypoint generated code if codegen has been run.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${GN_GEN_DIR}/sources.cmake")

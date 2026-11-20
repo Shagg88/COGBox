@@ -215,10 +215,9 @@ bool Gow3VoiceCallbackGone(PPCRegister& r3) {
 bool Gow3UltrawideNoConstrain() { return Wide(); }  // jump_address_on_true: the beq at 0x8261BE60 is taken
 
 // ---- Experiment (Shagg, 20 Nov): true 1080p, as Gears 2's --gow2_native_lines ---------------------------------------
-// The same function as Gears 2's sub_82816638 (TU6 sub_82971BC0, disc sub_82960BE8): it makes the screen height 720
-// (`li r11,720`, the Gow3UltrawideSceneHeight site) and the width aspect x 720 clamped to 900..1280 - stored at
-// TU6 0x82971C80 / disc 0x82960CA8 (`stw r11,...(r10)`, below 1280) or, after `li r11,1280` at TU6 0x82971F3C / disc
-// 0x82960F64, at the next instruction. --gow3_native_lines=1080 gives both numbers: 1920x1080. Needs
+// The same function as Gears 2's sub_82816638 (TU6 sub_82971BC0): it makes the screen height 720 (`li r11,720`, the
+// Gow3UltrawideSceneHeight site) and the width aspect x 720 clamped to 900..1280 - stored at 0x82971C80
+// (`stw r11,...(r10)`, below 1280) or, after `li r11,1280` at 0x82971F3C, at the next instruction. --gow3_native_lines=1080 gives both numbers: 1920x1080. Needs
 // --gow2_renderer_edram_extended=true (10 MiB of EDRAM cannot hold 1080p). Not with a wider picture shape
 // (--gow3_ultrawide / --gow3_aspect). NOT RUN YET: written from the generated code, to be proven by a gameplay run.
 REXCVAR_DEFINE_INT32(gow3_native_lines, 0, "Gears3",

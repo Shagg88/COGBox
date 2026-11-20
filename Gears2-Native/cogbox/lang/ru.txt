@@ -302,7 +302,6 @@ Start at = Начать с
 Main menu, or straight into a chapter from its beginning (it opens paused: press A / Start). Your saves are not changed. = Главное меню или сразу в главу с её начала (откроется на паузе: нажмите A / Start). Ваши сохранения не меняются.
 Game version = Версия игры
 Title Update (latest) = Обновление (последнее)
-Disc (original release) = Диск (оригинальный выпуск)
 Players = Игроки
 2 (split-screen) = 2 (разделённый экран)
 3 (split-screen) = 3 (разделённый экран)
