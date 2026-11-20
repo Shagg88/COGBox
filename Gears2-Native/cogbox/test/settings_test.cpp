@@ -180,6 +180,10 @@ const char* const k_builtin[] = {
     "game=0;AdaptiveTriggers=1;rt=adt",           // Gears 2 exe without the weapon table: greyed, not sent
     "game=2;AdaptiveTriggers=1;exe=adt;rt=adt",   // Judgment exe without its own weapon table (Gears 3's needle): not sent
     "game=2;AdaptiveTriggers=1;exe=adtg;rt=adt",  // GitHub #245, Judgment: sent
+    // --gow2_patch_skip_coalesced_check: edited Coalesced (engine .ini) files load without the dirty-disc error (Gears 2 only)
+    "game=0;upd=1;exe=gow2_patch_skip_coalesced_check;SkipCoalescedCheck=1",   // sent
+    "game=0;upd=1;SkipCoalescedCheck=1",                                       // exe without the patch: greyed, not sent
+    "game=1;upd=1;exe=gow2_patch_skip_coalesced_check;SkipCoalescedCheck=1",   // Gears 3: not its patch, not sent
     // GitHub #342: the cheats that are simply on - sent when the exe has them; Gears 3 TU6: all weapons greyed (no cheat manager)
     "game=0;exe=chx;CheatGod=1;CheatWeapons=1;CheatSpeed=2;CheatHud=1;Cheats=1",
     "game=0;exe=chx,chk;Cheats=1",   // the cheat keys with the rewritten description (review r342): --gow2_cheats sent
