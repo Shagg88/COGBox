@@ -191,6 +191,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_skip, false, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_ps_no_alpha_from_swap, 0, "Gears2",
                      "Speed study (picture check): with --gow2_renderer_ps_no_alpha_variant, the variant is used only from "
                      "this swap on - a still scene's screenshots before and after it compare the two paths in one run");
+REXCVAR_DEFINE_BOOL(gow2_renderer_ps_no_colour_variant, false, "Gears2",
+                    "Speed study (opt-in, job 2127: 43 such draws a frame cost 0.38 ms of GPU at 2x): a draw that needs its "
+                    "pixel shader only for the alpha test, kills or depth (no colour target written) uses a variant "
+                    "without colour outputs, so the GPU runs only what feeds those. D3D12 / DXBC shaders; the variants "
+                    "are compiled at first use (not kept across sessions yet)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_ps_no_alpha_variant, false, "Gears2",
                     "Speed study: a draw whose alpha test is off (ALWAYS) uses a variant of its pixel shader without the "
                     "alpha test - no discard instruction, so the GPU keeps early depth rejection (every pixel shader "
@@ -1804,6 +1809,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     cache_->SetTexPostSkip(REXCVAR_GET(gow2_renderer_tex_post_skip));  // speed study
     tex_frac16_ = REXCVAR_GET(gow2_renderer_tex_frac16);
     ps_no_alpha_variant_ = REXCVAR_GET(gow2_renderer_ps_no_alpha_variant);
+    ps_no_colour_variant_ = REXCVAR_GET(gow2_renderer_ps_no_colour_variant);
     front_copy_lean_ = REXCVAR_GET(gow2_renderer_front_copy_lean);
     vertex_watch_min_ = uint64_t(std::clamp(REXCVAR_GET(gow2_renderer_vertex_watch_min_bytes), 64, int32_t(kWatchMinBytes)));
     ps_noat_from_swap_ = uint64_t(std::max(REXCVAR_GET(gow2_renderer_ps_no_alpha_from_swap), 0));
@@ -10269,6 +10275,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ps_memo_variant_ = ps_variant;
     }
     const rr::GuestShader* psg = ps_.dwords ? ps_memo_ : nullptr;
+    bool ps_colourless = false;  // --gow2_renderer_ps_no_colour_variant took this draw's pixel shader (below)
     XENOS_SITE(1);
     // A pipeline takes one bytecode kind: a DXBC vertex shader with an HLSL-path pixel shader (a PCSS replacement, notes/80;
     // a DXBC fallback) uses the vertex shader's DXIL twin, compiled once like any HLSL-path shader.
@@ -10690,6 +10697,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const bool needs_ps = edram_mode == 4 && psg &&
                           (draw_colour || psg->kills || psg->writes_depth || ps.alpha_test.func != rr::CompareFunc::Always ||
                            ps.alpha_test.alpha_to_mask_enable);
+    // Speed study (--gow2_renderer_ps_no_colour_variant): no colour target is written, so the shader runs only for its
+    // alpha test, kills or depth - the variant without colour outputs (bit 1; bit 0 = this draw's no-alpha-test choice).
+    // Not for memexport shaders, alpha-to-coverage (needs the alpha output) or the HLSL-path shaders.
+    if (needs_ps && ps_no_colour_variant_ && !draw_colour && psg->dxbc && !psg->memexport &&
+        !ps.alpha_test.alpha_to_mask_enable) {
+      psg = &cache_->Get(ps_hash, ps_.dwords, ps_.count, false, ps_variant | 2u);
+      ps_colourless = true;
+      ++ps_no_colour_draws_;
+    }
     if (needs_ps) WaitForShader(*psg);
     if (needs_ps && psg->state != rr::ShaderState::kReady) {
       SkipForShaders(psg->state == rr::ShaderState::kPending);
@@ -10981,7 +10997,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     if (backend_->PipelineMisses() != misses_before) {
-      if (pipeline_list_) RecordPipeline(d, vs_hash, d.ps ? ps_hash : 0, tess_n, ps_variant);
+      if (pipeline_list_ && !ps_colourless) RecordPipeline(d, vs_hash, d.ps ? ps_hash : 0, tess_n, ps_variant);  // (not recorded yet)
       if (prebuild_on_ && d.ps) {  // patch 0068: was this new pipeline's pixel shader built ahead from the package?
         ++pb_.new_ps_pipelines;
         if (const auto q = prebuild_queued_hashes_.find(ps_hash); q != prebuild_queued_hashes_.end()) {
@@ -15104,6 +15120,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       occ_backend_refused_base_ = b.occlusion_refused;
       occ_stats_ = OcclusionStats{};
     }
+    if (ps_no_colour_variant_)
+      REXLOG_INFO("gow2_renderer: draws with the pixel shader's variant without colour outputs so far: {}", ps_no_colour_draws_);
     if (front_copy_lean_)
       REXLOG_INFO("gow2_renderer: front-buffer copies kept lean so far: {} (no scaled-memory window copy, no guest write)",
                   front_lean_skips_);
@@ -15263,6 +15281,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool tex_post_affine_ = false;  // job 634
   bool tex_frac16_ = true;        // speed study: --gow2_renderer_tex_frac16
   bool ps_no_alpha_variant_ = false;  // speed study: --gow2_renderer_ps_no_alpha_variant
+  bool ps_no_colour_variant_ = false;  // speed study: --gow2_renderer_ps_no_colour_variant
+  uint64_t ps_no_colour_draws_ = 0;
   uint64_t ps_noat_from_swap_ = 0;  // --gow2_renderer_ps_no_alpha_from_swap
   double occ_last_landed_ms_ = 0;
   uint32_t zpd_poll_tick_ = 0;

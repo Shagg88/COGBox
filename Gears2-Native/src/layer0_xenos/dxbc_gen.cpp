@@ -2858,9 +2858,10 @@ struct Gen {
       a.OpAnd(R(r, kX), S1(r, 0), S1(f, 2));
       a.OpDiscard(true, S1(r, 0));
       }  // speed study: the no-alpha-test variant has no discard here
+      if (!opt.no_color_outputs)  // speed study: the variant for draws with no colour target has no colour outputs
       for (uint32_t i = 0; i < 4; ++i)
         a.OpMul(Dest::O(i), S(Oc(i)), Sys(3).Select(i), opt.clamp_ui_output);
-      if (opt.native_hdr_linear && !opt.native_hdr_filter) {
+      if (!opt.no_color_outputs && opt.native_hdr_linear && !opt.native_hdr_filter) {
         // Same operations as the readable HLSL epilogue: bounded, linear UI;
         // original scene grading extended above white, with a hue-preserving
         // shoulder before the UI blend. No expansion of finished SDR pixels.
@@ -3976,7 +3977,7 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
     for (uint32_t i = 0; i < 16; ++i) d.OpDclInputPS(dx::InterpolationMode::kLinear, Dest::V1D(i));
     d.OpDclInputPSSIV(dx::InterpolationMode::kLinearNoPerspective, Dest::V1D(16), dx::Name::kPosition);
     d.OpDclInputPSSGV(Dest::V1D(17, kX), dx::Name::kIsFrontFace);
-    for (uint32_t i = 0; i < 4; ++i) d.OpDclOutput(Dest::O(i));
+    if (!options.no_color_outputs) for (uint32_t i = 0; i < 4; ++i) d.OpDclOutput(Dest::O(i));
     if (out.writes_depth) d.OpDclOutput(Dest::ODepth());
   }
   d.OpDclTemps(g.max_temp);
@@ -3997,7 +3998,8 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
     for (uint32_t i = 0; i < 16; ++i) isgn.push_back({"TEXCOORD", i, dx::Name::kUndefined, CT::kFloat32, i, kXYZW, kXYZW});
     isgn.push_back({"SV_Position", 0, dx::Name::kPosition, CT::kFloat32, 16, kXYZW, kXYZW});
     isgn.push_back({"SV_IsFrontFace", 0, dx::Name::kIsFrontFace, CT::kUInt32, 17, kX, kX});
-    for (uint32_t i = 0; i < 4; ++i) osgn.push_back({"SV_Target", i, dx::Name::kUndefined, CT::kFloat32, i, kXYZW, 0});
+    if (!options.no_color_outputs)
+      for (uint32_t i = 0; i < 4; ++i) osgn.push_back({"SV_Target", i, dx::Name::kUndefined, CT::kFloat32, i, kXYZW, 0});
     if (out.writes_depth) osgn.push_back({"SV_Depth", 0, dx::Name::kUndefined, CT::kFloat32, UINT32_MAX, kX, 0b1110});
   }
 

@@ -53,6 +53,9 @@ struct HlslOptions {
   // Speed study (pixel shaders): no alpha test in the epilogue (no discard, so early depth rejection stays on). For
   // draws whose alpha test is off; the renderer picks this variant per draw.
   bool no_alpha_test = false;
+  // Speed study (19 Nov, job 2127): a pixel shader drawn with no colour target bound (stencil / depth passes of masked
+  // surfaces) without its colour outputs, so only what feeds the alpha test, kills and depth is left (DXBC path).
+  bool no_color_outputs = false;
   // Float-constant compaction (speed; off by default until a renderer run proves it): when a shader reads no
   // constant relatively and its reads leave a gap of kCompactMinGap+ registers, absolute reads index a compacted
   // array - c[0, float_constants_low) then c[float_constants_high, float_constants) - see Translation.
