@@ -78,7 +78,15 @@ RenderTarget* RenderTargetCache::Get(const RenderTargetKey& key, bool create_sto
   const uint32_t cap = GuestDimensionCap(scale);
   t->scale = scale;
   t->guest_width = std::min<uint32_t>(key.pitch_pixels, cap);
-  t->guest_height = std::min<uint32_t>(tile_rows * rows_per_tile, cap);
+  // Extended EDRAM (job 2155): four times the tiles made every target four times as tall (1920x5472 for the 1080p
+  // scene, 960x8192) - graphics memory for rows no game draws. Keep the console-sized height (what the same pitch gets
+  // with 2048 tiles), and at least 2048 lines so a 1920x1080 scene and anything up to the console's largest surface fit.
+  uint32_t rows_px = tile_rows * rows_per_tile;
+  if (edram::Tiles() > edram::kTileCount) {
+    const uint32_t console_rows = (edram::kTileCount + t->pitch_tiles - 1) / t->pitch_tiles * rows_per_tile;
+    rows_px = std::min(rows_px, std::max<uint32_t>(console_rows, 2048u));
+  }
+  t->guest_height = std::min<uint32_t>(rows_px, cap);
   t->width = t->guest_width * scale;
   t->height = t->guest_height * scale;
   if (create_storage && !CreateStorage(*t)) return nullptr;
