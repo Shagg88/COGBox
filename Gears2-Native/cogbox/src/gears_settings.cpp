@@ -259,13 +259,13 @@ std::vector<Option> make_options(Game g) {
     static const char* const kVkTip =
                "Vulkan is a full alternative to DirectX 12, and the usual choice on Steam Deck / Linux. "
                "\n"
-               "On Vulkan, DLSS / XeSS are not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
+               "On Vulkan, DLSS is not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
                "frame generation is AMD FSR only (experimental), "
                "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
     static const char* const kVkTipExp =
                "Experimental in this game - some things still look wrong on Vulkan (in Gears 3, black eyes); DirectX 12 is "
                "the tested renderer.\n"
-               "On Vulkan, DLSS / XeSS are not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
+               "On Vulkan, DLSS is not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
                "frame generation is AMD FSR only (experimental), "
                "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
     add(choice("Api", "Graphics API", Tab::Graphics, PG, { "DirectX 12 (recommended)", vkExp ? "Vulkan (experimental)" : "Vulkan" }, 0,
@@ -311,7 +311,7 @@ std::vector<Option> make_options(Game g) {
                  "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: AMD's temporal anti-aliasing / upscaler for the 3D scene - FSR 4 on RX 6000 or "
                "newer, FSR 3.1 otherwise (any graphics card), DirectX 12 or Vulkan. DLSS: the same on "
-               "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.\nSMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now.", 346), "", "", true);
+               "NVIDIA RTX cards.\nSMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now.", 346), "", "", true);
     // Review (fsr049): FSR on Vulkan is opt-in while it is new - without this box, FSR on Vulkan becomes SMAA as before.
     add(make("FsrVulkan", "FSR on Vulkan (experimental)", Tab::Graphics, Kind::Bool, PG, 0,
              "With Vulkan as the Graphics API: use AMD FSR (AMD FSR SDK 2.4 Vulkan upscaler) instead of SMAA when "
@@ -319,7 +319,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("SceneMode", "Scene resolution", Tab::Graphics, SH,
                { "Native (same as render resolution)", "Quality (scene at 2/3)", "Performance (scene at 1/2)",
                  "Ultra performance (scene at 1/3)" }, 0,
-               "With FSR, DLSS or XeSS: draw the 3D scene at a lower resolution and let the upscaler fill in the detail - more "
+               "With FSR or DLSS: draw the 3D scene at a lower resolution and let the upscaler fill in the detail - more "
                "frames per second, a little softer. HUD and menus stay at the full resolution.\nPerformance needs render "
                "resolution 2x (1440p) or 4x; Quality and Ultra performance need 3x (4K).", 351), "scenescale", "AAMode>=2");
     // 0.4.9: the DLSS Super Resolution model (renderer/dlss_upscaler.cpp --gow2_dlss_preset; NGX render-preset hints,
@@ -347,10 +347,7 @@ std::vector<Option> make_options(Game g) {
                "(experimental) characters can ghost slightly in dark areas.\nNVIDIA DLSS frame generation "
                "(RTX 40/50 only, experimental): 2x, 3x, 4x or 6x the frames the game draws (3x / 4x / 6x / dynamic: RTX 50; "
                "dynamic picks the multiplier to match your monitor); needs NVIDIA's "
-               "Streamline files next to the game. If it can't run, the game uses AMD's instead (or none).\nIntel XeSS frame "
-               "generation (experimental, untested): 2x, with Intel's Xe Low Latency. Made for Intel Arc graphics cards; Intel "
-               "also allows it on other DirectX 12 cards (NVIDIA RTX 30 / Radeon RX 6000 or newer recommended). If it can't "
-               "run, the game uses AMD's instead (or none).", 356), "framegen");
+               "Streamline files next to the game. If it can't run, the game uses AMD's instead (or none).", 356), "framegen");
     // Aniso: no PS1 tooltip; text from 59-how-to-play ("16x anisotropic filtering").
     add(make("Aniso", "Sharper textures (16x anisotropic)", Tab::Graphics, Kind::Bool, OWN, g == Game::Gears2 ? 1 : 0,
              "16x anisotropic filtering: textures seen at an angle (floors, walls) stay sharp.", 357), "aniso", "", true);
@@ -1244,7 +1241,7 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         return "On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there.";
     if (o.id == "Api" && env.wine && (g == Game::Gears3 || g == Game::Judgment))   // Shagg 3 Nov: Vulkan is the Proton path
         base = "On Steam Deck / Linux (Proton) Vulkan is the usual choice - DirectX 12 can crash there.\n"
-               "On Vulkan, DLSS / XeSS are not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
+               "On Vulkan, DLSS is not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
                "frame generation is AMD FSR only (experimental), "
                "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
     if (o.id == "AO")   // notes/81
@@ -1256,7 +1253,7 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
     if (o.id == "AO" && g == Game::Gears1)   // notes/80 s.14
         base += "\nGears 1: the game has no AO of its own - XeGTAO and CACAO add it under the level's lighting, so lit areas keep their light. Off and Game's own are the same here.";
     if (o.id == "Ssil") {
-        base += "\nWith DLSS, FSR, XeSS or SMAA T2x it is smoother: each frame's bounce is averaged with the frames before, and "
+        base += "\nWith DLSS, FSR or SMAA T2x it is smoother: each frame's bounce is averaged with the frames before, and "
                 "light can bounce more than once.";
         if (g == Game::Gears3)
             base += "\nGears 3 draws its scene in low dynamic range, so the bounce from bright lights is gentler than in the other games.";

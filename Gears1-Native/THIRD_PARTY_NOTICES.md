@@ -17,7 +17,6 @@ committed (`third_party/` is ignored; `notes/65-broad-hardware.md` item 6):
 |---|---|---|
 | NVIDIA DLSS SDK (`third_party/dlss-sdk`; `nvngx_dlss.dll` at run time) | DLSS / DLAA | NVIDIA RTX SDKs License (binary redistribution inside an application; the SDK must not be made subject to an open-source licence, so it stays a separate binary next to our MIT code) |
 | AMD FidelityFX SDK (`third_party/fidelityfx-sdk`; `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll`) | FSR | The `ffx_api` headers we compile against: MIT (AMD). The signed DLLs: AMD's FidelityFX licence (`docs/license.md`) - redistribution in binary form only, no reverse engineering, and its copyright notice, permission notice and disclaimers reproduced (below) |
-| Intel XeSS SDK (`third_party/xess-sdk`; `libxess.dll`) | XeSS | Intel Simplified Software License (October 2022) - binary-only redistribution without modification, notice reproduced (below) |
 | NVIDIA Streamline SDK (`third_party/streamline-sdk`) | planned: DLSS frame generation, Reflex, DLSS 5 (notes/65) | Its own source: MIT (NVIDIA). Its signed DLLs come from the release package; the DLSS feature DLLs it loads keep the NVIDIA RTX SDKs License. Listed in full when integrated |
 | SPIRV-Tools (Khronos Group; built from the rexglue SDK's vendored source, `third_party/rexglue-sdk/thirdparty/spirv-tools`) | Vulkan: the optimiser run over each shader after it is converted to SPIR-V (0.6.1) | Apache-2.0 (`LICENSE` in that folder; shipped with the SDK licences) |
 
@@ -54,24 +53,6 @@ INTELLECTUAL PROPERTY RIGHT EVEN IF COPYRIGHT HOLDER AND ITS AUTHORIZED REPRESEN
 POSSIBILITY OF SUCH DAMAGES. IN NO EVENT SHALL COPYRIGHT HOLDER OR ITS AUTHORIZED REPRESENTATIVES TOTAL LIABILITY FOR
 ALL DAMAGES, LOSSES, AND CAUSES OF ACTION (WHETHER IN CONTRACT, TORT (INCLUDING NEGLIGENCE) OR OTHERWISE) EXCEED THE
 AMOUNT OF US$10.
-
-### Intel XeSS SDK (binaries)
-
-The full text is `LICENSE.txt` in the SDK; a release copies it next to `libxess.dll`. Its notice:
-
-Intel Simplified Software License (Version October 2022)
-
-Intel(R) Xe Super Sampling (XeSS) SDK: Copyright (C) 2025 Intel Corporation
-
-Use and Redistribution. You may use and redistribute the software, which is provided in binary form only, (the
-"Software"), without modification, provided the following conditions are met:
-
-* Redistributions must reproduce the above copyright notice and these terms of use in the Software and in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Intel nor the names of its suppliers may be used to endorse or promote products derived from
-  this Software without specific prior written permission.
-* No reverse engineering, decompilation, or disassembly of the Software is permitted, nor any modification or
-  alteration of the Software or its operation at any time, including during execution.
 
 ## SMAA (src/layer0_xenos/renderer/smaa/)
 

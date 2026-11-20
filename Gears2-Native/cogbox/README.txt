@@ -373,7 +373,7 @@ New in 0.4.0 - please read
 
 
 Graphics API: DirectX 12 is the default. Vulkan is on each
-game's Graphics tab for testing; FSR / DLSS / XeSS and DLSS frame generation are DirectX 12 only;
+game's Graphics tab for testing; FSR / DLSS and DLSS frame generation are DirectX 12 only;
 AMD FSR frame generation also works on Vulkan (experimental). If something looks wrong on Vulkan,
 please send a problem report.
 
@@ -523,7 +523,7 @@ COGBox and the ports' own code are under the MIT licence (LICENSE.txt). The libr
 vendor upscalers included (SDL3, Dear ImGui, miniz, stb, PsychoV35 and RenoDX's HDR grading (MIT, in the Gears 2 and Gears 3
 licenses folders), FFmpeg's XMA decoder (LGPL 2.1+, licenses\FFmpeg-NOTICE.txt), the
 rexglue SDK and Xenia code (BSD-3, licenses\Xenia-LICENSE.txt), modcore (MIT), AMD FidelityFX and Anti-Lag 2, NVIDIA DLSS,
-DLSS Frame Generation, Streamline and Reflex, Intel XeSS, XeSS Frame Generation and XeLL, the DirectX 12 Agility SDK and
+DLSS Frame Generation, Streamline and Reflex, the DirectX 12 Agility SDK and
 the DirectX Shader Compiler (licenses\Microsoft-DirectX-redist-NOTICE.txt)) come under their own terms, in the licenses
 folder (NVIDIA's: licenses\NVIDIA-Streamline-DLSS-G-NOTICE.txt). The vendor and Microsoft files are not under COGBox's
 MIT licence. This product uses the NVIDIA DLSS SDK, the NVIDIA
