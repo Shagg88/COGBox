@@ -90,7 +90,7 @@ else {
   if (-not ($problems -match 'FFmpeg|av[a-z]+-\d+\.dll')) { Write-Host "  library music: CogBox.exe loads $($wantFf -join ' + '), both beside it" } }
 # 0.2.2 (Shagg: developer tools never ship): no profiler, debug runtime, symbols or test program in any port folder, and
 # no shipped program may load Tracy (TracyClient*.dll opens a network port; antivirus flags it, GitHub #24).
-# 0.6.6: Intel XeSS and XeSS frame generation are dropped - their DLLs left in an old build folder must not ship
+# 0.6.6: Intel's upscaler and frame generation are dropped - their DLLs (the first three names) left in an old build folder must not ship
 $deny = '^(libxess\.dll|libxess_fg\.dll|libxell\.dll|TracyClient.*\.dll|rexruntimerd\.dll|rexgpu-.*rd\.dll|.*\.pdb|.*\.ilk|.*\.exp|.*\.lib|gn_tests\.exe|.*\.pre.*|.*\.old-.*|.*\.bak)$'
 foreach ($p in $ports) {
   if (-not (Test-Path $p.from)) { continue }
@@ -244,7 +244,7 @@ foreach ($sdk in $sdks) {
   $dir = "$docs\Gears2-Native\third_party\$sdk"
   if (-not (Test-Path $dir)) { Write-Host "note: SDK folder not found: $sdk"; continue }
   $found = @(Get-ChildItem -LiteralPath $dir -File -Recurse -Depth 2 -ErrorAction SilentlyContinue |
-             Where-Object { $_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE)' -or $_.Name -match '^license\.(md|txt)$' -or $_.Name -match 'license.*\.(md|txt|rtf|pdf)$' -or $_.Name -match '^third-party-programs\.txt$' } |   # xefg049: Intel's third-party-programs.txt (its LICENSE.txt points to it)
+             Where-Object { $_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE)' -or $_.Name -match '^license\.(md|txt)$' -or $_.Name -match 'license.*\.(md|txt|rtf|pdf)$' } |
              # 0.2.2: only licences, and only of what ships - not a licence checker's config, the test framework, the
              # build tools or the profiler (none of them is in the zip)
              Where-Object { $_.Extension -ne '.cfg' -and $_.FullName -notmatch '\\thirdparty\\(catch2|tracy)\\' -and $_.FullName -notmatch '\\tools\\binutils\\' })
@@ -261,7 +261,7 @@ foreach ($sdk in $sdks) {
 }
 # The upscaler and shader-compiler DLLs that are byte-identical in every build go in once, in shared\ (Shagg 20:27,
 # option 1); COGBox puts that folder on each game's PATH and passes --gow2_dxc_dir. Checked in job 487 (all three games
-# start with FSR and with XeSS from this layout).
+# start with FSR from this layout).
 # 0.4.9 (shared049, docs/plan-049-shared-dlls.md): also NVIDIA DLSS (nvngx_dlss.dll: the game's NGX looks beside the exe,
 # then in shared\), dxil.dll (DXC loads it beside dxcompiler.dll), the AMD Vulkan DLLs (by name: shared\ is on the PATH,
 # else gn_shared_dlls loads the loader from shared\) and NVIDIA Streamline (the game takes the whole set from shared\).

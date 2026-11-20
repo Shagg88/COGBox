@@ -275,11 +275,11 @@ static void write_menu_file(App &a, int g, gs::Version ver, const std::string &l
         if (!choices.empty()) {
             t += "choices=";
             // 0.6.6: a choice that is no longer offered keeps its place (the value is the index) but goes out empty -
-            // the in-game menu leaves empty choices out of its list (AO: Default / On; no XeSS; no Match my monitor)
+            // the in-game menu leaves empty choices out of its list (AO: Default / On; no dropped upscaler; no Match my monitor)
             auto offered = [&](size_t i) {
                 if (o.id == "AO") return i == 1 || i == 2;
                 if (o.id == "AAMode" || o.id == "Resolution") return i != 4;
-                if (o.id == "FrameGen") return (int)i != gs::k_fgXefg;   // review 20 Nov: Intel XeSS frame generation too
+                if (o.id == "FrameGen") return (int)i != gs::k_fgDropped;   // review 20 Nov: the dropped frame generation too
                 return true;
             };
             for (size_t i = 0; i < choices.size(); i++)
@@ -522,9 +522,9 @@ void play_start(App &a, int g, bool prepare)
     write_file(join(logDir, "args.txt"), argText);
 
     // The upscaler and shader-compiler DLLs every game uses are kept once, in <COGBox>\shared (Shagg 20:27, option 1):
-    // the game gets that folder at the front of its PATH (FSR's loader and XeSS are loaded by name) and --gow2_dxc_dir
+    // the game gets that folder at the front of its PATH (FSR's loader is loaded by name) and --gow2_dxc_dir
     // (the renderer loads dxcompiler.dll from there). DLSS (NGX looks only beside the exe), dxil.dll and the runtime
-    // stay in each game folder. Checked by starting every game with FSR and XeSS from that layout (job 487).
+    // stay in each game folder. Checked by starting every game with FSR from that layout (job 487).
     std::wstring cmd = L"\"" + widen(exe) + L"\"";
     for (auto &s : args) cmd += L" " + widen(s);
     std::wstring envBlock;   // this process's environment with PATH = shared;PATH (empty = inherit as is)
@@ -818,7 +818,7 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
         // Vulkan: experimental again in Gears 3 and Judgment (Shagg 3 Nov), not in Gears 1 / 2
         if (cs.i("Api") == 1 && (g == G_GEARS3 || g == G_JUDGMENT) && !a.wine) exp += "Vulkan, ";   // (the Proton path is Vulkan)
         // DLSS experimental again (Shagg 3 Nov: flickering in Gears 1 #147 and Judgment, smearing in Gears 3 #150); SMAA T2x is not
-        if (cs.i("AAMode") >= 2 && cs.i("AAMode") <= 4) exp += std::string(cs.i("AAMode") == 2 ? "FSR" : cs.i("AAMode") == 3 ? "DLSS" : "XeSS") + ", ";
+        if (cs.i("AAMode") >= 2 && cs.i("AAMode") <= 3) exp += std::string(cs.i("AAMode") == 2 ? "FSR" : "DLSS") + ", ";
         if (cs.i("FrameGen") > 0) exp += "frame generation, ";
         if (cs.b("HDR")) exp += "HDR, ";   // 0.4.6: experimental in all four games
         sys += "Experimental settings on: " + (exp.empty() ? std::string("none") : exp.substr(0, exp.size() - 2)) + "\r\n\r\n";

@@ -65,7 +65,6 @@ std::string rt_needle(const std::string& a) {
 std::string file_name(const std::string& a) {
     if (a == "fsr") return "amd_fidelityfx_loader_dx12.dll";
     if (a == "dlss") return "nvngx_dlss.dll";
-    if (a == "xess") return "libxess.dll";
     if (a == "fgdll") return "amd_fidelityfx_framegeneration_dx12.dll";
     return a;
 }
@@ -161,7 +160,7 @@ const char* const k_builtin[] = {
     "game=1;upd=1;Version=0;Cheats=1;Mutators=1;Resolution=4;exe=fif;FrameCap=2",
     "game=1;upd=1;Version=1;Cheats=1;Mutators=1;Resolution=4;exe=fif,aspect,mute;Mute=1;FrameCap=2;Vsync=1;rt=vs;hz=0",
     "game=1;FrameCap=2;Vsync=1;rt=vs;hz=144;Ultrawide=1;Resolution=4;FpsMode=3;Aniso=1;Trilinear=0;MipFade=0;Shake=1;DrawDist=1;SkipLogos=1",
-    "game=1;FrameCap=4;AAMode=4;files=xess;exe=ups,fif;SceneMode=1;Resolution=2;Players=3;LowLag=0;rt=lat",
+    "game=1;FrameCap=4;AAMode=2;files=fsr;exe=ups,fif;SceneMode=1;Resolution=2;Players=3;LowLag=0;rt=lat",
     "game=1;FrameCap=7;Vsync=1;rt=vs;hz=240;FrameGen=1;exe=fg;files=fgdll;Fov=80",
     "game=1;AdaptiveTriggers=1;exe=adt;rt=adt",   // GitHub #245: sent
     "game=1;AdaptiveTriggers=1;exe=adt",          // runtime without patch 98: greyed, not sent
@@ -236,7 +235,7 @@ std::string random_case(std::mt19937& r) {
     o << ";rt="; sep.clear();
     for (const char* x : { "vs", "lat" }) if (pick(2)) { o << sep << x; sep = ","; }
     o << ";files="; sep.clear();
-    for (const char* x : { "fsr", "dlss", "xess", "fgdll" }) if (pick(2)) { o << sep << x; sep = ","; }
+    for (const char* x : { "fsr", "dlss", "fgdll" }) if (pick(2)) { o << sep << x; sep = ","; }
     if (pick(5) == 0) o << ";extra=--a=1|#x|  --b={LOG}  ";
     for (const Option& op : options(static_cast<Game>(g))) {
         if (pick(3) == 0) continue;   // leave some at the default
@@ -330,13 +329,13 @@ int summary() {
             const Settings s2 = st2.view(Game::Gears2, e2);
             if (s2.i("Resolution") != c[2]) { std::cout << "FAIL match-my-monitor migration " << c[0] << "x" << c[1] << ": " << s2.i("Resolution") << "\n"; ++fails; }
         }
-        // 0.6.6: XeSS (AAMode 4) frame generation (FrameGen 7) are dropped - saved ones become SMAA / AMD's
+        // 0.6.6: the dropped upscaler (AAMode 4) and frame generation (FrameGen 7) - saved ones become SMAA / AMD's
         {
             Environment e3; e3.update_ready = true;
             Store st3; st3.top["AAMode"] = 4; st3.top["FrameGen"] = 7;
             const Settings s3 = st3.view(Game::Gears2, e3);
-            if (s3.i("AAMode") != 1 || s3.i("FrameGen") != 1) { std::cout << "FAIL XeSS migration: AAMode " << s3.i("AAMode") << " FrameGen " << s3.i("FrameGen") << "\n"; ++fails; }
-            if (!framegen_choice_hidden(k_fgXefg, e3)) { std::cout << "FAIL XeSS frame generation still listed\n"; ++fails; }
+            if (s3.i("AAMode") != 1 || s3.i("FrameGen") != 1) { std::cout << "FAIL dropped-upscaler migration: AAMode " << s3.i("AAMode") << " FrameGen " << s3.i("FrameGen") << "\n"; ++fails; }
+            if (!framegen_choice_hidden(k_fgDropped, e3)) { std::cout << "FAIL dropped frame generation still listed\n"; ++fails; }
         }
         // 0.6.6: Ambient occlusion is Default (1) / On (2) - a saved Off becomes Default, Ultra / CACAO become On
         for (const auto& c : { std::array<int, 2>{ 0, 1 }, std::array<int, 2>{ 1, 1 }, std::array<int, 2>{ 2, 2 }, std::array<int, 2>{ 3, 2 }, std::array<int, 2>{ 4, 2 } }) {

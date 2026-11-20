@@ -226,7 +226,7 @@ int main()
             CHECK(!gs::wine_choice_available(*fs_, 2, deck).ok && gs::wine_choice_available(*fs_, 1, deck).ok);
             CHECK(!gs::wine_choice_available(*aa, 3, deck).ok && gs::wine_choice_available(*aa, 3, nv).ok);
             CHECK(gs::wine_choice_available(*aa, 2, deck).ok);
-            CHECK(!gs::wine_choice_available(*fg, 2, nv).ok && !gs::wine_choice_available(*fg, gs::k_fgXefg, nv).ok);
+            CHECK(!gs::wine_choice_available(*fg, 2, nv).ok && !gs::wine_choice_available(*fg, gs::k_fgDropped, nv).ok);
             CHECK(gs::wine_choice_available(*fg, 1, deck).ok && gs::wine_choice_available(*fg, 0, deck).ok);
             CHECK(!gs::wine_choice_available(*fs_, 2, deck).why.empty());
         }

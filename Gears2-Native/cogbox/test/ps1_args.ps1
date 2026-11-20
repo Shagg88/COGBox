@@ -76,7 +76,7 @@ $script:tips = @{}
 $alias = @{ fif = 'gow2_renderer_frames_in_flight'; ups = 'gow2_upscale_mode'; fg = 'gow2_frame_generation'; reflex = 'gow2_reflex'
             al2 = 'gow2_antilag2'; aspect = 'gow3_aspect'; edits = "'file|section|~=old>new'"; avx = 'gn_cpu_level=x86-64-v'
             vs = 'd3d12_present_vsync'; lat = 'd3d12_max_frame_latency'
-            fsr = 'amd_fidelityfx_loader_dx12.dll'; dlss = 'nvngx_dlss.dll'; xess = 'libxess.dll'; fgdll = 'amd_fidelityfx_framegeneration_dx12.dll' }
+            fsr = 'amd_fidelityfx_loader_dx12.dll'; dlss = 'nvngx_dlss.dll'; fgdll = 'amd_fidelityfx_framegeneration_dx12.dll' }
 $envKeys = 'game', 'upd', 'hz', 'screens', 'gpus', 'extra', 'exe', 'rt', 'files', 'rtfile'
 # Case ids of the per-game boxes -> the PS1's $s keys
 $ownKeys = @{ Start = @('StartG2', 'StartG3', 'StartGJ'); Version = @('Version', 'G3Version', $null); Aniso = @('Aniso', 'G3Aniso', 'GJAniso')

@@ -88,7 +88,7 @@ std::vector<std::string> start_names(Game g) {
     }
     return v;
 }
-const char* const k_aaNames[6] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS", "SMAA T2x" };   // PS1 150; 5: notes/80 s.7
+const char* const k_aaNames[6] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "", "SMAA T2x" };   // 4: a dropped upscaler (never chosen: Store::view)   // PS1 150; 5: notes/80 s.7
 // Job 638: saved as "FrameCap", in order; the old "Fps" (30 / 60 / 120 / Unlimited) is read once and moved over
 // (Store::load_ini). Shagg: 30, 40, 45, 60, 90, 120, 144, 165, 180, Unlimited (list 2; 40 / 45 for the Steam Deck; list 1 had no 40 / 180 -
 // files without "FrameCapList=2" are moved over once in Store::load_ini).
@@ -307,7 +307,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
-    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (FSR 4 on RX 6000 or newer, FSR 3.1 otherwise)", "DLSS (NVIDIA RTX, experimental)", "XeSS (highly experimental)",   /* fsr049 */   /* 0.4.7: DLSS tested clean in G2/G3/GJ; 0.6.4 (Shagg 16 Nov, GitHub #345): experimental again - scene scaling in Gears 3 / Judgment */
+    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (FSR 4 on RX 6000 or newer, FSR 3.1 otherwise)", "DLSS (NVIDIA RTX, experimental)", "(no longer offered)",   /* fsr049 */   /* 0.4.7: DLSS tested clean in G2/G3/GJ; 0.6.4 (Shagg 16 Nov, GitHub #345): experimental again - scene scaling in Gears 3 / Judgment */
                  "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: AMD's temporal anti-aliasing / upscaler for the 3D scene - FSR 4 on RX 6000 or "
                "newer, FSR 3.1 otherwise (any graphics card), DirectX 12 or Vulkan. DLSS: the same on "
@@ -341,7 +341,7 @@ std::vector<Option> make_options(Game g) {
                  "NVIDIA DLSS frame generation 3x (RTX 50, experimental)", "NVIDIA DLSS frame generation 4x (RTX 50, experimental)",
                  "NVIDIA DLSS frame generation dynamic (RTX 50, experimental)",
                  "NVIDIA DLSS frame generation 6x (RTX 50, experimental)",   /* 0.4.9: DLSS 4.5's 6x, after the others so saved choices keep their meaning */
-                 "Intel XeSS frame generation (experimental)" }, 0,   /* 0.4.9 (xefg049): 7, Intel XeSS-FG 2x + XeLL */
+                 "(no longer offered)" }, 0,   /* 7: a dropped choice, kept so the others keep their numbers */
                "Shows a generated frame between each two the game draws: smoother motion on a fast monitor, about one frame more "
                "input lag. Works best when the game already runs at 60 fps or more. Any DirectX 12 graphics card. In Gears 1 "
                "(experimental) characters can ghost slightly in dark areas.\nNVIDIA DLSS frame generation "
@@ -730,14 +730,8 @@ bool dlss_fg_present(const Environment& env) {
     return true;
 }
 
-// 0.4.9 (xefg049): Intel XeSS frame generation - the exe was built with it (a log line only GN_HAVE_XEFG builds have)
-// and Intel's two DLLs are next to it (the build copies them from the XeSS 3 SDK)
-bool xefg_present(const Environment& env) {
-    return cap_exe(env, "XeSS-FG swap chain made") && cap_file(env, "libxess_fg.dll") && cap_file(env, "libxell.dll");
-}
-
 bool framegen_choice_hidden(int index, const Environment& env) {
-    if (index == k_fgXefg) return true;   // 0.6.6 (Shagg 20 Nov): Intel XeSS frame generation is dropped - never listed
+    if (index == k_fgDropped) return true;   // 0.6.6: a dropped choice - never listed
     return framegen_is_dlss(index) && !dlss_fg_present(env);
 }
 
@@ -764,13 +758,13 @@ Availability framegen_choice_available(int index, const Environment& env, bool v
     // controls, and the game ended (0xC0000409) inside AMD's library as the frame-generation context was made. Frame
     // generation needs spare GPU time and video memory that such graphics do not have (AMD lists RX 5000 and up), so
     // on Windows it is not offered below 3.5 GB of the card's own memory. Unknown size (0) and Proton / Wine (the
-    // Steam Deck runs it, notes/83) are left alone; DLSS and XeSS have their own hardware checks.
+    // Steam Deck runs it, notes/83) are left alone; DLSS has its own hardware check.
     if (index == 1 && !env.wine && env.vram_mb && env.vram_mb < 3500) {
         a.ok = false;
         a.why = "Needs a graphics card with 4 GB or more of its own video memory.";
         return a;
     }
-    if (vulkan) {   // notes/83: AMD FSR frame generation only (DLSS-G and XeSS-FG are DirectX 12 only); experimental
+    if (vulkan) {   // notes/83: AMD FSR frame generation only (DLSS-G is DirectX 12 only); experimental
         if (index >= 2) { a.ok = false; a.why = "DirectX 12 only."; }
         else if (index == 1 && (!cap_file(env, "amd_fidelityfx_framegeneration_vk.dll") ||
                                 !cap_file(env, "amd_fidelityfx_loader_vk.dll"))) {
@@ -788,14 +782,8 @@ Availability framegen_choice_available(int index, const Environment& env, bool v
     if (index == 1 && !cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll")) {
         a.ok = false;
         a.why = "This build has no AMD frame generation files.";
-    } else if (index == k_fgXefg) {
-        // Intel: XeSS-FG runs on Intel Arc (discrete and integrated) and, since SDK 2.1.1, on other vendors' cards with
-        // Shader Model 6.4 (the runtime checks that and falls back). Older Intel graphics (UHD / Iris Xe) is not listed
-        // by Intel - greyed. Untested by us on every card (no Intel GPU here): experimental.
-        const std::string gpu = gpu_main(env);
-        if (!xefg_present(env)) { a.ok = false; a.why = "This build has no Intel XeSS frame generation files."; }
-        else if (env.wine) { a.ok = false; a.why = "Not under Proton / Wine."; }
-        else if (icase_search(gpu, "Intel") && !icase_search(gpu, "Arc")) { a.ok = false; a.why = "Needs an Intel Arc graphics card (or another make's DirectX 12 card)."; }
+    } else if (index == k_fgDropped) {
+        a.ok = false; a.why = "No longer offered.";
     } else if (framegen_is_dlss(index)) {
         const std::string gpu = gpu_main(env);
         const bool rtx50 = icase_search(gpu, "RTX ?50[0-9]0|RTX PRO [0-9]+ Blackwell");
@@ -989,8 +977,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_file(env, "nvngx_dlss.dll")) return no(not_yet(gi, "this build has no DLSS file"));
     } else if (f == "framegen") {
         if (!cap_exe(env, "gow2_frame_generation")) return no(not_yet(gi, "needs its next build"));
-        if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll") && !dlss_fg_present(env) && !xefg_present(env))
-            return no(not_yet(gi, "this build has no AMD, NVIDIA or Intel frame generation files"));
+        if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll") && !dlss_fg_present(env))
+            return no(not_yet(gi, "this build has no AMD or NVIDIA frame generation files"));
     } else if (f == "mute") {
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "ao") {   // notes/80: Gears 2 and Gears 3 (s.9); notes/81: Judgment, with the fog anchor its exe sets; Gears 1 (s.14)
@@ -1326,9 +1314,6 @@ Availability wine_choice_available(const Option& o, int index, const Environment
     } else if (o.id == "FrameGen" && framegen_is_dlss(index)) {
         a.ok = false;
         a.why = "Not under Proton / Wine in COGBox: NVIDIA DLSS frame generation needs NVIDIA's driver, DirectX 12 and Streamline, untested on Linux.";
-    } else if (o.id == "FrameGen" && index == k_fgXefg) {
-        a.ok = false;
-        a.why = "Not under Proton / Wine.";
     } else if (env.mac && ((o.id == "Api" && index == 1) || (o.id == "WineApi" && index == 1))) {
         // independent review (r4) bug 1: on a Mac Vulkan can't start (CrossOver offers Vulkan 1.2, the renderer needs 1.3,
         // GitHub #36 / #40), yet it could be picked - or arrive in a settings.ini copied from Windows
@@ -1523,11 +1508,11 @@ Settings Store::view(Game g, const Environment& env) const {
     s.set("Version", static_cast<int>(effective_version(g, s, env)));   // PS1 459
     // 0.6.6: "Match my monitor" (4) is gone - a saved 4 is the whole-number scale it picked on this screen (1x-4x)
     if (s.i("Resolution") == 4) s.set("Resolution", std::clamp(expected_render_scale(g, s, env), 1, 4) - 1);
-    // 0.6.6 (Shagg 20 Nov: "drop XeSS and XeSS generation"): the choices keep their numbers so the others keep their
-    // meaning, but they are no longer offered; a saved XeSS becomes SMAA, a saved XeSS frame generation AMD's (what the
+    // 0.6.6 (Shagg 20 Nov): the dropped upscaler (AAMode 4) and its frame generation (FrameGen 7) keep their numbers so the others keep their
+    // meaning, but they are no longer offered; a saved 4 becomes SMAA, a saved frame generation 7 AMD's (what the
     // game fell back to when Intel's could not run).
     if (s.i("AAMode") == 4) s.set("AAMode", 1);
-    if (s.i("FrameGen") == k_fgXefg) s.set("FrameGen", 1);
+    if (s.i("FrameGen") == k_fgDropped) s.set("FrameGen", 1);
     // 0.6.6: Ambient occlusion is Default / On - a saved Off becomes Default, a saved Ultra or CACAO becomes On
     if (s.i("AO") == 0) s.set("AO", 1);
     if (s.i("AO") >= 3) s.set("AO", 2);
@@ -1812,7 +1797,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         bool hasRtx = false;
         for (const std::string& n : gpus) if (icase_search(n, "RTX")) hasRtx = true;
         if (aa == 3 && !hasRtx && !gpus.empty()) { notes.push_back("launcher: DLSS needs an NVIDIA RTX card (" + gpu_main(env) + ") - FSR instead"); aa = 2; }
-        static const char* const need[5] = { "", "", "amd_fidelityfx_loader_dx12.dll", "nvngx_dlss.dll", "libxess.dll" };
+        static const char* const need[5] = { "", "", "amd_fidelityfx_loader_dx12.dll", "nvngx_dlss.dll", "" };
         if (aa == 5 && ((g != Game::Gears2 && g != Game::Gears3) || !cap_exe(env, "smaa_t2x"))) {   // notes/80 s.7: ours, in the Gears 2 exe from 0.3.x
             notes.push_back("launcher: SMAA T2x is not in this game / build - SMAA instead"); aa = 1;
         }
@@ -1858,7 +1843,6 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             if (m >= 1 && m <= 4 && avail("DlssModel")) a.push_back(std::string("--gow2_dlss_preset=") + k_model[m]);
             break;
         }
-        case 4: a.push_back("--gow2_upscaler=xess"); break;
         case 5: a.push_back("--gow2_upscaler=smaa_t2x"); break;   // notes/80 s.7
         default: break;
         }
@@ -1871,7 +1855,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // to-do 18 (GitHub #98): with the scene at full size the upscaler only anti-aliases (DLSS = DLAA, FSR =
         // native AA) - say so, so nobody expects more frames from it
         if (aa >= 2 && aa <= 4 && !(avail("SceneMode") && m > 0 && m < 4)) {
-            static const char* const aaOnly[5] = { "", "", "FSR native AA", "DLAA", "XeSS native AA" };
+            static const char* const aaOnly[5] = { "", "", "FSR native AA", "DLAA", "" };
             notes.push_back(std::string("launcher: ") + k_aaNames[aa] + " with Scene resolution Native runs as " + aaOnly[aa] +
                             " - anti-aliasing only, no extra frames; pick a lower Scene resolution for more frames (GitHub #98)");
         }
@@ -1891,18 +1875,18 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
     }
     // PS1 857 (0146 / 0147): frame generation
-    // FrameGen: 1 AMD FSR; 2-5 NVIDIA DLSS 2x / 3x / 4x / dynamic, 6 NVIDIA DLSS 6x (0.4.9); 7 Intel XeSS 2x (0.4.9,
-    // experimental) (DLSS fall back to FSR, or off, when not available here)
+    // FrameGen: 1 AMD FSR; 2-5 NVIDIA DLSS 2x / 3x / 4x / dynamic, 6 NVIDIA DLSS 6x (0.4.9); 7 dropped (DLSS fall back to FSR, or off, when not available here)
     // job 521: DirectX 12 (not under Proton / Wine); notes/83: AMD's on Vulkan too, Proton / Wine included (Steam Deck)
     const bool fgVk = runs_vulkan(s, env);
     int fgChoice = avail("FrameGen") && (fgVk || (s.i("Api") == 0 && !env.wine)) ? s.i("FrameGen") : 0;
+    if (fgChoice == k_fgDropped) fgChoice = 1;   // (Store::view already does this; a raw 7 is AMD's too)
     if (fgVk && fgChoice >= 2) {
-        notes.push_back(std::string("launcher: Vulkan - ") + (fgChoice == k_fgXefg ? "Intel XeSS" : "NVIDIA DLSS") +
+        notes.push_back(std::string("launcher: Vulkan - NVIDIA DLSS") +
                         " frame generation is DirectX 12 only -> AMD FSR frame generation (experimental on Vulkan)");
         fgChoice = 1;
     }
     if (fgChoice >= 2 && !framegen_choice_available(fgChoice, env).ok) {
-        const char* what = fgChoice == k_fgXefg ? "Intel XeSS" : "NVIDIA DLSS";
+        const char* what = "NVIDIA DLSS";
         fgChoice = cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll") ? 1 : 0;
         notes.push_back(std::string("launcher: ") + what + " frame generation is not available here -> " + (fgChoice ? "AMD FSR frame generation" : "off"));
     }
@@ -1912,12 +1896,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         fgChoice = 0;
     }
     const bool fgOn = fgChoice >= 1;
-    // frames on screen per frame drawn (the frame-rate cap below); dynamic varies - counted as 2x; Intel XeSS: 2x
+    // frames on screen per frame drawn (the frame-rate cap below); dynamic varies - counted as 2x
     const int fgFactor = fgChoice == 3 ? 3 : fgChoice == 4 ? 4 : fgChoice == 6 ? 6 : 2;
     if (fgOn) {
-        if (fgChoice == k_fgXefg) {
-            a.push_back("--gow2_frame_generation=xess");   // 0.4.9 (xefg049): 2x with XeLL; the exe falls back to FSR itself
-        } else if (framegen_is_dlss(fgChoice)) {
+        if (framegen_is_dlss(fgChoice)) {
             static const char* const k_dlssMode[5] = { "2x", "3x", "4x", "dynamic", "6x" };   // 0.4.9: 6x
             a.push_back("--gow2_frame_generation=dlss");
             a.push_back(std::string("--gow2_dlss_fg_mode=") + k_dlssMode[fgChoice - 2]);

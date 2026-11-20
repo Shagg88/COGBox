@@ -159,11 +159,9 @@ Availability choice_available(const Option& o, Game g, int index);
 // Frame generation choices (FrameGen): 2-5 (NVIDIA DLSS) are not listed at all without the exe's support and NVIDIA's
 // Streamline DLLs next to it; greyed without an RTX 40 (2x) / RTX 50 (3x, 4x, dynamic) card. 1 (AMD) greyed without its DLL.
 bool dlss_fg_present(const Environment& env);
-// 0.4.9 (xefg049): 7 = Intel XeSS frame generation (experimental): listed only with the exe's support and Intel's
-// libxess_fg.dll + libxell.dll next to it; offered on Intel Arc and on other makes' DirectX 12 cards (Intel allows it).
-constexpr int k_fgXefg = 7;
+// 7 = a frame-generation choice dropped in 0.6.6: never listed; a saved 7 becomes AMD's (Store::view).
+constexpr int k_fgDropped = 7;
 inline bool framegen_is_dlss(int index) { return index >= 2 && index <= 6; }
-bool xefg_present(const Environment& env);
 bool framegen_choice_hidden(int index, const Environment& env);
 // Notes/83: on Vulkan only 1 (AMD, experimental) - with AMD's Vulkan DLLs, the exe's support and SDK patch 69.
 Availability framegen_choice_available(int index, const Environment& env, bool vulkan = false);
