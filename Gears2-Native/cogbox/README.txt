@@ -117,7 +117,7 @@ New in 0.6.2
 - DualSense adaptive triggers in all four games (Controls tab, experimental, off by default, #245).
   Not tried on a real DualSense yet - please tell us how it feels.
 - Indirect lighting (SSIL, experimental, by gmihaic): Graphics tab, below Ambient occlusion. Light
-  bounced from nearby lit surfaces. Needs Ambient occlusion: XeGTAO (high or ultra); off by default.
+  bounced from nearby lit surfaces. Needs Ambient occlusion: On; off by default.
 - Soft shadows (PCSS) in Judgment too, and PCSS fixes (by gmihaic).
 - Better HDR in Gears 2 and Gears 3 (by legoliamneeson), and an HDR highlights setting (Display
   tab).
@@ -373,7 +373,7 @@ New in 0.4.0 - please read
 
 
 Graphics API: DirectX 12 is the default. Vulkan is on each
-game's Graphics tab for testing; FSR / DLSS / XeSS and DLSS frame generation are DirectX 12 only;
+game's Graphics tab for testing; FSR / DLSS and DLSS frame generation are DirectX 12 only;
 AMD FSR frame generation also works on Vulkan (experimental). If something looks wrong on Vulkan,
 please send a problem report.
 
@@ -388,8 +388,8 @@ Keyboard and mouse: every key can be changed on a game's Controls tab.
 DLC and mods: a game's About tab (Downloadable content, Mods).
 
 
-System Link - LAN play (experimental; Title Update versions of all four games)
--------------------------------------------------------------------------------
+System Link - LAN play (Title Update versions of all four games)
+-----------------------------------------------------------------
 Play the games' System Link modes (co-op and the other System Link modes) with other PCs - in the
 same house, or over the internet with a free "LAN VPN". Thanks to HubertFer, whose patch made this
 possible. Tested so far: Gears of War 2 campaign co-op, and Gears of War co-op (two PCs, about an
@@ -523,7 +523,7 @@ COGBox and the ports' own code are under the MIT licence (LICENSE.txt). The libr
 vendor upscalers included (SDL3, Dear ImGui, miniz, stb, PsychoV35 and RenoDX's HDR grading (MIT, in the Gears 2 and Gears 3
 licenses folders), FFmpeg's XMA decoder (LGPL 2.1+, licenses\FFmpeg-NOTICE.txt), the
 rexglue SDK and Xenia code (BSD-3, licenses\Xenia-LICENSE.txt), modcore (MIT), AMD FidelityFX and Anti-Lag 2, NVIDIA DLSS,
-DLSS Frame Generation, Streamline and Reflex, Intel XeSS, XeSS Frame Generation and XeLL, the DirectX 12 Agility SDK and
+DLSS Frame Generation, Streamline and Reflex, the DirectX 12 Agility SDK and
 the DirectX Shader Compiler (licenses\Microsoft-DirectX-redist-NOTICE.txt)) come under their own terms, in the licenses
 folder (NVIDIA's: licenses\NVIDIA-Streamline-DLSS-G-NOTICE.txt). The vendor and Microsoft files are not under COGBox's
 MIT licence. This product uses the NVIDIA DLSS SDK, the NVIDIA

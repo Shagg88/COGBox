@@ -52,7 +52,7 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 
 - **Any resolution** up to 5K, or matched to your monitor, with real extra detail; **ultrawide** up to 48:9 (three
   screens) and **HDR10**.
-- **Modern lighting extras** (experimental, off by default): XeGTAO or CACAO ambient occlusion, PCSS soft shadows
+- **Modern lighting extras** (experimental, off by default): modern ambient occlusion (XeGTAO; one Default / On switch), PCSS soft shadows
   (Gears 3 and Judgment) and screen-space indirect lighting.
 - **Upscaling and anti-aliasing:** SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS (experimental).
 - **High frame rates:** the 30 fps limit lifted, frame-rate caps from 30 to 180 (and 40 / 45 for the Steam Deck), and

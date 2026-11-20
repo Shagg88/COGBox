@@ -259,13 +259,13 @@ std::vector<Option> make_options(Game g) {
     static const char* const kVkTip =
                "Vulkan is a full alternative to DirectX 12, and the usual choice on Steam Deck / Linux. "
                "\n"
-               "On Vulkan, DLSS / XeSS are not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
+               "On Vulkan, DLSS is not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
                "frame generation is AMD FSR only (experimental), "
                "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
     static const char* const kVkTipExp =
                "Experimental in this game - some things still look wrong on Vulkan (in Gears 3, black eyes); DirectX 12 is "
                "the tested renderer.\n"
-               "On Vulkan, DLSS / XeSS are not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
+               "On Vulkan, DLSS is not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
                "frame generation is AMD FSR only (experimental), "
                "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
     add(choice("Api", "Graphics API", Tab::Graphics, PG, { "DirectX 12 (recommended)", vkExp ? "Vulkan (experimental)" : "Vulkan" }, 0,
@@ -311,7 +311,7 @@ std::vector<Option> make_options(Game g) {
                  "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: AMD's temporal anti-aliasing / upscaler for the 3D scene - FSR 4 on RX 6000 or "
                "newer, FSR 3.1 otherwise (any graphics card), DirectX 12 or Vulkan. DLSS: the same on "
-               "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.\nSMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now.", 346), "", "", true);
+               "NVIDIA RTX cards.\nSMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now.", 346), "", "", true);
     // Review (fsr049): FSR on Vulkan is opt-in while it is new - without this box, FSR on Vulkan becomes SMAA as before.
     add(make("FsrVulkan", "FSR on Vulkan (experimental)", Tab::Graphics, Kind::Bool, PG, 0,
              "With Vulkan as the Graphics API: use AMD FSR (AMD FSR SDK 2.4 Vulkan upscaler) instead of SMAA when "
@@ -319,7 +319,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("SceneMode", "Scene resolution", Tab::Graphics, SH,
                { "Native (same as render resolution)", "Quality (scene at 2/3)", "Performance (scene at 1/2)",
                  "Ultra performance (scene at 1/3)" }, 0,
-               "With FSR, DLSS or XeSS: draw the 3D scene at a lower resolution and let the upscaler fill in the detail - more "
+               "With FSR or DLSS: draw the 3D scene at a lower resolution and let the upscaler fill in the detail - more "
                "frames per second, a little softer. HUD and menus stay at the full resolution.\nPerformance needs render "
                "resolution 2x (1440p) or 4x; Quality and Ultra performance need 3x (4K).", 351), "scenescale", "AAMode>=2");
     // 0.4.9: the DLSS Super Resolution model (renderer/dlss_upscaler.cpp --gow2_dlss_preset; NGX render-preset hints,
@@ -347,10 +347,7 @@ std::vector<Option> make_options(Game g) {
                "(experimental) characters can ghost slightly in dark areas.\nNVIDIA DLSS frame generation "
                "(RTX 40/50 only, experimental): 2x, 3x, 4x or 6x the frames the game draws (3x / 4x / 6x / dynamic: RTX 50; "
                "dynamic picks the multiplier to match your monitor); needs NVIDIA's "
-               "Streamline files next to the game. If it can't run, the game uses AMD's instead (or none).\nIntel XeSS frame "
-               "generation (experimental, untested): 2x, with Intel's Xe Low Latency. Made for Intel Arc graphics cards; Intel "
-               "also allows it on other DirectX 12 cards (NVIDIA RTX 30 / Radeon RX 6000 or newer recommended). If it can't "
-               "run, the game uses AMD's instead (or none).", 356), "framegen");
+               "Streamline files next to the game. If it can't run, the game uses AMD's instead (or none).", 356), "framegen");
     // Aniso: no PS1 tooltip; text from 59-how-to-play ("16x anisotropic filtering").
     add(make("Aniso", "Sharper textures (16x anisotropic)", Tab::Graphics, Kind::Bool, OWN, g == Game::Gears2 ? 1 : 0,
              "16x anisotropic filtering: textures seen at an angle (floors, walls) stay sharp.", 357), "aniso", "", true);
@@ -413,13 +410,16 @@ std::vector<Option> make_options(Game g) {
     // be, since every flare would show through the scenery there.
     // Notes/80 (Gears2-Native): XeGTAO screen-space ambient occlusion in place of the game's own (Gears 2), or added
     // where a level has none (Gears 3 s.9: opt-in there, default "Game's own").
-    add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, highly experimental)", "XeGTAO (ultra, highly experimental)", "CACAO (experimental)" },
-                        1,   // Game's own: XeGTAO is opt-in in every game
-               "The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version "
-               "(Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, "
-               "characters included. Highly experimental (Shagg 3 Nov): in our tests it cost about 5 ms a frame, roughly halving a "
-               "high frame rate - being worked on. Ultra looks in more directions and catches more small details, for a "
-               "little more. Game's own: the original. Off: none.", 0), "ao");
+    // 0.6.6 (Shagg 20 Nov: "Off should be = Default and On should be = whatever looks the best but costs the least"):
+    // two choices are offered, Default (1) and On (2). The five keep their numbers so saved settings keep their meaning;
+    // Store::view turns a saved Off into Default and a saved Ultra / CACAO into On. Job 2169 (Gears 2, RTX 3080 Ti,
+    // 1440p): no AO 4.86 ms a frame, high 5.36-5.46, high at half resolution 5.11, ultra 5.90, CACAO high 6.08.
+    add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Default", "On", "XeGTAO (ultra)", "CACAO" },
+                        1,   // Default: the game as it shipped
+               "The soft shadowing in corners, creases and where things touch. Default: the game as it shipped. On: a "
+               "modern version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows "
+               "instead of blobs, characters included. It costs little: about a quarter to half a millisecond a frame "
+               "at 1440p on an RTX 3080 Ti in our tests.", 0), "ao");
     // Screen-space indirect lighting (--gow2_ssil, ssil_shaders.h): one bounce of light from nearby lit surfaces, opt-in;
     // it works on XeGTAO's depth pyramid, so it needs Ambient occlusion: XeGTAO.
     add(choice("Ssil", "Indirect lighting", Tab::Graphics, PG, { "Game's own", "SSIL (experimental)" }, 0,
@@ -542,10 +542,10 @@ std::vector<Option> make_options(Game g) {
                "the game's own split. Gears 2: side by side from the start.", 325), "splitlayout");
     // 0.3.5 (GitHub #72, SDK patch 49b): System Link over a LAN or a LAN VPN (Radmin VPN, ZeroTier, Hamachi). Off = the
     // runtime behaves exactly as before ("No Network Connection").
-    add(make("SystemLink", "System Link - LAN play (experimental)", Tab::Gameplay, Kind::Bool, PG, 0,
-             "Experimental - lets the game's System Link find and join games on other PCs on your network (or on a LAN VPN "
-             "such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. Gears of War "
-             "and Gears 2 co-op worked in testing; other modes and the other games are less tested. Voice chat is not supported yet. Windows may ask about the firewall: "
+    add(make("SystemLink", "System Link - LAN play", Tab::Gameplay, Kind::Bool, PG, 0,
+             "Lets the game's System Link find and join games on other PCs on your network (or on a LAN VPN "
+             "such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. "
+             "Voice chat is not supported yet. Windows may ask about the firewall: "
              "allow Private networks.", 325), "syslink");
     // 0.4.8 (GitHub #229, clovis-junior): the other players' addresses, as the reporter's extra-args.txt line
     // --net_peer_ip=... did (SDK patch 49b / 50) - typed here instead. IPv4 only (Radmin VPN 26.x, ZeroTier, Hamachi).
@@ -729,7 +729,7 @@ bool xefg_present(const Environment& env) {
 }
 
 bool framegen_choice_hidden(int index, const Environment& env) {
-    if (index == k_fgXefg) return !xefg_present(env);
+    if (index == k_fgXefg) return true;   // 0.6.6 (Shagg 20 Nov): Intel XeSS frame generation is dropped - never listed
     return framegen_is_dlss(index) && !dlss_fg_present(env);
 }
 
@@ -1216,7 +1216,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "FsrVulkan") on = runs_vulkan(s, env) && fsr_vulkan(env);      // review: opt-in, Vulkan builds with AMD's VK DLLs
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
     else if (o.id == "Ssil" && s.i("AO") != 2 && s.i("AO") != 3) {                    // SSIL runs on XeGTAO's depth pyramid
-        a.ok = false; a.why = "Needs Ambient occlusion: XeGTAO (high or ultra)."; return a;
+        a.ok = false; a.why = "Needs Ambient occlusion: On."; return a;
     }
     else if (o.id == "SplitLayout") on = s.i("Players") == 1;                       // GitHub #136: 2 players only
     else if (o.id == "PeerIps") on = s.b("SystemLink");                              // GitHub #229
@@ -1244,19 +1244,17 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         return "On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there.";
     if (o.id == "Api" && env.wine && (g == Game::Gears3 || g == Game::Judgment))   // Shagg 3 Nov: Vulkan is the Proton path
         base = "On Steam Deck / Linux (Proton) Vulkan is the usual choice - DirectX 12 can crash there.\n"
-               "On Vulkan, DLSS / XeSS are not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
+               "On Vulkan, DLSS is not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
                "frame generation is AMD FSR only (experimental), "
                "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
-    if (o.id == "AO")   // notes/81
-        base += "\nCACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer.";
     if (o.id == "AO" && g == Game::Judgment)   // notes/81
-        base += "\nJudgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS.";
+        base += "\nJudgment: On replaces the game's own AO, which can flicker with DLSS.";
     if (o.id == "DoF" && g == Game::Gears1)   // GitHub #179
         base += "\nGears 1: off turns off the game's blur pass, which the bloom uses too - the glow is softer.";
     if (o.id == "AO" && g == Game::Gears1)   // notes/80 s.14
-        base += "\nGears 1: the game has no AO of its own - XeGTAO and CACAO add it under the level's lighting, so lit areas keep their light. Off and Game's own are the same here.";
+        base += "\nGears 1: the game has no AO of its own - On adds it under the level's lighting, so lit areas keep their light.";
     if (o.id == "Ssil") {
-        base += "\nWith DLSS, FSR, XeSS or SMAA T2x it is smoother: each frame's bounce is averaged with the frames before, and "
+        base += "\nWith DLSS, FSR or SMAA T2x it is smoother: each frame's bounce is averaged with the frames before, and "
                 "light can bounce more than once.";
         if (g == Game::Gears3)
             base += "\nGears 3 draws its scene in low dynamic range, so the bounce from bright lights is gentler than in the other games.";
@@ -1265,7 +1263,7 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         base += "\nUltra's finer shadow maps follow the scene's render size: with DLSS Ultra Performance the scene is drawn at "
                 "720p and Ultra only adds samples; with DLAA or Quality it pays off.";
     if (o.id == "AO" && g == Game::Gears3)   // notes/80 s.9
-        base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it.";
+        base += "\nGears 3: most levels have their shading baked in and no real-time AO - On adds a gentle contact shading there and replaces the game's own where a level has it.";
     if (o.id == "AAMode") {   // PS1 345
         std::string gpu = gpu_main(env);
         base += "\nYour graphics card: " + (gpu.empty() ? std::string("not detected") : gpu);
@@ -1514,6 +1512,14 @@ Settings Store::view(Game g, const Environment& env) const {
     s.set("Version", static_cast<int>(effective_version(g, s, env)));   // PS1 459
     // 0.6.6: "Match my monitor" (4) is gone - a saved 4 is the whole-number scale it picked on this screen (1x-4x)
     if (s.i("Resolution") == 4) s.set("Resolution", std::clamp(expected_render_scale(g, s, env), 1, 4) - 1);
+    // 0.6.6 (Shagg 20 Nov: "drop XeSS and XeSS generation"): the choices keep their numbers so the others keep their
+    // meaning, but they are no longer offered; a saved XeSS becomes SMAA, a saved XeSS frame generation AMD's (what the
+    // game fell back to when Intel's could not run).
+    if (s.i("AAMode") == 4) s.set("AAMode", 1);
+    if (s.i("FrameGen") == k_fgXefg) s.set("FrameGen", 1);
+    // 0.6.6: Ambient occlusion is Default / On - a saved Off becomes Default, a saved Ultra or CACAO becomes On
+    if (s.i("AO") == 0) s.set("AO", 1);
+    if (s.i("AO") >= 3) s.set("AO", 2);
     if ((g == Game::Judgment || g == Game::Gears1) && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
     if (g == Game::Gears1 && !gears1_lang(s.i("Lang"))) s.set("Lang", 0);   // a language Gears 1 has no text for
     return s;
@@ -1934,19 +1940,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // Notes/80: XeGTAO (2 high, 3 ultra); notes/81: CACAO (4); 0 Off goes through the game's own [SystemSettings] below,
     // 1 changes nothing
     if (avail("AO") && s.i("AO") >= 2) {
-        if (s.i("AO") == 4 && !cap_exe(env, "or cacao (FidelityFX CACAO")) {
-            notes.push_back("launcher: CACAO is not in this build - the game's own AO");
-        } else {
+        {   // 0.6.6: CACAO (4) is dropped - Store::view turns a saved 4 into On, and the launcher never asks for it
             a.push_back("--gow2_ao=gtao");
-            if (s.i("AO") == 4) {   // low, with the blur passes that looked best in play
-                a.push_back("--gow2_ao_algo=cacao");
-                a.push_back("--gow2_ao_quality=low");
-                a.push_back("--gow2_ao_cacao_blur=3");
-            } else {
+            {
                 a.push_back(s.i("AO") == 3 ? "--gow2_ao_quality=ultra" : "--gow2_ao_quality=high");
                 // Shagg's to-do 1(d) (XeGTAO ~5 ms/frame): High denoises twice (medium); Ultra leaves it to the game's
                 // automatic choice (#204: 2 without DLSS / FSR / XeSS, by the scene scale with one)
-                if (s.i("AO") == 2) a.push_back("--gow2_ao_denoise=2");
+                // 0.6.6: On = high at half resolution where the build has it (job 2169: half the cost, the game picture
+                // 0.16 / 255 apart on average) - as measured there, with the build's own denoise; otherwise as before
+                if (s.i("AO") == 2 && cap_exe(env, "gow2_ao_half")) a.push_back("--gow2_ao_half=true");
+                else if (s.i("AO") == 2) a.push_back("--gow2_ao_denoise=2");
             }
         }
     }

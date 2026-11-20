@@ -16,6 +16,7 @@ Gears 2 (and Gears 3 / Judgment) started straight into a chapter with no control
 | Gears 2 | `--gow2_launch="GearGame_P?loadcheckpoint=0?chapter=9 -nostartupmovies -FIXEDSEED"` | `30:A:0.3, 36:LUP:3, 40:LT:3, 41.5:RT:0.3, 44:RLEFT:1, 46:RUP:0.4, 47:RDOWN:0.8, 49:LUP:3` (route 1857; ONE A = Resume, a second A rolls) | jobs 1857, 2092 |
 | Gears 3 | `SP_Coast_P`, no `--gow3_cheats` (keeps the game paused), `--cogbox_test_skip_movies`, ini `bSkipAllMatinees=TRUE` | A at 5 / 10 / 15 / 20 s, CancelCine at 30 / 35 / 40 s | job 1840 V3 |
 | Gears 1 | chapter launch | none needed (does not pause) | job 1589 notes |
+| Judgment | `--ue3_launch="SP_00_Museum_P -nostartupmovies"` | `25:BACK:0.3, 27:BACK:0.3, 45:BACK:0.3, 47:BACK:0.3` (`--gow2_input_script`; BACK TWICE skips the intro film) | job 2145: gameplay (Old Town, "Meet up with the convoy") by frame 1200 at 60 fps, still there at frame 6000 |
 
 ## Known facts, not yet a proven route
 - Judgment: a film is skipped with the BACK button pressed TWICE (Shagg, 20 Nov). `SP_00_Museum_P` opens on a
@@ -23,6 +24,10 @@ Gears 2 (and Gears 3 / Judgment) started straight into a chapter with no control
   screenshots show gameplay.
 - Gears 2 `SP_Assault_P` / `SP_Hospital_P` with no pad: pause menu over the level - used ON PURPOSE as a still scene
   for like-for-like cost and picture comparisons; always label those numbers "paused scene".
+- Gears 3 and Judgment TITLE SCREEN: job 2145's scripted START at 25 s did nothing because the game was still LOADING
+  then (log: "the loading movie stopped after 21.6 s" and the frame limiter start are logged at the same moment as the
+  press, shader prebuild still running). Not a code fault: press START at 40 s or later (and again at 45 s). The menu
+  items after it are still unmapped.
 - Gears 2 title screen: attract mode starts about 2 min 15 s after launch.
 - Loading a given checkpoint slot needs the front end (Campaign > Continue / Load), not `?loadcheckpoint=1`.
 
@@ -34,13 +39,16 @@ short run per game that presses one button at a time with a screenshot after eac
 - Job 1450, jobs 1671-1688, 1834 / 1836, 2143, 2153: measured the pause menu and reported it as gameplay.
 - Never judge "reached gameplay" from a frame count or a frame time; use the state line and look at a screenshot.
 
-## Every performance question: measure the whole frame in ONE job (Shagg, 20 Nov)
-Never queue a job that answers one question. A job that has to run carries, beside its clean timing runs, a
-diagnostics run of the same scene with everything on (its frame times do not count):
-`--gow2_renderer_cpu_split=2 --gow2_renderer_gpu_by_target=true --gow2_frame_log=true --gow2_draw_stats=300`
-`--gow2_resolve_log_frames=<two frames> --gow2_renderer_log_aliases=200 --gow2_renderer_draw_report_frame=<frame>`
-`--gow2_renderer_draw_report_frames=2 --gow2_profile=30 --gow2_profile_start=3600 --gow2_profile_top=20`
-`--gow2_hitch_report_ms=30 --gow2_texture_phase_log_ms=15 --gow2_ao_gpu_log=<N> (with AO on) --cogbox_test_state=true`
-Read from it: CPU split per part, GPU time per category and per target, the ownership slow-path counters (slow
-claims, tiles walked, tiles that changed owner, book changes), per-draw GPU time, copies per frame, alias pairs,
-hitches, texture phases, the profile (build with symbols so it names our functions).
+## One launch, many settings (Shagg, 20 Nov: "3 hours is way too long. For anything.")
+A launch costs ~2.5 minutes of which ~30 s is measured. Never queue one launch per setting when the setting can change
+while the game runs: step through the settings inside ONE launch and cut the log into segments.
+- XeGTAO: `--gow2_ao_test_script="<swap>:<key>=<value>,..."` (quality, denoise, algo, blur, show, half, single, mip,
+  view); each step logs `gow2_ao_test:`; job 2169 is the template (segments of 3000 frames; still scene: one frame
+  shot per setting).
+- Not switchable yet (one launch each, so keep the list short): upscaler / DLSS model, SSIL, PCSS, resolution scale,
+  renderer API. Make an option switchable before testing many values of it.
+- A whole queue should fit in about 30 minutes. If it does not, cut the variations to the ones that would change a
+  default, or make them switchable first.
+- A speed test is made FROM job 2146's script (template minus diagnostics, `--gow2_renderer_queries=strict` re-added,
+  speed switches), never re-typed (job 2157 dropped strict queries: twice the draws, invalid).
+- Never put a new job in front of ones already queued; add it at the end.

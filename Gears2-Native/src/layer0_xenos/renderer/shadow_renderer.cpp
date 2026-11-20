@@ -8369,7 +8369,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ao_denoise_pipe_ = make("xegtao_denoise_cs", common + rr::builtin::kXeGtaoDenoiseCs);
     ao_debug_pipe_ = make("xegtao_debug_cs", rr::builtin::kXeGtaoDebugCs);
     ao_pack_pipe_ = make("xegtao_pack_cs", rr::builtin::kXeGtaoPackCs);
-    {  // notes/81: CACAO, every pass built at start, so F6 and F11 need no compile
+    // 0.6.6 (Shagg 20 Nov: drop CACAO): no longer offered - its 14 shaders are built only when the command line asks
+    // for it (--gow2_ao_algo=cacao, measurements); otherwise nothing of it is compiled or run and F6 stays on XeGTAO.
+    // Job 2169: CACAO (high) 6.08 ms a frame against XeGTAO high 5.36-5.46 and ultra 5.90.
+    if (REXCVAR_GET(gow2_ao_algo) == "cacao") {  // notes/81: every pass built at start, so F6 and F11 need no compile
       const std::string cc = rr::builtin::kCacaoCommon;
       cc_depth_pipe_ = make("cacao_depth_cs", cc + rr::builtin::kCacaoDepthCs);
       cc_normals_pipe_ = make("cacao_normals_cs", cc + rr::builtin::kCacaoNormalsCs);

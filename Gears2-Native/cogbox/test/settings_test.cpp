@@ -326,6 +326,21 @@ int summary() {
             const Settings s2 = st2.view(Game::Gears2, e2);
             if (s2.i("Resolution") != c[2]) { std::cout << "FAIL match-my-monitor migration " << c[0] << "x" << c[1] << ": " << s2.i("Resolution") << "\n"; ++fails; }
         }
+        // 0.6.6: XeSS (AAMode 4) and Intel XeSS frame generation (FrameGen 7) are dropped - saved ones become SMAA / AMD's
+        {
+            Environment e3; e3.update_ready = true;
+            Store st3; st3.top["AAMode"] = 4; st3.top["FrameGen"] = 7;
+            const Settings s3 = st3.view(Game::Gears2, e3);
+            if (s3.i("AAMode") != 1 || s3.i("FrameGen") != 1) { std::cout << "FAIL XeSS migration: AAMode " << s3.i("AAMode") << " FrameGen " << s3.i("FrameGen") << "\n"; ++fails; }
+            if (!framegen_choice_hidden(k_fgXefg, e3)) { std::cout << "FAIL XeSS frame generation still listed\n"; ++fails; }
+        }
+        // 0.6.6: Ambient occlusion is Default (1) / On (2) - a saved Off becomes Default, Ultra / CACAO become On
+        for (const auto& c : { std::array<int, 2>{ 0, 1 }, std::array<int, 2>{ 1, 1 }, std::array<int, 2>{ 2, 2 }, std::array<int, 2>{ 3, 2 }, std::array<int, 2>{ 4, 2 } }) {
+            Environment e4; e4.update_ready = true;
+            Store st4; st4.top["AO"] = c[0];
+            const Settings s4 = st4.view(Game::Gears2, e4);
+            if (s4.i("AO") != c[1]) { std::cout << "FAIL AO migration " << c[0] << " -> " << s4.i("AO") << "\n"; ++fails; }
+        }
         set_value(Game::Gears3, s, "Fov", 110);
         if (s.i("Preset") != 3) { std::cout << "FAIL preset -> custom\n"; ++fails; }
         s.set("Sens", 1.7);   // (not "Start": removed in 0.3.0, a saved value is ignored)

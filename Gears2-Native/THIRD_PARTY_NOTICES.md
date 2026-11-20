@@ -25,7 +25,6 @@ committed (`third_party/` is ignored; `notes/65-broad-hardware.md` item 6):
 |---|---|---|
 | NVIDIA DLSS SDK (`third_party/dlss-sdk`; `nvngx_dlss.dll` at run time) | DLSS / DLAA | NVIDIA RTX SDKs License (binary redistribution inside an application; the SDK must not be made subject to an open-source licence, so it stays a separate binary next to our MIT code) |
 | AMD FidelityFX SDK (`third_party/fidelityfx-sdk`; `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll`) | FSR | The `ffx_api` headers we compile against: MIT (AMD). The signed DLLs: AMD's FidelityFX licence (`docs/license.md`) - redistribution in binary form only, no reverse engineering, and its copyright notice, permission notice and disclaimers reproduced (below) |
-| Intel XeSS SDK 3.0.2 (`third_party/xess-sdk-3.0.2`; `libxess.dll` 2.0.2.68 (the XeSS Super Resolution library as shipped), and from 0.4.9 `libxess_fg.dll` 1.3.1.78 + `libxell.dll` 1.3.2.10 beside `gow2.exe`) | XeSS upscaling; experimental Intel XeSS frame generation with Xe Low Latency (`renderer/xess_framegen.cpp`, `--gow2_frame_generation=xess`) | Intel Simplified Software License (October 2022) - binary-only redistribution without modification, notice reproduced (below); the SDK's `third-party-programs.txt` ships in `licenses\xess-sdk-3.0.2\`. Intel, Arc and XeSS are trademarks of Intel Corporation; no endorsement by Intel is implied |
 | NVIDIA Streamline SDK v2.14.16 headers (`src/layer0_xenos/streamline/include`, vendored unchanged; licence in `src/layer0_xenos/streamline/LICENSE.txt`) | Experimental DLSS frame generation (`renderer/dlss_framegen.cpp`, `--gow2_frame_generation=dlss`) with Reflex through Streamline | Headers: MIT (NVIDIA). Shipped unmodified from 0.4.8 beside each port exe built with Streamline: `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll` (Streamline 2.14, MIT, NVIDIA-signed; Reflex parts under the Reflex SDK licence) and `nvngx_dlssg.dll` (NVIDIA RTX SDKs License). Release `licenses\NVIDIA-Streamline-DLSS-G-NOTICE.txt`, `licenses\streamline-sdk\`, `licenses\streamline-release\`. This product uses the NVIDIA DLSS SDK, NVIDIA Streamline SDK and NVIDIA Reflex SDK; NVIDIA, GeForce RTX, DLSS and Reflex are trademarks of NVIDIA Corporation |
 | SPIRV-Tools (Khronos Group; built from the rexglue SDK's vendored source, `third_party/rexglue-sdk/thirdparty/spirv-tools`) | Vulkan: the optimiser run over each shader after it is converted to SPIR-V (0.6.1) | Apache-2.0 (`LICENSE` in that folder; shipped with the SDK licences) |
 
@@ -63,27 +62,10 @@ POSSIBILITY OF SUCH DAMAGES. IN NO EVENT SHALL COPYRIGHT HOLDER OR ITS AUTHORIZE
 ALL DAMAGES, LOSSES, AND CAUSES OF ACTION (WHETHER IN CONTRACT, TORT (INCLUDING NEGLIGENCE) OR OTHERWISE) EXCEED THE
 AMOUNT OF US$10.
 
-### Intel XeSS SDK (binaries)
-
-The full text is `LICENSE.txt` in the SDK; a release copies it to `licenses\xess-sdk-3.0.2\`. It covers `libxess.dll`, `libxess_fg.dll` and `libxell.dll` (all three are in the same SDK). Its notice:
-
-Intel Simplified Software License (Version October 2022)
+### RenoDX HDR grading
 
 The native HDR UE3 grading bridge uses RenoDX reference strategies, adapted
 Oklab matrices and both games' smoothed-power HDR boost from the Dishonored
 sample, copyright (c) 2025 Carlos Lopez Jr. / ShortFuse. Its MIT notice
 is provided in `cogbox/licenses/RenoDX-Grading-LICENSE.txt` and distributed beside
 both game executables. See `../docs/ue3-hdr-grading.md` for upstream references.
-
-Intel(R) Xe Super Sampling (XeSS) SDK: Copyright (C) 2025 Intel Corporation
-
-Use and Redistribution. You may use and redistribute the software, which is provided in binary form only, (the
-"Software"), without modification, provided the following conditions are met:
-
-* Redistributions must reproduce the above copyright notice and these terms of use in the Software and in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Intel nor the names of its suppliers may be used to endorse or promote products derived from
-  this Software without specific prior written permission.
-* No reverse engineering, decompilation, or disassembly of the Software is permitted, nor any modification or
-  alteration of the Software or its operation at any time, including during execution.
-
