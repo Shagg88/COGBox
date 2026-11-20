@@ -38,3 +38,17 @@ short run per game that presses one button at a time with a screenshot after eac
 ## Mistakes this page exists to stop
 - Job 1450, jobs 1671-1688, 1834 / 1836, 2143, 2153: measured the pause menu and reported it as gameplay.
 - Never judge "reached gameplay" from a frame count or a frame time; use the state line and look at a screenshot.
+
+## One launch, many settings (Shagg, 20 Nov: "3 hours is way too long. For anything.")
+A launch costs ~2.5 minutes of which ~30 s is measured. Never queue one launch per setting when the setting can change
+while the game runs: step through the settings inside ONE launch and cut the log into segments.
+- XeGTAO: `--gow2_ao_test_script="<swap>:<key>=<value>,..."` (quality, denoise, algo, blur, show, half, single, mip,
+  view); each step logs `gow2_ao_test:`; job 2169 is the template (segments of 3000 frames; still scene: one frame
+  shot per setting).
+- Not switchable yet (one launch each, so keep the list short): upscaler / DLSS model, SSIL, PCSS, resolution scale,
+  renderer API. Make an option switchable before testing many values of it.
+- A whole queue should fit in about 30 minutes. If it does not, cut the variations to the ones that would change a
+  default, or make them switchable first.
+- A speed test is made FROM job 2146's script (template minus diagnostics, `--gow2_renderer_queries=strict` re-added,
+  speed switches), never re-typed (job 2157 dropped strict queries: twice the draws, invalid).
+- Never put a new job in front of ones already queued; add it at the end.
