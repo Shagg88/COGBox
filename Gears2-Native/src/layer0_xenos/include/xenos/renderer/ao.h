@@ -28,7 +28,7 @@ enum class Mode : uint32_t { kGame, kGtao, kOff };
 Mode ParseMode(const std::string& name);  // anything unknown -> kGame
 const char* ModeName(Mode mode);
 
-// --gow2_ao_denoise (notes/80 s.4): 1-3 = that many denoise passes; 0 (or below) = automatic. Under DLSS / FSR / XeSS,
+// --gow2_ao_denoise (notes/80 s.4): 1-3 = that many denoise passes; 0 (or below) = automatic. Under DLSS / FSR,
 // whose accumulation hides XeGTAO's noise, by the scale the scene is drawn at (XeGTAO runs at that size, so a lower
 // scale means coarser noise and cheaper passes): at ultra 3x or more 1, 2x 2, 1x 3 (judged by eye: DLAA, Quality and
 // Ultra Performance at 4K, Gears 2 and 3). Otherwise 2 at ultra - SMAA T2x's two-frame average is not enough for fewer.

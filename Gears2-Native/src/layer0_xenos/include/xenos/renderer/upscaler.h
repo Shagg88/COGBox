@@ -1,4 +1,4 @@
-// Layer 0 (game-free): temporal upscalers (NVIDIA DLSS, AMD FSR, Intel XeSS) behind one small interface (notes/64,
+// Layer 0 (game-free): temporal upscalers (NVIDIA DLSS, AMD FSR) behind one small interface (notes/64,
 // XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 // notes/65), shared by the
 // Gears 2 and Gears 3 ports. The renderer supplies, per frame: the scene colour before post-processing, its depth, a
@@ -14,8 +14,8 @@
 //   - Matrices: row-major, clip_i = dot(row_i, (x, y, z, 1)). A game whose shaders compute x*c0 + y*c1 + z*c2 + c3
 //     (UE3, job 252) stores the transpose in its constants - FromConstants / FromConstantsTransposed.
 //   - Depth: guest convention (0 near .. 1 far, not inverted unless the game says so).
-// The SDK wrappers (dlss_upscaler.cpp, fsr_upscaler.cpp, xess_upscaler.cpp) are built only when their SDK is in
-// third_party (GN_HAVE_DLSS, GN_HAVE_FSR, GN_HAVE_XESS); without one, CreateUpscaler returns null and the launcher's
+// The SDK wrappers (dlss_upscaler.cpp, fsr_upscaler.cpp) are built only when their SDK is in
+// third_party (GN_HAVE_DLSS, GN_HAVE_FSR); without one, CreateUpscaler returns null and the launcher's
 // choice falls back to SMAA / off.
 // Our code (MIT). The SDKs keep their own licences (THIRD_PARTY_NOTICES.md).
 #pragma once
@@ -31,11 +31,11 @@ namespace xenos::renderer::upscale {
 
 // kSmaaT2x (notes/80 s.7): ours, no SDK - SMAA 1x with two alternating jitters and a temporal resolve, at the
 // render size (no upscaling); made by the renderer (it needs the shader cache), not by CreateUpscaler.
-enum class Kind : uint32_t { kNone, kDlss, kFsr, kXess, kSmaaT2x };
+enum class Kind : uint32_t { kNone, kDlss, kFsr, kSmaaT2x };
 // Render size / output size: 1 (native-resolution AA: DLAA / FSR "native AA"), 1.5, 1.7, 2.
 enum class Quality : uint32_t { kNativeAA, kQuality, kBalanced, kPerformance };
 
-Kind ParseKind(const std::string& name);  // "dlss", "fsr", "xess", "smaa_t2x", anything else -> kNone
+Kind ParseKind(const std::string& name);  // "dlss", "fsr", "smaa_t2x", anything else -> kNone
 const char* KindName(Kind kind);
 float QualityRatio(Quality quality);      // output / render per axis
 
@@ -257,8 +257,8 @@ enum class ResizeMode : uint32_t {
   kRecreate,  // Configure with every frame's size (ours: SMAA T2x - its textures are cheap to remake)
   kPerFrame,  // FSR without the padding shader: created for the largest size; renderSize / upscaleSize per dispatch
               // below it (history reset on a size change)
-  kPadded,    // DLSS, XeSS, FSR: created once, always given the creation size (NGX takes a render subrect, but its
-              // output always fills the target; XeSS likewise; FSR 4 / older FSR 3.1 providers are not known to honour
+  kPadded,    // DLSS, FSR: created once, always given the creation size (NGX takes a render subrect, but its
+              // output always fills the target; FSR 4 / older FSR 3.1 providers are not known to honour
               // an upscaleSize below the maximum - r83 M1), so the renderer pads the frame's colour / depth / motion to
               // the creation size (edges repeated) and reads its own part of the output - the same pixels at the same
               // place as before

@@ -6,7 +6,7 @@
 // --gow*_cheats, and XeGTAO's quality with --gow2_ao_debug_keys), and a key that did two things was no choice.
 //
 // The window's swap chain follows by itself: SDL reports the new pixel size, the presenters (DirectX 12 and Vulkan)
-// resize or recreate their swap chain, and the frame-generation hooks (AMD, DLSS-G, XeSS-FG; AMD's Vulkan one through its
+// resize or recreate their swap chain, and the frame-generation hooks (AMD, DLSS-G; AMD's Vulkan one through its
 // swap-chain destroy hook) drop their contexts before it - the same path the in-game menu's setting and a window drag use.
 // The renderer's "match my monitor" image is made again at the window's new size (xenos::display::SetSurfaceSize).
 //

@@ -1805,7 +1805,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             else notes.push_back("launcher: this Gears 3 build has no --gow3_aspect yet - the picture stays 16:9");
         }
     }
-    // PS1 851-855: anti-aliasing; DLSS needs an RTX card, FSR / DLSS / XeSS their DLL next to the exe, else SMAA
+    // PS1 851-855: anti-aliasing; DLSS needs an RTX card, FSR / DLSS their DLL next to the exe, else SMAA
     int aa = s.i("AAMode");
     {
         const std::vector<std::string> gpus = gpu_list(env);
@@ -1868,7 +1868,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         static const char* const modes[4] = { "", "--gow2_upscale_mode=quality", "--gow2_upscale_mode=performance", "--gow2_upscale_mode=ultra" };
         int m = s.i("SceneMode");
         if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4) a.push_back(modes[m]);
-        // to-do 18 (GitHub #98): with the scene at full size the upscaler only anti-aliases (DLSS = DLAA, FSR / XeSS =
+        // to-do 18 (GitHub #98): with the scene at full size the upscaler only anti-aliases (DLSS = DLAA, FSR =
         // native AA) - say so, so nobody expects more frames from it
         if (aa >= 2 && aa <= 4 && !(avail("SceneMode") && m > 0 && m < 4)) {
             static const char* const aaOnly[5] = { "", "", "FSR native AA", "DLAA", "XeSS native AA" };
@@ -1892,7 +1892,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 857 (0146 / 0147): frame generation
     // FrameGen: 1 AMD FSR; 2-5 NVIDIA DLSS 2x / 3x / 4x / dynamic, 6 NVIDIA DLSS 6x (0.4.9); 7 Intel XeSS 2x (0.4.9,
-    // experimental) (DLSS / XeSS fall back to FSR, or off, when not available here)
+    // experimental) (DLSS fall back to FSR, or off, when not available here)
     // job 521: DirectX 12 (not under Proton / Wine); notes/83: AMD's on Vulkan too, Proton / Wine included (Steam Deck)
     const bool fgVk = runs_vulkan(s, env);
     int fgChoice = avail("FrameGen") && (fgVk || (s.i("Api") == 0 && !env.wine)) ? s.i("FrameGen") : 0;
@@ -1956,7 +1956,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             {
                 a.push_back(s.i("AO") == 3 ? "--gow2_ao_quality=ultra" : "--gow2_ao_quality=high");
                 // Shagg's to-do 1(d) (XeGTAO ~5 ms/frame): High denoises twice (medium); Ultra leaves it to the game's
-                // automatic choice (#204: 2 without DLSS / FSR / XeSS, by the scene scale with one)
+                // automatic choice (#204: 2 without DLSS / FSR, by the scene scale with one)
                 // 0.6.6: On = high at half resolution where the build has it (job 2169: half the cost, the game picture
                 // 0.16 / 255 apart on average) - as measured there, with the build's own denoise; otherwise as before
                 if (s.i("AO") == 2 && cap_exe(env, "gow2_ao_half")) a.push_back("--gow2_ao_half=true");
@@ -2656,7 +2656,7 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         { "Fullscreen", { { "fullscreen", "" }, { "window_width", "" }, { "window_height", "" } } },
         { "WindowSize", { { "window_width", "" }, { "window_height", "" } } },
         // - SMAA on / off: the present makes SMAA's textures when first needed; the menu tells the renderer
-        //   (XenosPresentAaChanged). FSR / DLSS / XeSS / T2x change other cvars, so they stay a restart.
+        //   (XenosPresentAaChanged). FSR / DLSS / T2x change other cvars, so they stay a restart.
         { "AAMode", { { "gow2_present_aa", "off" } } },
         // - Button prompt style: the prompt monitor reads its mode again (GlobalPromptDeviceMonitor().ReloadMode()).
         { "PromptStyle", { { "gow_button_prompts", "auto" } } },

@@ -16,7 +16,6 @@
 #include <xenos/dev_tools.h>
 
 #include "renderer/dlss_framegen.h"  // NVIDIA DLSS frame generation brings its own Reflex (sl.reflex)
-#include "renderer/xess_framegen.h"  // Intel XeSS frame generation brings its own latency layer (XeLL)
 
 #include <rex/cvar.h>
 #include <rex/frame_hooks.h>
@@ -162,9 +161,7 @@ static void ReflexFrameSubmitted() {
 // One front for both: Reflex when asked for and built in; otherwise Anti-Lag 2 when asked for and built in.
 namespace {
 enum class Latency { kNone, kReflex, kAntiLag2 };
-std::atomic<Latency> g_mode{Latency::kNone};   // review 049: set again from the presenter thread on an XeSS-FG fallback
-std::atomic<void*> g_last_device{nullptr};       // review 049: kept for a later install (XeSS-FG fallback)
-std::atomic<bool> g_waiting_for_xefg{false};     // Reflex / Anti-Lag 2 asked for, held back for XeSS-FG's XeLL
+std::atomic<Latency> g_mode{Latency::kNone};
 void InstallReflexOrAntiLag2();
 }  // namespace
 
@@ -177,24 +174,7 @@ void XenosLatencyInstall() {
       REXLOG_INFO("gow2_reflex / gow2_antilag2: not used - NVIDIA DLSS frame generation runs Reflex through Streamline");
     return;
   }
-  // Intel XeSS frame generation requires XeLL (its markers go on the same hooks): Reflex and Anti-Lag 2 stay off.
-  if (XenosXefgOwnsLatency()) {
-    if (REXCVAR_GET(gow2_reflex) || REXCVAR_GET(gow2_antilag2)) {
-      REXLOG_INFO("gow2_reflex / gow2_antilag2: held back - Intel XeSS frame generation runs XeLL (switched on if it falls back)");
-      g_waiting_for_xefg.store(true, std::memory_order_release);
-    }
-    return;
-  }
   InstallReflexOrAntiLag2();
-}
-
-// Review 049: XeSS-FG was going to own latency at start but fell back (AMD FSR FG / none): Reflex or Anti-Lag 2, as
-// asked for, are installed now (their hooks replace XeLL's; each switches on at its next guest swap on the device seen).
-void XenosLatencyXefgFellBack() {
-  if (!g_waiting_for_xefg.exchange(false, std::memory_order_acq_rel)) return;
-  REXLOG_INFO("gow2_reflex / gow2_antilag2: Intel XeSS frame generation fell back - installing them now");
-  InstallReflexOrAntiLag2();
-  if (void* d = g_last_device.load(std::memory_order_acquire)) XenosLatencySetDevice(d);
 }
 
 namespace {
@@ -221,7 +201,6 @@ void InstallReflexOrAntiLag2() {
 }  // namespace
 
 void XenosLatencySetDevice(void* d3d12_device) {
-  g_last_device.store(d3d12_device, std::memory_order_release);
 #if defined(GN_WITH_REFLEX)
   if (g_mode == Latency::kReflex) ReflexSetDevice(d3d12_device);
 #endif
@@ -233,7 +212,6 @@ void XenosLatencySetDevice(void* d3d12_device) {
 
 void XenosLatencyFrameSubmitted() {
   XenosDlssFgFrameSubmitted();  // counts frames; RENDERSUBMIT_END through sl.pcl while DLSS-G runs
-  XenosXefgFrameSubmitted();    // the same for XeLL while XeSS-FG runs
 #if defined(GN_WITH_REFLEX)
   if (g_mode == Latency::kReflex) ReflexFrameSubmitted();
 #endif

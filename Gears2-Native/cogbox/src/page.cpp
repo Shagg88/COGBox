@@ -338,7 +338,7 @@ void env_refresh(App &a, int g)
     e.cap.exe_has = memo(exe);
     e.cap.runtime_has = memo(runtime_dll(exe));
     // beside the exe, or in the release's shared folder (<COGBox>\shared), which play.cpp puts on the game's PATH: the
-    // FSR / XeSS / frame generation DLLs live there in the release zip
+    // FSR / frame generation DLLs live there in the release zip
     e.cap.file_next_to_exe = [exe, m = std::make_shared<std::unordered_map<std::string, bool>>()](const std::string &name) {
         if (exe.empty()) return false;
         auto it = m->find(name);
@@ -1112,7 +1112,7 @@ static void option_row(App &a, int g, const gs::Option &o)
                 // 0.6.6: a Scene resolution with no whole-number scene size here is greyed, with the reason (hover)
                 if (ca.ok && o.id == "SceneMode" && i != idx)
                     ca = gs::scene_mode_choice_available(i, gs::expected_render_scale((gs::Game)g, a.cur[g], a.env[g]));
-                // 0.3.0 (Shagg 14:18): FSR / DLSS / XeSS are DirectX 12 only - greyed while Vulkan is the Graphics API
+                // 0.3.0 (Shagg 14:18): FSR / DLSS are DirectX 12 only - greyed while Vulkan is the Graphics API
                 if (ca.ok && o.id == "AAMode" && i >= 2 && i <= 4 && gs::runs_vulkan(a.cur[g], a.env[g]) && !(i == 2 && gs::fsr_vulkan_on(a.cur[g], a.env[g]))) {   // 5 SMAA T2x: both APIs; fsr049: FSR on Vulkan (opt-in)
                     ca.ok = false;
                     ca.why = i == 2 ? (gs::fsr_vulkan(a.env[g]) ? "FSR on Vulkan is experimental - turn on \"FSR on Vulkan (experimental)\" to use it; otherwise the launcher uses SMAA."

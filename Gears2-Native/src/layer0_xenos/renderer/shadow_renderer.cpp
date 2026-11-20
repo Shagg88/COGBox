@@ -966,16 +966,16 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_float_constants_trim, true, "Gears2",
                     "Upload only the float constants each shader can read (false: all 256 per stage, as before)");
 REXCVAR_DEFINE_STRING(gow2_upscaler, "off", "Gears2",
                       "Temporal anti-aliasing / upscaling of the 3D scene (notes/64): off, dlss (NVIDIA DLSS / DLAA, RTX "
-                      "GPUs), fsr (AMD FSR, any GPU) or xess (Intel XeSS, any GPU with Shader Model 6.4). Runs on the "
+                      "GPUs), or fsr (AMD FSR, any GPU). Runs on the "
                       "lit scene before the game's post-processing, with "
                       "camera jitter and motion vectors from depth; native-resolution AA at the render scale for now");
 REXCVAR_DEFINE_DOUBLE(gow2_upscale_sharpness, 0.0, "Gears2", "FSR's own sharpening, 0..1 (DLSS ignores it)");
 REXCVAR_DEFINE_STRING(gow2_upscale_mip_bias, "auto", "Gears2",
                       "Notes/82: while an upscaling mode draws the scene below the output, sharper mips for it: off, auto (log2 of "
-                      "scene / output, 1 lower with DLSS / FSR as NVIDIA's and AMD's guides say: Quality -1.58, Ultra Performance -2.58; XeSS plain) or a number. F2 toggles it with --gow2_ao_debug_keys");
+                      "scene / output, 1 lower with DLSS / FSR as NVIDIA's and AMD's guides say: Quality -1.58, Ultra Performance -2.58) or a number. F2 toggles it with --gow2_ao_debug_keys");
 REXCVAR_DEFINE_STRING(gow2_upscale_mode, "native", "Gears2",
                       "Patch 0141 (frame-rate item 5): with --gow2_upscaler, draw the 3D scene below the output size and "
-                      "let DLSS / FSR / XeSS fill in the detail. native = the scene at the render scale (anti-aliasing "
+                      "let DLSS / FSR fill in the detail. native = the scene at the render scale (anti-aliasing "
                       "only, as before); performance = half (2x -> 1x, 4x -> 2x); quality = 3x -> 2x; ultra = 3x -> 1x. "
                       "The output size is --gow2_renderer_resolution_scale; a mode with no integer pair there stays native");
 REXCVAR_DEFINE_BOOL(gow2_fg_inputs, false, "Gears2",
@@ -1031,7 +1031,7 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_depth_at_resolve, false, "Gears2",
                     "depth before the scene colour resolve - on there by gow2_app.h); false: read at the scene colour "
                     "resolve, as before (Gears 3 measured the same either way, s.9)");
 REXCVAR_DEFINE_BOOL(gow2_upscale_character_motion, false, "Gears2",
-                    "Notes/80 s.6: DLSS / FSR / XeSS motion vectors on characters from their own movement (the "
+                    "Notes/80 s.6: DLSS / FSR motion vectors on characters from their own movement (the "
                     "transforms of the game's velocity pass), not the camera's - the camera follows the player, so "
                     "camera-only vectors are wrong on him by the whole camera move. Gears 2's layout (velocity pass "
                     "c5-c12); on there by gow2_app.h");
@@ -1049,7 +1049,7 @@ REXCVAR_DEFINE_BOOL(gow2_fg_motion_depth_check, false, "Gears2",
                     "camera's whole move. Object / character motion passes still overwrite their own pixels. Logged in "
                     "the upscaler log window ('depth check')");
 REXCVAR_DEFINE_BOOL(gow2_upscale_object_motion, false, "Gears2",
-                    "#147 / #150 (off by default until tested): DLSS / FSR / XeSS motion vectors per object. Every scene "
+                    "#147 / #150 (off by default until tested): DLSS / FSR motion vectors per object. Every scene "
                     "draw's own local-to-clip matrix (the camera times its object-to-world rows; Gears 1: its combined "
                     "matrix) is kept by draw identity (vertex / index data, shaders, index count) and matched to last "
                     "frame's; a draw whose identity was seen moving by itself (not as the camera) is drawn again into an "
@@ -1070,7 +1070,7 @@ REXCVAR_DEFINE_DOUBLE(gow2_ao_radius, 60.0, "Gears2",
                       "XeGTAO effect radius in the game's world units (notes/80; UE3: about 2 cm each)");
 REXCVAR_DEFINE_INT32(gow2_ao_denoise, 0, "Gears2",
                      "XeGTAO denoise passes (notes/80 s.4): 1 = sharp, 2 = medium, 3 = soft; 0 = automatic: under DLSS / FSR "
-                     "/ XeSS by the scene's scale (ultra: 3x or more 1, 2x 2, 1x 3), else 2 at ultra; below ultra one more, up "
+                     "by the scene\'s scale (ultra: 3x or more 1, 2x 2, 1x 3), else 2 at ultra; below ultra one more, up "
                      "to 3. F8 changes it live");
 REXCVAR_DEFINE_BOOL(gow2_ao_half, false, "Gears2",
                     "XeGTAO at half resolution (test, Shagg 20 Nov): the main and denoise passes run on a quarter of the "
@@ -1118,7 +1118,7 @@ REXCVAR_DEFINE_BOOL(gow2_ssil_difference, false, "Gears2",
                     "game's baked lighting already has is not added again (Shift+Home toggles it)");
 REXCVAR_DEFINE_BOOL(gow2_ssil_temporal, true, "Gears2",
                     "SSIL: blend each frame into the last (reprojected with the upscaler's motion vectors) - only while "
-                    "DLSS / FSR / XeSS / SMAA T2x runs (Ctrl+Home toggles it)");
+                    "DLSS / FSR / SMAA T2x runs (Ctrl+Home toggles it)");
 REXCVAR_DEFINE_BOOL(gow2_ssil_bounces, true, "Gears2",
                     "SSIL: last frame's indirect light bounces again (several bounces over frames; needs --gow2_ssil_temporal "
                     "running; Alt+Home toggles it)");
@@ -1188,16 +1188,16 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_camera_move, true, "Gears2",
 // From the Gears 3 chat (its commit 80d9b9e, job 056): which vertex constants carry the object rows / the camera
 // position. 0 = Gears 2's behaviour (objects c5-c8, no camera position); gow3.exe sets 7 and 5.
 REXCVAR_DEFINE_INT32(gow2_upscale_object_constants, -1, "Gears2",
-                     "Camera move for DLSS / FSR / XeSS: the first of the four vertex constants holding an object's "
+                     "Camera move for DLSS / FSR: the first of the four vertex constants holding an object's "
                      "object-to-world rows (translation in the fourth). -1 = the game's (Gears 2: c5; Gears 3 sets c7; "
                      "Gears 1 sets c0)");
 REXCVAR_DEFINE_INT32(gow2_upscale_camera_matrix, 0, "Gears2",
-                     "DLSS / FSR / XeSS (Gears 1 job 715): the first of the four vertex constants holding the camera's "
+                     "DLSS / FSR (Gears 1 job 715): the first of the four vertex constants holding the camera's "
                      "view-projection. 0 = c0 (Gears 2, 3, Judgment); -1 = found on the frame's first scene draw (the "
                      "first four constants it reads that make a perspective matrix, outside the object rows) - Gears 1, "
                      "whose c0-c3 are each object's own object-to-world rows");
 REXCVAR_DEFINE_INT32(gow2_upscale_camera_constant, 0, "Gears2",
-                     "Camera move for DLSS / FSR / XeSS: a vertex constant holding the camera's world position on every "
+                     "Camera move for DLSS / FSR: a vertex constant holding the camera's world position on every "
                      "scene draw (its change = the move; the sign is learned from the object vote). 0 = none (Gears 3 sets c5)");
 REXCVAR_DEFINE_BOOL(gow2_upscale_dejitter_depth, false, "Gears2",
                     "Upscalers (Gears 3 job 058): the frame's scene depth resolve is written at the unjittered pixel "
@@ -1209,13 +1209,13 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_passthrough, false, "Gears2",
                     "Evaluate is skipped and the jittered scene goes on unchanged - shows whether an artefact is already in "
                     "the scene the game draws under jitter, or comes from the upscaler's reconstruction");
 REXCVAR_DEFINE_BOOL(gow2_upscale_resize_recreate, false, "Gears2",
-                    "Diagnostic (GitHub #323): the old way - DLSS / FSR / XeSS re-created for every scene size (Gears 2 "
+                    "Diagnostic (GitHub #323): the old way - DLSS / FSR re-created for every scene size (Gears 2 "
                     "narrows its scene in heavy views, many times a second; ~20 ms each). Off: created once for the "
                     "largest size, the frame handed over within it, history kept");
 REXCVAR_DEFINE_BOOL(gow2_upscale_resize_reset, false, "Gears2",
                     "Diagnostic (GitHub #323): throw the upscaler's history away on a frame whose scene size differs from "
                     "the last one (as the old re-creation did). Off: the history is kept, motion re-expressed for the "
-                    "last frame's size (DLSS / XeSS / FSR; FSR without the padding shader resets on such a frame either "
+                    "last frame's size (DLSS / FSR; FSR without the padding shader resets on such a frame either "
                     "way)");
 REXCVAR_DEFINE_INT32(gow2_upscale_jitter_scope, 0, "Gears2",
                      "Diagnostic (Gears 3 job 059): which perspective draws into the scene depth get the upscalers' jitter "
@@ -1229,11 +1229,11 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_jitter_late, false, "Gears2",
                     "their lighting under DLSS / FSR; [G] later lighting passes drawn unjittered fail the depth-equal test "
                     "against the jittered depth. The count is always logged ('camera draws after the upscale')");
 REXCVAR_DEFINE_INT32(gow2_upscale_scene_formats, 1, "Gears2",
-                     "Which colour target formats count as the scene for DLSS / FSR / XeSS: 1 = 16-bit float (Gears 2's lit "
+                     "Which colour target formats count as the scene for DLSS / FSR: 1 = 16-bit float (Gears 2's lit "
                      "scene), 2 = 10:10:10:2 UNORM (Gears 3's), 3 = both. Gears 2 keeps 1: in a ch05 cutscene a "
                      "full-screen 10:10:10:2 target came first and was taken instead of the scene (job 276); gow3.exe sets 2");
 REXCVAR_DEFINE_BOOL(gow2_upscale_scene_last_copy, false, "Gears2",
-                    "Notes/80 s.11: DLSS / FSR / XeSS / T2x take the frame's last full-screen scene copy, at the position "
+                    "Notes/80 s.11: DLSS / FSR / T2x take the frame's last full-screen scene copy, at the position "
                     "learned from the frame before, not the first. Judgment copies its scene mid-frame for translucency "
                     "before the finished copy: the first was upscaled ~480 draws early (gowj.exe sets true)");
 REXCVAR_DEFINE_INT32(gow2_upscale_probe, 0, "Gears2",
@@ -6183,7 +6183,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::TextureHandle up_depth_ = 0, up_motion_ = 0, up_output_ = 0;
   uint32_t up_w_ = 0, up_h_ = 0;
   // GitHub #323: the SDK upscaler is created for a guest size the frames fit in (upscale::UpdateCreationSize) at these
-  // render / output scales; up_output_ has that size. kPadded (DLSS, XeSS, FSR): the frame's inputs padded to it
+  // render / output scales; up_output_ has that size. kPadded (DLSS, FSR): the frame's inputs padded to it
   // (kUpscalePadCs), when the frame or the last one is smaller. up_prev_rw_ / rh_: the last frame the upscaler
   // evaluated (r83 L6: set after its Evaluate); up_scene_rw_ / rh_: the last scene seen (the size-change count).
   rr::upscale::CreationSize up_fix_;
@@ -6290,7 +6290,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ao_mode_ = rr::ao::ParseMode(REXCVAR_GET(gow2_ao));  // notes/80
     const bool ao_camera = ao_mode_ == rr::ao::Mode::kGtao;
     if (kind == rr::upscale::Kind::kNone) {
-      if (!name.empty() && name != "off") REXLOG_WARN("gow2_upscaler: unknown '{}' (off | dlss | fsr | xess | smaa_t2x); off", name);
+      if (!name.empty() && name != "off") REXLOG_WARN("gow2_upscaler: unknown '{}' (off | dlss | fsr | smaa_t2x); off", name);
       if (!fg_inputs && !ao_camera) return;
     } else if (kind == rr::upscale::Kind::kSmaaT2x) {  // notes/80 s.7: ours, made here (it needs the shader cache)
       upscaler_ = std::make_unique<T2xUpscaler>(*this);
@@ -6308,7 +6308,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const gpu::ShaderHandle m = cache_->GetBuiltin("upscale_motion_cs", rr::builtin::kMotionVectorsCs, gpu::ShaderStage::kCompute);
       up_depth_pipe_ = d ? backend_->CreateComputePipeline(d) : 0;
       up_motion_pipe_ = m ? backend_->CreateComputePipeline(m) : 0;
-      // GitHub #323: DLSS / XeSS / FSR keep one size; a narrower scene is padded to it (RunUpscaler). D3D12 and Vulkan
+      // GitHub #323: DLSS / FSR keep one size; a narrower scene is padded to it (RunUpscaler). D3D12 and Vulkan
       // (r83 M1: FSR runs on both; the shader cache compiles the HLSL to SPIR-V like the other built-ins, its storage
       // image formatless - the view's format, as up_output_ and the depth / motion passes already need).
       if (upscaler_ && upscaler_->Resize() == rr::upscale::ResizeMode::kPadded &&
@@ -7560,7 +7560,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // GitHub #323 (upscale::ResizeMode::kPadded): the frame's colour, depth and motion (rw x rh) copied into textures of
   // the creation size (cw x ch), the edge repeated beyond the frame (kUpscalePadCs), and `in` pointed at them. The
-  // motion is re-expressed for the last frame's size (prev_rw x prev_rh) when the history is kept: DLSS / XeSS / FSR
+  // motion is re-expressed for the last frame's size (prev_rw x prev_rh) when the history is kept: DLSS / FSR
   // read it in their render pixels, and last frame's image lies in the same grid at its own, other, size. False: no
   // textures (r83 L4: logged once, the SDK's fallback mode from then on).
   bool PadUpscaleInputs(rr::upscale::FrameInputs& in, gpu::Format colour_format, uint32_t rw, uint32_t rh, uint32_t cw,
@@ -7580,8 +7580,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       up_pad_depth_ = backend_->CreateTexture(td);
       // r83 L1: R32G32 would keep the re-expressed motion (offset up to ~1000 px at 4x) exact to < 0.01 px; R16G16
       // rounds it to 0.125-0.5 px on size-change frames only. Kept at R16G16, the format every SDK already gets from
-      // up_motion_: none of the DLSS / XeSS / FFX headers or guides in this repo states that R32G32_FLOAT motion is
-      // accepted (XeSS's and FFX's headers are not in it at all) - switch once that is verified.
+      // up_motion_: none of the DLSS / FFX headers or guides in this repo states that R32G32_FLOAT motion is
+      // accepted (FFX's headers are not in it at all) - switch once that is verified.
       td.format = gpu::Format::kR16G16Float;
       td.debug_name = "upscaler padded motion";
       up_pad_motion_ = backend_->CreateTexture(td);
@@ -7648,7 +7648,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // re-creating DLSS for each size cost ~20 ms. The SDK upscalers are now created for a size the frames fit in
     // (upscale::UpdateCreationSize) and each frame is handed over within it (upscale::ResizeMode); ours (SMAA T2x) and
     // --gow2_upscale_resize_recreate keep the frame's own size as before. Without the padding shader or its textures
-    // (r83 L4), an SDK's fallback: FSR per dispatch, DLSS / XeSS re-created.
+    // (r83 L4), an SDK's fallback: FSR per dispatch, DLSS re-created.
     using RM = rr::upscale::ResizeMode;
     const RM mode = !upscaler_ || REXCVAR_GET(gow2_upscale_resize_recreate) ? RM::kRecreate
                     : upscaler_->Resize() != RM::kPadded                   ? upscaler_->Resize()
@@ -7697,7 +7697,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     // The output, at the creation's output size (#323; patch 0141: the output scale); the resolve reads the frame's
     // part of it, top left, as it read the frame-sized output before.
-    // The output has the scene colour's format (Gears 2 job 271: XeSS requires it; DLSS / FSR accept it). Gears 3's
+    // The output has the scene colour's format (DLSS / FSR accept it). Gears 3's
     // scene is 10:10:10:2, so this output used to be 16-bit float while the input was not.
     if (upscaler_ && (!up_output_ || up_ow_ != cow || up_oh_ != coh || up_out_format_ != rt.format)) {  // patch 0145:
       if (up_output_) backend_->DestroyTexture(up_output_), up_output_ = 0;                            // none for inputs only
@@ -7923,7 +7923,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++up_resets_;
     } else if (mode == RM::kPadded) {
       if (resized && !in.reset && REXCVAR_GET(gow2_upscale_resize_reset)) in.reset = true, ++up_resets_;
-      // DLSS / XeSS / FSR are always given the creation's render and output size, with the frame padded into it when
+      // DLSS / FSR are always given the creation's render and output size, with the frame padded into it when
       // it is smaller - or when the last one was, for the motion's re-expression.
       if ((rw != cw || rh != ch || resized) && !PadUpscaleInputs(in, rt.format, rw, rh, cw, ch, prev_rw, prev_rh)) {
         ++up_fail_;
@@ -9387,10 +9387,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     float bias = 0.0f;
     if (XenosAoDebugMipBias() && up_scale_in_ && up_scale_in_ < res_scale_ && rts_->PhaseScale() == up_scale_in_)
       // #345 (deep dive R4): NVIDIA's DLSS Programming Guide s.3.5 and AMD's FSR 2 guide - log2(render / display) - 1;
-      // Intel's XeSS-SR guide - plain log2(render / display)
       bias = !is_auto ? fixed
                       : std::log2(float(up_scale_in_) / float(res_scale_)) -
-                            (upscaler_ && upscaler_->kind() != rr::upscale::Kind::kXess ? 1.0f : 0.0f);
+                            (upscaler_ ? 1.0f : 0.0f);
     if (bias == mip_bias_) return;
     mip_bias_ = bias;
     static bool told = false;

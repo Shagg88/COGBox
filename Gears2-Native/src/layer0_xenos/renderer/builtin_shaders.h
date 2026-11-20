@@ -1104,7 +1104,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
-// GitHub #323 (upscale::ResizeMode::kPadded): an upscaler input padded to the size the DLSS / XeSS / FSR feature was
+// GitHub #323 (upscale::ResizeMode::kPadded): an upscaler input padded to the size the DLSS / FSR feature was
 // made for (D3D12 and Vulkan: u0 is a formatless storage image in SPIR-V, the view's format). c0.xy = the frame's
 // size in t0: texel p of u0 reads t0 at min(p, c0.xy - 1) (the edge repeats - no stale pixels beyond it). c0.zw =
 // asfloat k per axis, the last frame's size / this frame's: .xy becomes .xy * k + (q + 0.5) * (k - 1) at the texel q

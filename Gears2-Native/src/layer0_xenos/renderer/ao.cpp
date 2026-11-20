@@ -15,7 +15,7 @@ Mode ParseMode(const std::string& name) {
 
 uint32_t DenoisePasses(int32_t setting, uint32_t quality, const std::string& upscaler, uint32_t scene_scale) {
   if (setting >= 1) return setting >= 3 ? 3u : uint32_t(setting);
-  const bool accumulates = upscaler == "dlss" || upscaler == "fsr" || upscaler == "xess";
+  const bool accumulates = upscaler == "dlss" || upscaler == "fsr";
   const uint32_t at_ultra = !accumulates ? 2u : scene_scale >= 3 ? 1u : scene_scale == 2 ? 2u : 3u;
   return quality >= 3 ? at_ultra : std::min(at_ultra + 1u, 3u);
 }

@@ -131,7 +131,7 @@ class FsrUpscaler final : public Upscaler {
   }
   Kind kind() const override { return Kind::kFsr; }
   std::string Status() const override { return status_; }
-  // GitHub #323: the context is made once for the creation size. Padded like DLSS / XeSS (r83 M1): every dispatch
+  // GitHub #323: the context is made once for the creation size. Padded like DLSS (r83 M1): every dispatch
   // gets renderSize / upscaleSize = maxRenderSize / maxUpscaleSize, so nothing depends on a provider (FSR 4, an older
   // 3.1.x pinned with --gow2_fsr_version) honouring an upscaleSize below the maximum, and the history is kept.
   // Without the padding shader: the frame's renderSize / upscaleSize per dispatch (Evaluate below), history reset on

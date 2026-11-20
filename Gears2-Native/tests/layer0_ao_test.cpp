@@ -126,7 +126,6 @@ TEST_CASE("ao: denoise passes, set or automatic (notes/80 s.4)", "[ao]") {
   CHECK(ao::DenoisePasses(0, 2, "dlss", 2) == 3);
   CHECK(ao::DenoisePasses(0, 2, "dlss", 1) == 3);  // capped
   CHECK(ao::DenoisePasses(0, 3, "fsr", 4) == 1);
-  CHECK(ao::DenoisePasses(0, 0, "xess", 1) == 3);
   CHECK(ao::DenoisePasses(0, 2, "smaa_t2x", 3) == 3);  // T2x's two frames: high keeps 3, ultra 2, any scale
   CHECK(ao::DenoisePasses(0, 3, "smaa_t2x", 1) == 2);
   CHECK(ao::DenoisePasses(0, 2, "off", 3) == 3);

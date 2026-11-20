@@ -114,7 +114,7 @@ class Gow1App : public rex::ReXApp {
     // 30 Oct (Shagg's play test from My Game): blood decals stop z-fighting (job 713, the UE3 decal clamp); resolves write the
     // texture that reads them (job 047, GPU 8.1 -> 7.2 ms at 1440p); colour resolves fused at 2x and above (job 238/239).
     game_default("gow2_renderer_decal_min_bias", "0.01");
-    // Job 715 (DLSS / FSR / XeSS): Gears 1's c0-c3 are each object's object-to-world rows (15:16 probe), so the camera
+    // Job 715 (DLSS / FSR): Gears 1's c0-c3 are each object's object-to-world rows (15:16 probe), so the camera
     // matrix is found on the first scene draw, and the camera move is voted from those object rows.
     game_default("gow2_upscale_camera_matrix", "-1");
     game_default("gow2_upscale_object_constants", "0");

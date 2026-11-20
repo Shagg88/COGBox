@@ -196,7 +196,7 @@ inline Availability scene_mode_choice_available(int m, int out) {
     return a;
 }
 // proton049: under Proton / Wine, a single choice that can't work there, with its one-line reason (always ok on
-// Windows): exclusive fullscreen, NVIDIA DLSS without an NVIDIA RTX card, DLSS / XeSS frame generation.
+// Windows): exclusive fullscreen, NVIDIA DLSS without an NVIDIA RTX card, DLSS frame generation.
 Availability wine_choice_available(const Option& o, int index, const Environment& env);
 // proton049: a line about the row on Linux / Steam Deck (DLSS and NVAPI, HDR, Reflex, the Deck's 40 / 60 fps), shown
 // under its description under Proton / Wine; "" on Windows.

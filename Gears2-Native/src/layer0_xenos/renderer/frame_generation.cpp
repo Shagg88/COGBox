@@ -24,7 +24,6 @@
 
 #include "dlss_framegen.h"
 #include "fg_shown_frames.h"  // the FPS bar's shown-frame count  // --gow2_frame_generation=dlss (NVIDIA Streamline, experimental)
-#include "xess_framegen.h"  // --gow2_frame_generation=xess (Intel XeSS-FG + XeLL, experimental, 0.4.9)
 
 #include <rex/cvar.h>
 #include <rex/frame_hooks.h>
@@ -40,8 +39,7 @@ REXCVAR_DEFINE_STRING(gow2_frame_generation, "off", "Gears2",
                       "timing must be unchanged); fsr = AMD FSR frame generation, one generated frame between each two "
                       "the game draws (any DirectX 12 graphics card); dlss = NVIDIA DLSS frame generation through "
                       "Streamline (RTX 40/50, experimental; --gow2_dlss_fg_mode; falls back to fsr, or off, when it "
-                      "can't run); xess = Intel XeSS frame generation 2x with XeLL (Intel Arc, or another card with "
-                      "Shader Model 6.4; experimental; falls back to fsr, or off, as dlss does)");
+                      "can't run)");
 REXCVAR_DEFINE_INT32(gow2_fg_debug, 0, "Gears2",
                      "Patch 0147: AMD frame-generation debug drawing, as flags: 1 tear lines, 2 reset indicators, 4 debug "
                      "view (the generated frame shows its inputs), 16 pacing lines");
@@ -796,21 +794,18 @@ bool XenosFrameGenerationLive(const std::string& mode) {
 bool XenosFrameGenerationWanted() {
   if (XenosFgVkActive()) return XenosFgVkWanted();  // notes/83
   if (XenosDlssFgActive()) return XenosDlssFgWanted();
-  if (XenosXefgActive()) return XenosXefgWanted();
   return g_inputs_wanted.load(std::memory_order_relaxed);
 }
 
 uint32_t XenosFrameGenerationHudlessFormat() {
   if (XenosFgVkActive()) return XenosFgVkHudlessFormat();  // notes/83
   if (XenosDlssFgActive()) return XenosDlssFgHudlessFormat();
-  if (XenosXefgActive()) return XenosXefgHudlessFormat();
   return g_inputs_wanted.load(std::memory_order_relaxed) ? g_hudless_format.load(std::memory_order_relaxed) : 0u;
 }
 
 bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height) {
   if (XenosFgVkActive()) return XenosFgVkHudlessSize(width, height);  // notes/83
   if (XenosDlssFgActive()) return XenosDlssFgHudlessSize(width, height);
-  if (XenosXefgActive()) return XenosXefgHudlessSize(width, height);
   const uint32_t v = g_hl_rect_size.load(std::memory_order_relaxed);
   width = v >> 16, height = v & 0xFFFFu;
   return v != 0;
@@ -819,7 +814,6 @@ bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height) {
 void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame) {
   if (XenosFgVkActive()) return XenosFgVkSetInputs(guest_output_resource, frame);  // notes/83
   if (XenosDlssFgActive()) return XenosDlssFgSetInputs(guest_output_resource, frame);
-  if (XenosXefgActive()) return XenosXefgSetInputs(guest_output_resource, frame);
   if (!g_generate || !guest_output_resource) return;
   std::lock_guard<std::mutex> lock(g_mutex);
   Inputs* slot = nullptr;
@@ -842,9 +836,7 @@ void XenosFrameGenerationInstall() {
   if (REXCVAR_GET(gow2_renderer_api) == "vulkan") {  // notes/83: AMD's Vulkan swap chain (DLSS-G is DirectX 12 only)
     if (mode == "dlss") REXLOG_INFO("gow2_frame_generation: NVIDIA DLSS frame generation is DirectX 12 only; AMD FSR "
                                     "frame generation on Vulkan instead");
-    if (mode == "xess") REXLOG_INFO("gow2_frame_generation: Intel XeSS frame generation is DirectX 12 only; AMD FSR "
-                                    "frame generation on Vulkan instead");
-    if (mode != "fsr" && mode != "dlss" && mode != "xess") {
+    if (mode != "fsr" && mode != "dlss") {
       REXLOG_WARN("gow2_frame_generation: '{}' is not available on Vulkan (fsr only); off", mode);
       return;
     }
@@ -856,13 +848,8 @@ void XenosFrameGenerationInstall() {
     REXLOG_INFO("gow2_frame_generation: falling back to AMD FSR frame generation");
     mode = "fsr";
   }
-  if (mode == "xess") {  // Intel XeSS frame generation (0.4.9, experimental); AMD's when XeSS-FG can't load at all
-    if (XenosXefgInstall(REXCVAR_GET(gow2_frame_generation_hudless), &FsrFallback)) return;
-    REXLOG_INFO("gow2_frame_generation: falling back to AMD FSR frame generation");
-    mode = "fsr";
-  }
   if (mode != "swapchain" && mode != "fsr") {
-    REXLOG_WARN("gow2_frame_generation: unknown '{}' (off | swapchain | fsr | dlss | xess); off", mode);
+    REXLOG_WARN("gow2_frame_generation: unknown '{}' (off | swapchain | fsr | dlss); off", mode);
     return;
   }
   g_generate = mode == "fsr";
@@ -878,20 +865,18 @@ void XenosFrameGenerationInstall() {
 
 #else  // !GN_HAVE_FSR
 
-// Without the FidelityFX SDK only DLSS-G (when built with Streamline) or XeSS-FG can run; no fallback.
+// Without the FidelityFX SDK only DLSS-G (when built with Streamline) can run; no fallback.
 bool XenosFrameGenerationWanted() {
-  return (XenosDlssFgActive() && XenosDlssFgWanted()) || (XenosXefgActive() && XenosXefgWanted());
+  return XenosDlssFgActive() && XenosDlssFgWanted();
 }
 uint32_t XenosFrameGenerationHudlessFormat() {
-  return XenosDlssFgActive() ? XenosDlssFgHudlessFormat() : XenosXefgActive() ? XenosXefgHudlessFormat() : 0u;
+  return XenosDlssFgActive() ? XenosDlssFgHudlessFormat() : 0u;
 }
 bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height) {
-  if (XenosDlssFgActive()) return XenosDlssFgHudlessSize(width, height);
-  return XenosXefgActive() && XenosXefgHudlessSize(width, height);
+  return XenosDlssFgActive() && XenosDlssFgHudlessSize(width, height);
 }
 void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame) {
   if (XenosDlssFgActive()) XenosDlssFgSetInputs(guest_output_resource, frame);
-  else if (XenosXefgActive()) XenosXefgSetInputs(guest_output_resource, frame);
 }
 void XenosFrameGenerationSlotsRecreated() {}
 bool XenosFrameGenerationLive(const std::string&) { return false; }   // 0.4.9: no AMD FSR here - restart
@@ -900,10 +885,6 @@ void XenosFrameGenerationInstall() {
   const std::string mode = REXCVAR_GET(gow2_frame_generation);
   if (mode == "dlss") {
     XenosDlssFgInstall(REXCVAR_GET(gow2_frame_generation_hudless), nullptr);  // logs why when it can't
-    return;
-  }
-  if (mode == "xess") {
-    XenosXefgInstall(REXCVAR_GET(gow2_frame_generation_hudless), nullptr);  // logs why when it can't
     return;
   }
   if (!mode.empty() && mode != "off")

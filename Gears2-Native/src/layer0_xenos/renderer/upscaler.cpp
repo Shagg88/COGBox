@@ -15,14 +15,10 @@ std::unique_ptr<Upscaler> CreateDlssUpscaler();  // dlss_upscaler.cpp
 #if defined(GN_HAVE_FSR)
 std::unique_ptr<Upscaler> CreateFsrUpscaler();   // fsr_upscaler.cpp
 #endif
-#if defined(GN_HAVE_XESS)
-std::unique_ptr<Upscaler> CreateXessUpscaler();  // xess_upscaler.cpp
-#endif
 
 Kind ParseKind(const std::string& name) {
   if (name == "dlss") return Kind::kDlss;
   if (name == "fsr") return Kind::kFsr;
-  if (name == "xess") return Kind::kXess;
   if (name == "smaa_t2x") return Kind::kSmaaT2x;  // notes/80 s.7
   return Kind::kNone;
 }
@@ -31,7 +27,6 @@ const char* KindName(Kind kind) {
   switch (kind) {
     case Kind::kDlss: return "DLSS";
     case Kind::kFsr: return "FSR";
-    case Kind::kXess: return "XeSS";
     case Kind::kSmaaT2x: return "SMAA T2x";
     default: return "none";
   }
@@ -350,9 +345,6 @@ std::unique_ptr<Upscaler> CreateUpscaler(Kind kind) {
 #if defined(GN_HAVE_FSR)
   if (kind == Kind::kFsr) return CreateFsrUpscaler();
 #endif
-#if defined(GN_HAVE_XESS)
-  if (kind == Kind::kXess) return CreateXessUpscaler();
-#endif
   (void)kind;
   return nullptr;
 }
@@ -364,9 +356,6 @@ bool BuiltIn(Kind kind) {
 #endif
 #if defined(GN_HAVE_FSR)
   if (kind == Kind::kFsr) return true;
-#endif
-#if defined(GN_HAVE_XESS)
-  if (kind == Kind::kXess) return true;
 #endif
   (void)kind;
   return false;

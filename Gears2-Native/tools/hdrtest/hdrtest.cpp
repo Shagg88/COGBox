@@ -276,7 +276,7 @@ int main(int argc,char** argv) {
   backend->UploadTexture(motion,0,0,motionData.data(),rw*4,rh,1);
   gpu::TextureHandle result=input;
   const auto kind=up::ParseKind(mode);
-  if(kind==up::Kind::kDlss || kind==up::Kind::kFsr || kind==up::Kind::kXess) {
+  if(kind==up::Kind::kDlss || kind==up::Kind::kFsr) {
     auto aa=up::CreateUpscaler(kind);
     if(!aa || !aa->Configure(*backend,rw,rh,ow,oh,true,true,false)) {
       std::printf("FAIL %s configure: %s\n",mode.c_str(),aa?aa->Status().c_str():"not built");return 5;

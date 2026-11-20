@@ -1,5 +1,5 @@
 // 0.4.9 (shared049, docs/plan-049-shared-dlls.md): the vendor DLLs every game uses (NVIDIA DLSS + Streamline, AMD
-// FidelityFX, XeSS, DXC) are kept ONCE in the release's <COGBox>\shared\ folder instead of beside each game's exe.
+// FidelityFX, DXC) are kept ONCE in the release's <COGBox>\shared\ folder instead of beside each game's exe.
 // Release layout: <COGBox>\<Game>\<port folder>\<game>.exe, so shared\ is <exe folder>\..\..\shared\.
 // Rule: the exe's own folder FIRST (developer builds have every DLL there; a player's own copy - the launcher's
 // "Custom DLSS file" - goes there), then shared\. One exception, Streamline (DLSS-G): shared\ first, because the 0.4.8

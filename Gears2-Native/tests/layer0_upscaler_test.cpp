@@ -149,10 +149,8 @@ TEST_CASE("camera motion with a depth remap (host stores guest depth halved)", "
 TEST_CASE("names and ratios", "[upscaler]") {
   CHECK(up::ParseKind("dlss") == up::Kind::kDlss);
   CHECK(up::ParseKind("fsr") == up::Kind::kFsr);
-  CHECK(up::ParseKind("xess") == up::Kind::kXess);
+  CHECK(up::ParseKind("xess") == up::Kind::kNone);  // dropped in 0.6.6
   CHECK(up::ParseKind("smaa") == up::Kind::kNone);
-  CHECK(std::string(up::KindName(up::Kind::kXess)) == "XeSS");
-  CHECK_FALSE(up::BuiltIn(up::Kind::kXess));  // the test build compiles no SDK in
   CHECK(up::QualityRatio(up::Quality::kNativeAA) == 1.0f);
   CHECK(up::QualityRatio(up::Quality::kPerformance) == 2.0f);
 }

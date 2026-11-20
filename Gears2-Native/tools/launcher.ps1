@@ -145,9 +145,9 @@ function Launch-Url([int]$g, [int]$chapter) {   # chapter = 0-based index into t
 # Monitor: the SDK's --monitor is 0 = default (the main screen), 1..N = its N-th display (SDL's order).
 $screens = @([System.Windows.Forms.Screen]::AllScreens)
 $monNames = @('Default (main screen)') + @(for ($i = 0; $i -lt $screens.Count; $i++) { "{0}: {1}x{2}{3}" -f ($i + 1), $screens[$i].Bounds.Width, $screens[$i].Bounds.Height, $(if ($screens[$i].Primary) { ' (main)' }) })
-# Anti-aliasing (notes/64): SMAA on the final image, or DLSS / FSR / XeSS on the 3D scene at the render resolution. Each
+# Anti-aliasing (notes/64): SMAA on the final image, or DLSS / FSR on the 3D scene at the render resolution. Each
 # is used only when its DLL is next to the game's exe; otherwise SMAA, and args.txt says why.
-$aaNames = @('Off', 'SMAA', 'FSR', 'DLSS (NVIDIA RTX)', 'XeSS')   # Gears 3 (its 20:40 mail): clean in ch8 with all three
+$aaNames = @('Off', 'SMAA', 'FSR', 'DLSS (NVIDIA RTX)')   # Gears 3 (its 20:40 mail): clean in ch8 with all three
 $gpus = @(try { Get-CimInstance Win32_VideoController -ErrorAction Stop | ForEach-Object { [string]$_.Name } } catch { @() })
 $gpuMain = @($gpus | Where-Object { $_ -match 'NVIDIA|GeForce|Quadro|AMD|Radeon|Intel.*Arc' } | Select-Object -First 1) + @($gpus | Select-Object -First 1) | Where-Object { $_ } | Select-Object -First 1
 $hasRtx = @($gpus | Where-Object { $_ -match 'RTX' }).Count -gt 0
@@ -342,13 +342,13 @@ $cFps = Add-Combo 'Frame rate limit' $fpsNames ([int]$s.Fps)
 # Launcher patch 0155 (SDK patch 37): the PC's own vsync - each frame waits for the screen's refresh, so no tearing. Not the
 # game's Xbox vsync (that one is part of the frame-rate limit above and stays as it is).
 $cVsync = Add-Check 'Vsync (no tearing)' ([bool]$s.Vsync) 'Each frame waits for your screen''s next refresh, so the picture never tears. With G-Sync / FreeSync the screen follows the game below its refresh rate. The frame rate is capped a little under your screen''s refresh rate (half of it with frame generation), which keeps the extra input lag small. Off = frames are shown at once (lowest lag, may tear).'
-$aaTip = "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.`r`nYour graphics card: $(if ($gpuMain) { $gpuMain } else { 'not detected' })"
+$aaTip = "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on NVIDIA RTX cards.`r`nYour graphics card: $(if ($gpuMain) { $gpuMain } else { 'not detected' })"
 $cAA = Add-Combo 'Anti-aliasing' $aaNames ([int]$s.AAMode) $aaTip
-# Patch 0142 (frame-rate item 5, upscaling): with FSR / DLSS / XeSS, the 3D scene can be drawn below the render
+# Patch 0142 (frame-rate item 5, upscaling): with FSR / DLSS, the 3D scene can be drawn below the render
 # resolution and the upscaler fills in the detail. Needs a render resolution the mode divides evenly (Performance:
 # 2x or 4x; Quality: 3x); otherwise the game stays native and its log says so.
 $sceneNames = @('Native (same as render resolution)', 'Quality (scene at 2/3)', 'Performance (scene at 1/2)', 'Ultra performance (scene at 1/3)')
-$cScene = Add-Combo 'Scene resolution' $sceneNames ([int]$s.SceneMode) "With FSR, DLSS or XeSS: draw the 3D scene at a lower resolution and let the upscaler fill in the detail - more frames per second, a little softer. HUD and menus stay at the full resolution.`r`nPerformance needs render resolution 2x (1440p) or 4x; Quality and Ultra performance need 3x (4K)."
+$cScene = Add-Combo 'Scene resolution' $sceneNames ([int]$s.SceneMode) "With FSR or DLSS: draw the 3D scene at a lower resolution and let the upscaler fill in the detail - more frames per second, a little softer. HUD and menus stay at the full resolution.`r`nPerformance needs render resolution 2x (1440p) or 4x; Quality and Ultra performance need 3x (4K)."
 $cAA.Add_SelectedIndexChanged({ $cScene.Enabled = $cAA.SelectedIndex -ge 2 -and -not $script:sceneOff })
 # Patches 0146 / 0147 (frame-rate item 6): AMD FSR frame generation - one generated frame between each two the game
 # draws. Any DirectX 12 graphics card.
@@ -702,7 +702,7 @@ $bPre.Add_Click({
     2 { $common += @("--game_data_root=`"$(Join-Path $gjRoot 'game\extracted')`"", '--gpu_plugin=xenos', "--gow2_shader_cache_dir=`"$(Join-Path $root 'out\judgment-shader-cache')`"")
         if (Test-Path (Join-Path $gjTu4Dir 'default.xexp')) { $common += "--update_data_root=`"$gjTu4Dir`"" } }
   }
-  switch ([int]$cAA.SelectedIndex) { 1 { $common += '--gow2_present_aa=smaa' } 2 { $common += '--gow2_upscaler=fsr' } 3 { $common += '--gow2_upscaler=dlss' } 4 { $common += '--gow2_upscaler=xess' } }
+  switch ([int]$cAA.SelectedIndex) { 1 { $common += '--gow2_present_aa=smaa' } 2 { $common += '--gow2_upscaler=fsr' } 3 { $common += '--gow2_upscaler=dlss' } }
   $pf = New-Object Windows.Forms.Form; $pf.Text = 'Pre-building shaders'; $pf.FormBorderStyle = 'FixedDialog'; $pf.StartPosition = 'CenterScreen'; $pf.ClientSize = New-Object Drawing.Size 360, 110; $pf.Font = $f.Font
   $pl = New-Object Windows.Forms.Label; $pl.AutoSize = $true; $pl.Location = New-Object Drawing.Point 12, 14; $pf.Controls.Add($pl)
   $pc = New-Object Windows.Forms.Button; $pc.Text = 'Cancel'; $pc.Width = 100; $pc.Location = New-Object Drawing.Point 248, 70; $pf.Controls.Add($pc); $pf.CancelButton = $pc
@@ -847,12 +847,12 @@ $play.Add_Click({
       if (Exe-Has $exe 'gow3_aspect') { $a += '--gow3_aspect=auto' } else { $notes += 'launcher: this Gears 3 build has no --gow3_aspect yet - the picture stays 16:9' }
     }
   }
-  # Anti-aliasing: DLSS / FSR / XeSS need their DLLs next to the exe; otherwise SMAA, and the note says why.
+  # Anti-aliasing: DLSS / FSR need their DLLs next to the exe; otherwise SMAA, and the note says why.
   $aa = [int]$s.AAMode
-  $need = @{ 2 = 'amd_fidelityfx_loader_dx12.dll'; 3 = 'nvngx_dlss.dll'; 4 = 'libxess.dll' }
+  $need = @{ 2 = 'amd_fidelityfx_loader_dx12.dll'; 3 = 'nvngx_dlss.dll' }
   if ($aa -eq 3 -and -not $hasRtx -and $gpus.Count) { $notes += "launcher: DLSS needs an NVIDIA RTX card ($gpuMain) - FSR instead"; $aa = 2 }
   if ($aa -ge 2 -and -not (Test-Path (Join-Path (Split-Path $exe) $need[$aa]))) { $notes += "launcher: $($aaNames[$aa]) is not available for this game / build - SMAA instead"; $aa = 1 }
-  switch ($aa) { 1 { $a += '--gow2_present_aa=smaa' } 2 { $a += '--gow2_upscaler=fsr' } 3 { $a += '--gow2_upscaler=dlss' } 4 { $a += '--gow2_upscaler=xess' } }
+  switch ($aa) { 1 { $a += '--gow2_present_aa=smaa' } 2 { $a += '--gow2_upscaler=fsr' } 3 { $a += '--gow2_upscaler=dlss' } }
   if ($aa -ge 2 -and $cScene.Enabled -and $cScene.SelectedIndex -gt 0) { $a += @('', '--gow2_upscale_mode=quality', '--gow2_upscale_mode=performance', '--gow2_upscale_mode=ultra')[$cScene.SelectedIndex] }   # 0142
   if ($cFG.Enabled -and $cFG.SelectedIndex -eq 1) { $a += '--gow2_frame_generation=fsr' }   # 0146 / 0147
   if (& $on $cAniso) { $a += @('--gow2_patch_aniso16=true', '--gow3_patch_aniso16=true', '--gowj_aniso16=true')[$g] }

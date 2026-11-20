@@ -24,8 +24,6 @@ void XenosLogSystemReport(const char* game);
 // start-up; the renderer hands over its D3D12 device and reports each submitted frame.
 void XenosLatencyInstall();
 void XenosLatencySetDevice(void* d3d12_device);
-// Review 049: XeSS frame generation fell back after start - Reflex / Anti-Lag 2 (if asked for) are installed then.
-void XenosLatencyXefgFellBack();
 void XenosLatencyFrameSubmitted();
 // Patch 0146 (renderer/frame_generation.cpp): frame generation (--gow2_frame_generation). XenosLatencyInstall calls it, so
 // every game that installs the latency tools gets it.

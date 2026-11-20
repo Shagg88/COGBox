@@ -204,7 +204,7 @@ New in 0.4.7
   #202, #213, #131). The GPU copies the games use to move textures in memory were being skipped on Vulkan.
   Vulkan is no longer marked experimental in Gears 3 and Judgment.
 - Gears 3: Exit Game on the main menu works after you have played and gone back to the menu (#215).
-- DLSS / FSR / XeSS in Gears 3 and Judgment: characters and other moving objects get their own motion vectors, so
+- DLSS / FSR in Gears 3 and Judgment: characters and other moving objects get their own motion vectors, so
   they no longer smear or flicker (#150, #147). Gears 1 keeps DLSS experimental (its characters still flicker with
   DLSS; SMAA is clean).
 - DLSS is no longer marked highly experimental in Gears 2, Gears 3 and Judgment (still is in Gears 1).
@@ -234,7 +234,7 @@ New in 0.4.6
   PlayStation style, colour, position, sound), an Achievements page in the in-game menu (F7) and an ACHIEVEMENTS tab
   in the launcher.
 - Ambient occlusion: AMD FidelityFX CACAO as a cheaper choice next to XeGTAO, and XeGTAO / CACAO in Judgment,
-  which also fixes its shadow flicker with DLSS; DLSS / FSR / XeSS get sharper textures when they draw the scene
+  which also fixes its shadow flicker with DLSS; DLSS / FSR get sharper textures when they draw the scene
   below the output size, and Judgment's DLSS takes the finished picture with real depth (thanks to gmihaic,
   PR #204).
 - COGBox's own text in the game (the in-game menu, the Achievements page, popups, shader notes) is in the
@@ -278,7 +278,7 @@ New in 0.4.6
 - Judgment: after a loading screen the 30 fps loading limit ends sooner (3 s after loading instead of 6, at most
   8 s while the level streams in instead of 20).
 - XeGTAO High uses two smoothing passes instead of three (a little faster, slightly less smooth); Ultra chooses its
-  passes by itself (two without DLSS / FSR / XeSS, fewer the lower DLSS / FSR / XeSS draws the scene).
+  passes by itself (two without DLSS / FSR, fewer the lower DLSS / FSR draws the scene).
 - Language: packages stored compressed as a whole are now read when switching the voice language.
 - Gears 1 launcher: says when the chosen Scene resolution can't be used at the render scale (#98).
 - New logs and test switches for reported issues (#90, #105, #131, #132, #185, #193, #202), all off unless asked for.
@@ -301,7 +301,7 @@ New in 0.4.5
 - Smoother frame rate: the picture is presented from the window's own thread, in all four games.
 - Launcher: an EXIT button, it comes back to the front when a game closes, a "COGBox updated" note with a link to
   the changelog, the same Graphics and Display options in all four games (ones a game can't do yet are greyed with
-  the reason), and Real occlusion is set for you per game. With DLSS / FSR / XeSS at full scene size, the log says it
+  the reason), and Real occlusion is set for you per game. With DLSS / FSR at full scene size, the log says it
   is anti-aliasing only (DLSS runs as DLAA), with no extra frames (#98).
 
 New in 0.4.4
@@ -334,7 +334,7 @@ New in 0.4.2
   shadows. Default: Game's own. Thanks to gmihaic (GitHub PR #139).
 - Anti-aliasing: SMAA T2x (Gears 2 / Gears 3) - smoother edges and much less shimmer, DirectX 12 and Vulkan
   (PR #139).
-- DLSS / FSR / XeSS: better motion vectors and depth in Gears 2 and Gears 3 (PR #139).
+- DLSS / FSR: better motion vectors and depth in Gears 2 and Gears 3 (PR #139).
 - About tab: "Report a problem" makes the report zip, opens a new ticket page (since 0.5.0: GitLab, details on the clipboard) and shows the zip to
   drag into it.
 - Untested game versions or title updates still play, with a clearer warning; please don't report problems

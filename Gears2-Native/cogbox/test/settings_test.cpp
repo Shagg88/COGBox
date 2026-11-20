@@ -330,7 +330,7 @@ int summary() {
             const Settings s2 = st2.view(Game::Gears2, e2);
             if (s2.i("Resolution") != c[2]) { std::cout << "FAIL match-my-monitor migration " << c[0] << "x" << c[1] << ": " << s2.i("Resolution") << "\n"; ++fails; }
         }
-        // 0.6.6: XeSS (AAMode 4) and Intel XeSS frame generation (FrameGen 7) are dropped - saved ones become SMAA / AMD's
+        // 0.6.6: XeSS (AAMode 4) frame generation (FrameGen 7) are dropped - saved ones become SMAA / AMD's
         {
             Environment e3; e3.update_ready = true;
             Store st3; st3.top["AAMode"] = 4; st3.top["FrameGen"] = 7;
