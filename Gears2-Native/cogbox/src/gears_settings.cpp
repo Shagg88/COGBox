@@ -327,7 +327,8 @@ std::vector<Option> make_options(Game g) {
                  "K - transformer (best all-round quality)", "L - newest transformer (sharpest, heaviest)",
                  "M - newest transformer (sharp, lighter than L)" }, 0,
                "Which NVIDIA DLSS model draws the picture when Anti-aliasing is DLSS. Automatic: NVIDIA's own choice for "
-               "each mode - K for DLAA, Quality and Balanced, M for Performance, L for Ultra performance.\n"
+               "each mode - K for DLAA, Quality and Balanced, M for Performance, L for Ultra performance. On RTX 20 and 30 cards "
+               "Automatic uses K for every mode: M and L are slow there (0.6.6).\n"
                "J and K: the first transformer models - every RTX card (20, 30, 40 and 50 series).\n"
                "L and M: the newest models (DLSS 4.5). They also run on every RTX card, but are made for RTX 40 / 50: on "
                "RTX 20 / 30 they cost clearly more frames per second - try K there if the game gets slower.", 352), "dlssmodel");
