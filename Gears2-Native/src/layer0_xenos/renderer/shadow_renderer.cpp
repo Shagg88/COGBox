@@ -2656,6 +2656,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // estimate.
   void PollOcclusion() {
     if (queries_mode_ == QueriesMode::kStrict) {  // PR #43: in order; one not landed in 2 s (or a lost device) = visible
+      std::chrono::steady_clock::time_point poll_now;
+      bool poll_now_valid = false;
+      const bool had_pending = !occ_pending_.empty();
       while (!occ_pending_.empty()) {
         const PendingOcclusion& p = occ_pending_.front();
         uint64_t samples = 0;
@@ -2663,6 +2666,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         if (!ready && !backend_->IsLost() && std::chrono::steady_clock::now() - p.queued_at < std::chrono::seconds(2))
           break;
         if (ready) {
+          // 19 Nov (speed study): how long the game could have waited for this answer - end recorded -> answer written
+          if (!poll_now_valid) {
+            poll_now = std::chrono::steady_clock::now();
+            poll_now_valid = true;
+          }
+          const double lat = std::chrono::duration<double, std::milli>(poll_now - p.queued_at).count();
+          occ_stats_.latency_ms += lat;
+          occ_stats_.latency_ms_max = std::max(occ_stats_.latency_ms_max, lat);
+          occ_last_landed_ms_ = lat;
           samples = rr::queries::AnswerCache::ToGuestSamples(samples, p.scale * p.scale);
           ++occ_stats_.results;
           if (!samples) ++occ_stats_.zero;
@@ -2683,6 +2695,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         }
         backend_->ReleaseOcclusionQuery(p.handle);
         occ_pending_.pop_front();
+      }
+      if (had_pending && occ_pending_.empty() && poll_now_valid) {  // the newest answer of a batch: the wait's worst case
+        occ_stats_.batch_last_ms += occ_last_landed_ms_;
+        ++occ_stats_.batches_landed;
       }
       return;
     }
@@ -14978,6 +14994,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   o.visibility_changed, o.dropped, o.sdk_fake, o.sdk_host, double(stats_.draws) / log_every_,
                   b.occlusion_segments - occ_backend_segments_base_, b.occlusion_refused - occ_backend_refused_base_,
                   occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted, o.slope_biased);
+      if (queries_mode_ == QueriesMode::kStrict && o.results)
+        REXLOG_INFO("gow2_renderer: query answers frames {}-{}: written {:.2f} ms after their end was recorded on average "
+                    "(max {:.2f}); the last answer of a batch after {:.2f} ms ({:.1f} batches/frame)",
+                    frame_ - uint64_t(log_every_) + 1, frame_, o.latency_ms / double(o.results), o.latency_ms_max,
+                    o.batches_landed ? o.batch_last_ms / double(o.batches_landed) : 0.0,
+                    double(o.batches_landed) / log_every_);
       occ_backend_segments_base_ = b.occlusion_segments;
       occ_backend_refused_base_ = b.occlusion_refused;
       occ_stats_ = OcclusionStats{};
@@ -15129,6 +15151,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool tex_frac16_ = true;        // speed study: --gow2_renderer_tex_frac16
   bool ps_no_alpha_variant_ = false;  // speed study: --gow2_renderer_ps_no_alpha_variant
   uint64_t ps_noat_from_swap_ = 0;  // --gow2_renderer_ps_no_alpha_from_swap
+  double occ_last_landed_ms_ = 0;
   const rr::GuestShader* vs_memo_ = nullptr;  // review 19 Nov #8
   const rr::GuestShader* ps_memo_ = nullptr;
   uint64_t vs_memo_hash_ = 0, ps_memo_hash_ = 0;
@@ -15451,6 +15474,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
              results = 0, zero = 0, samples = 0, latency_frames = 0, corrected = 0, too_late = 0,
              visibility_changed = 0, dropped = 0, sdk_fake = 0, sdk_host = 0, proxies = 0, zero_not_trusted = 0,
              answered_hidden = 0, wrong_hidden = 0, slope_biased = 0;
+    double latency_ms = 0, latency_ms_max = 0, batch_last_ms = 0;  // 19 Nov: strict answers, end recorded -> written
+    uint64_t batches_landed = 0;
   };
   OcclusionStats occ_stats_;
   uint64_t occ_backend_segments_base_ = 0, occ_backend_refused_base_ = 0;
