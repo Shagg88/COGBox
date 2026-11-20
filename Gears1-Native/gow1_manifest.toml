@@ -4602,3 +4602,21 @@ address = 0x82392660
 name = "Gow1ViewFovB"
 registers = ["f28"]
 after_instruction = true
+
+# Experiment --gow1_native_lines (game_patches.cpp): true 1080p - the screen size in sub_824BC3B0.
+[[entrypoint.midasm_hook]]
+address = 0x824BC444  # `li r11,720`: the screen height (after it)
+name = "Gow1NativeSceneHeight"
+registers = ["r11"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x824BC47C  # `li r5,120`: the clamped width in r31, every path (before it)
+name = "Gow1NativeSceneWidth"
+registers = ["r31"]
+
+[[entrypoint.midasm_hook]]
+address = 0x824BC490  # `li r11,720`: the height stored beside the width for the device (after it)
+name = "Gow1NativeDeviceHeight"
+registers = ["r11"]
+after_instruction = true

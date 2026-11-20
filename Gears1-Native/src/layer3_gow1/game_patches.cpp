@@ -97,6 +97,45 @@ REXCVAR_DEFINE_BOOL(gow1_no_motion_blur, false, "Gears 1",
                     "No motion blur (Canary's TU5 patch by illusion and boma, as the render's own early exit)");
 REXCVAR_DEFINE_BOOL(gow1_no_gaussian_blur, false, "Gears 1",
                     "No depth of field: the gaussian blur radius 0 (Canary's TU5 patch by boma; the bloom is softer too)");
+// ---- Experiment (Shagg, 20 Nov): true 1080p, as Gears 2's --gow2_native_lines ---------------------------------------
+// sub_824BC3B0 (TU5; found by job 2177 as the only function loading both 720 and 1280): it asks the console for the
+// video mode and makes the screen height 720 (`li r11,720` at 0x824BC444, stored to the height global) and the width
+// aspect x 720 clamped to 900..1280 in r31, every path meeting at 0x824BC47C before `stw r31,0(r29)` (the width
+// global) at 0x824BC480; a second `li r11,720` at 0x824BC490 goes with that width into the block at 112(r1) / 116(r1)
+// that the next calls take (the device's size). --gow1_native_lines=1080 gives all three: 1920x1080. Needs
+// --gow2_renderer_edram_extended=true. Gears 1 draws its 720p frame as two tiles with 4x MSAA; how its tile maths takes
+// a larger frame is NOT known. NOT RUN YET: written from the generated code, to be proven by a gameplay run.
+REXCVAR_DEFINE_INT32(gow1_native_lines, 0, "Gears 1",
+                     "Experiment (true 1080p): the game's own screen height in lines, 0 = 720 as on the console. 1080 "
+                     "makes the game draw 1920x1080 itself (width = lines x 16 / 9, a multiple of 8). Needs "
+                     "--gow2_renderer_edram_extended=true")
+    .range(0, 1440);
+namespace {
+uint32_t Gow1NativeLines() {
+  static const uint32_t lines = [] {
+    const int v = REXCVAR_GET(gow1_native_lines);
+    return v <= 720 ? 0u : uint32_t(v + 7) / 8u * 8u;
+  }();
+  return lines;
+}
+uint32_t Gow1NativeWidth() { return (Gow1NativeLines() * 16u / 9u + 7u) / 8u * 8u; }
+}  // namespace
+void Gow1NativeSceneHeight(PPCRegister& r11) {  // after `li r11,720` at 0x824BC444
+  if (!Gow1NativeLines()) return;
+  static std::atomic<bool> logged{false};
+  if (!logged.exchange(true)) REXLOG_INFO("gow1_native_lines: screen height {} -> {}", r11.u32, Gow1NativeLines());
+  r11.u64 = Gow1NativeLines();
+}
+void Gow1NativeSceneWidth(PPCRegister& r31) {  // before `li r5,120` at 0x824BC47C: the clamped width
+  if (!Gow1NativeLines()) return;
+  static std::atomic<bool> logged{false};
+  if (!logged.exchange(true)) REXLOG_INFO("gow1_native_lines: screen width {} -> {}", r31.u32, Gow1NativeWidth());
+  r31.u64 = Gow1NativeWidth();
+}
+void Gow1NativeDeviceHeight(PPCRegister& r11) {  // after `li r11,720` at 0x824BC490: the height beside that width
+  if (Gow1NativeLines()) r11.u64 = Gow1NativeLines();
+}
+
 // 0.6.5 (Shagg 16 Nov: 16:10): with a 1152x720 video mode Gears 2 / 3 / Judgment fill a 16:10 screen, but Gears 1 kept
 // 16:9 with bars (job 1969's gameplay shots): its view code (sub_82392008, TU5) letterboxes to the camera's aspect when
 // the camera's constrain flag (bit 1 of the word at +432) is set. Canary's TU5 16:10 patch by boma makes the branch at
