@@ -12,6 +12,7 @@
 #include "xenos/renderer/upscaler.h"
 
 #include <d3d12.h>
+#include <dxgi1_4.h>
 
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_helpers.h>
@@ -28,19 +29,61 @@
 #include <string>
 
 REXCVAR_DEFINE_STRING(gow2_dlss_preset, "recommended", "Gears2",
-                      "DLSS model preset: auto / recommended (NVIDIA's current table, pinned: K for DLAA / Quality / "
-                      "Balanced, M Performance, L Ultra Performance), driver (whatever the driver picks, may change with "
-                      "updates), or one letter J, K, L or M for every mode (0.4.9: the launcher's \"DLSS model\")");
+                      "DLSS model preset: auto / recommended (K for DLAA / Quality / Balanced; Performance M and Ultra "
+                      "Performance L on RTX 40 / 50 cards, K on RTX 20 / 30 cards, where the newest models are slow - "
+                      "job 2137b), nvidia (NVIDIA's table on every card: K / M / L), driver (whatever the driver "
+                      "picks, may change with updates), or one letter J, K, L or M for every mode (0.4.9: the "
+                      "launcher's \"DLSS model\"); E and F (the older, lighter models, deprecated by NVIDIA) for tests");
 
 namespace xenos::renderer::upscale {
 namespace {
 
 // The preset hints set before the feature is created (SDK 310 header: K = transformer, best quality, default for DLAA /
 // Quality / Balanced; M default for Performance; L for Ultra Performance; A-F removed or deprecated).
-void SetDlssPresets(NVSDK_NGX_Parameter* params, const std::string& choice) {
-  if (choice == "driver") return;   // "auto" / "recommended" / anything else: NVIDIA's table below
+// The graphics card's name, from the device's adapter ("" when it can't be read).
+std::string DeviceCardName(ID3D12Device* device) {
+  std::string name;
+  if (!device) return name;
+  const LUID want = device->GetAdapterLuid();
+  // dxgi.dll is already in the process (the device came from it); looked up by name so nothing new is linked
+  HMODULE dxgi = GetModuleHandleW(L"dxgi.dll");
+  using MakeFactory = HRESULT(WINAPI*)(REFIID, void**);
+  auto make = dxgi ? reinterpret_cast<MakeFactory>(GetProcAddress(dxgi, "CreateDXGIFactory1")) : nullptr;
+  IDXGIFactory1* factory = nullptr;
+  if (!make || FAILED(make(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory))) || !factory) return name;
+  IDXGIAdapter1* a = nullptr;
+  for (UINT i = 0; factory->EnumAdapters1(i, &a) == S_OK; ++i) {
+    DXGI_ADAPTER_DESC1 d{};
+    if (a->GetDesc1(&d) == S_OK && d.AdapterLuid.LowPart == want.LowPart && d.AdapterLuid.HighPart == want.HighPart)
+      for (const wchar_t* p = d.Description; *p; ++p) name += *p < 128 ? char(*p) : '?';
+    a->Release();
+    a = nullptr;
+    if (!name.empty()) break;
+  }
+  factory->Release();
+  return name;
+}
+// GeForce RTX 20 / 30 series ("RTX 2070 SUPER", "RTX 3080 Ti", laptop names too): NVIDIA's newest models (L, M - DLSS
+// 4.5) are made for RTX 40 / 50 and run slowly here. Job 2137b, RTX 3080 Ti, 720p -> 1440p with M: the scene got 1.1 ms
+// cheaper and the upscale pass 1.8 ms dearer.
+bool OlderRtxCard(const std::string& name) {
+  if (name.find(" Ada") != std::string::npos) return false;  // "RTX 3000 Ada Generation" is a 40-series part
+  for (size_t at = name.find("RTX "); at != std::string::npos; at = name.find("RTX ", at + 1)) {
+    const size_t d = at + 4;
+    if (d + 3 < name.size() && (name[d] == '2' || name[d] == '3') && name[d + 1] == '0' && name[d + 2] >= '0' &&
+        name[d + 2] <= '9' && name[d + 3] >= '0' && name[d + 3] <= '9')
+      return true;
+  }
+  return false;
+}
+
+void SetDlssPresets(NVSDK_NGX_Parameter* params, const std::string& choice, bool older_card) {
+  if (choice == "driver") return;   // "auto" / "recommended" / anything else: the table below
+  const bool light = older_card && choice != "nvidia";
   auto letter = [](char c) -> int {
     switch (c) {
+      case 'E': case 'e': return NVSDK_NGX_DLSS_Hint_Render_Preset_E;
+      case 'F': case 'f': return NVSDK_NGX_DLSS_Hint_Render_Preset_F;
       case 'J': case 'j': return NVSDK_NGX_DLSS_Hint_Render_Preset_J;
       case 'K': case 'k': return NVSDK_NGX_DLSS_Hint_Render_Preset_K;
       case 'L': case 'l': return NVSDK_NGX_DLSS_Hint_Render_Preset_L;
@@ -53,8 +96,10 @@ void SetDlssPresets(NVSDK_NGX_Parameter* params, const std::string& choice) {
   NVSDK_NGX_Parameter_SetUI(params, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA, pick(NVSDK_NGX_DLSS_Hint_Render_Preset_K));
   NVSDK_NGX_Parameter_SetUI(params, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality, pick(NVSDK_NGX_DLSS_Hint_Render_Preset_K));
   NVSDK_NGX_Parameter_SetUI(params, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced, pick(NVSDK_NGX_DLSS_Hint_Render_Preset_K));
-  NVSDK_NGX_Parameter_SetUI(params, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance, pick(NVSDK_NGX_DLSS_Hint_Render_Preset_M));
-  NVSDK_NGX_Parameter_SetUI(params, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance, pick(NVSDK_NGX_DLSS_Hint_Render_Preset_L));
+  NVSDK_NGX_Parameter_SetUI(params, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance,
+                            pick(light ? NVSDK_NGX_DLSS_Hint_Render_Preset_K : NVSDK_NGX_DLSS_Hint_Render_Preset_M));
+  NVSDK_NGX_Parameter_SetUI(params, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance,
+                            pick(light ? NVSDK_NGX_DLSS_Hint_Render_Preset_K : NVSDK_NGX_DLSS_Hint_Render_Preset_L));
 }
 
 // 0.4.9: which nvngx_dlss.dll NGX loaded and its version (the launcher's "Custom DLSS file" puts the player's own
@@ -212,7 +257,12 @@ class DlssUpscaler final : public Upscaler {
                              (hdr ? NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure : 0) |
                              (inverted_ ? NVSDK_NGX_DLSS_Feature_Flags_DepthInverted : 0);  // notes/80 s.6
     const std::string preset = REXCVAR_GET(gow2_dlss_preset);
-    SetDlssPresets(params_, preset);
+    const std::string card = DeviceCardName(device);
+    const bool older = OlderRtxCard(card);
+    SetDlssPresets(params_, preset, older);
+    if (older && preset != "nvidia" && preset != "driver" && preset.size() != 1)
+      REXLOG_INFO("upscale: DLSS on '{}' (RTX 20 / 30): model K for Performance and Ultra Performance too - the newest "
+                  "models M / L are slow on these cards (--gow2_dlss_preset=nvidia for NVIDIA's table)", card);
     const NVSDK_NGX_Result r = NGX_D3D12_CREATE_DLSS_EXT(list, 1, 1, &feature_, params_, &c);
     if (NVSDK_NGX_FAILED(r) || !feature_) return Fail(std::format("feature creation failed ({:08X})", uint32_t(r)));
     rw_ = rw, rh_ = rh, ow_ = ow, oh_ = oh, hdr_ = hdr;
