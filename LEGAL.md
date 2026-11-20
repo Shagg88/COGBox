@@ -16,7 +16,7 @@ Gears of War games.
 ## 2. Trademarks
 
 "Gears of War", "Xbox" and "Xbox 360" are trademarks of Microsoft.
-"Unreal" is a trademark of Epic Games. NVIDIA, DLSS, AMD, FidelityFX, FSR, Intel, XeSS and ReShade are trademarks of their
+"Unreal" is a trademark of Epic Games. NVIDIA, DLSS, AMD, FidelityFX, FSR and ReShade are trademarks of their
 owners. All other trademarks belong to their owners. We use these names only to say which games and hardware COGBox
 works with. Their use doesn't mean any of these companies endorse or support COGBox.
 
@@ -71,7 +71,7 @@ as far as the law allows.
 COGBox includes components made by others, each under its own licence: among them code from the Xenia projects and
 the rexglue SDK (BSD-3-Clause), Dear ImGui, SDL3, miniz, stb and the LZMA SDK, FFmpeg's XMA decoder (LGPL 2.1, as
 separate DLLs, with its source offered as `licenses\FFmpeg-NOTICE.txt` says), the vendors' upscaler and graphics
-libraries (NVIDIA DLSS / Streamline / Reflex, AMD FidelityFX / Anti-Lag, Intel XeSS), Microsoft's DirectX Shader
+libraries (NVIDIA DLSS / Streamline / Reflex, AMD FidelityFX / Anti-Lag), Microsoft's DirectX Shader
 Compiler and Direct3D 12 Agility SDK, and fonts under the SIL Open Font License. Their licence texts are in the release's
 `licenses` folders and in `THIRD_PARTY_NOTICES.md`. Those licences, not this page, govern those components. Vendor
 libraries are redistributed under the vendors' redistribution terms; their names are their owners' trademarks.

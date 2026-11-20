@@ -425,7 +425,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("Ssil", "Indirect lighting", Tab::Graphics, PG, { "Game's own", "SSIL (experimental)" }, 0,
                "Light bounced from nearby lit surfaces: walls, floors and lamps brighten what is next to them, with some "
                "colour bleeding. Most visible in lit interiors and city streets, subtle in open or dark areas. Needs Ambient "
-               "occlusion: XeGTAO. Experimental: about 1 ms a frame at 4K on an RTX 5090 in our tests, more on slower cards. "
+               "occlusion: On. Experimental: about 1 ms a frame at 4K on an RTX 5090 in our tests, more on slower cards. "
                "Game's own: the original.", 0), "ssil");
     // Notes/80 s.16 (Gears2-Native): PCSS for Gears 3's dynamic shadows (--gow2_pcss), Gears 3 only, opt-in.
     add(choice("SoftShadows", "Soft shadows", Tab::Graphics, PG, { "Game's own", "PCSS High (experimental)", "PCSS Ultra (experimental)" }, 0,
@@ -662,6 +662,8 @@ bool cap_exe(const Environment& e, const std::string& n) {
     // Discord 16 Nov (Horde bots greyed in Gears 2 on 0.6.3): 0.6.3's gow2.exe has no "gow2_horde_bots" text either - the
     // start of its description is searched (the 0.6.3 exe has it)
     if (n == "gow2_horde_bots" && e.cap.exe_has && e.cap.exe_has("GitHub #237 (francoissubke-blip's tip")) return true;
+    // review 20 Nov: "gow2_ao_half" is as short as those - the start of its description is searched as well
+    if (n == "gow2_ao_half" && e.cap.exe_has && e.cap.exe_has("XeGTAO at half resolution (test, Shagg 20 Nov)")) return true;
     return e.cap.exe_has && e.cap.exe_has(n);
 }
 bool cap_rt(const Environment& e, const std::string& n) { return e.cap.runtime_has && e.cap.runtime_has(n); }

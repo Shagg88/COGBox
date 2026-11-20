@@ -279,6 +279,7 @@ static void write_menu_file(App &a, int g, gs::Version ver, const std::string &l
             auto offered = [&](size_t i) {
                 if (o.id == "AO") return i == 1 || i == 2;
                 if (o.id == "AAMode" || o.id == "Resolution") return i != 4;
+                if (o.id == "FrameGen") return (int)i != gs::k_fgXefg;   // review 20 Nov: Intel XeSS frame generation too
                 return true;
             };
             for (size_t i = 0; i < choices.size(); i++)

@@ -235,12 +235,14 @@ uint32_t Gow3NativeLines() {
   }();
   return lines;
 }
-uint32_t Gow3NativeWidth() { return (Gow3NativeLines() * 16u / 9u + 7u) / 8u * 8u; }
+// The game's own width times lines / 720 (a multiple of 8): the 16:10 and 4:3 video modes keep their shape.
+uint32_t Gow3NativeWidth(uint32_t game_width) { return (game_width * Gow3NativeLines() / 720u + 7u) / 8u * 8u; }
 }  // namespace
 void Gow3NativeSceneWidth(PPCRegister& r11) {  // before the width's store (below 1280)
   if (!Gow3NativeLines()) return;
-  GOW3_LOG_ONCE("gow3_native_lines: screen width {} -> {}", r11.u32, Gow3NativeWidth());
-  r11.u64 = Gow3NativeWidth();
+  const uint32_t width = Gow3NativeWidth(r11.u32);
+  GOW3_LOG_ONCE("gow3_native_lines: screen width {} -> {}", r11.u32, width);
+  r11.u64 = width;
 }
 void Gow3NativeSceneWidthMax(PPCRegister& r11) { Gow3NativeSceneWidth(r11); }  // after `li r11,1280` (one name per hook)
 

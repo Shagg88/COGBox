@@ -472,18 +472,27 @@ uint32_t Gow2NativeLines() {
   static const uint32_t lines = [] {
     const int v = REXCVAR_GET(gow2_native_lines);
     if (v <= 720 || REXCVAR_GET(gow2_ultrawide)) return 0u;
+#if defined(GOW2_TU6) && GOW2_TU6
     return uint32_t(v + 7) / 8u * 8u;
+#else
+    // review 20 Nov: the two width hooks are in the TU6 manifest only - on the disc build the height alone would change
+    REXLOG_WARN("gow2_native_lines: Title Update 6 only - ignored on the disc version");
+    return 0u;
+#endif
   }();
   return lines;
 }
-uint32_t Gow2NativeWidth() { return (Gow2NativeLines() * 16u / 9u + 7u) / 8u * 8u; }
+// review 20 Nov: the game's own width times lines / 720 (a multiple of 8), so the 16:10 and 4:3 video modes keep
+// their shape: 1280 -> 1920, 1152 -> 1728 at 1080 lines
+uint32_t Gow2NativeWidth(uint32_t game_width) { return (game_width * Gow2NativeLines() / 720u + 7u) / 8u * 8u; }
 }  // namespace
 // 0x828166F8 `stw r11,-19644(r10)` (before it) and 0x82816A20 `li r11,1280` (after it): the screen width.
 void Gow2NativeSceneWidth(PPCRegister& r11) {
   if (!Gow2NativeLines()) return;
   static bool logged = false;
-  if (!logged) { logged = true; REXLOG_INFO("gow2_native_lines: screen width {} -> {}", r11.u32, Gow2NativeWidth()); }
-  r11.u64 = Gow2NativeWidth();
+  const uint32_t width = Gow2NativeWidth(r11.u32);
+  if (!logged) { logged = true; REXLOG_INFO("gow2_native_lines: screen width {} -> {}", r11.u32, width); }
+  r11.u64 = width;
 }
 
 void Gow2NativeSceneWidthMax(PPCRegister& r11) { Gow2NativeSceneWidth(r11); }   // the second site (one name per hook)

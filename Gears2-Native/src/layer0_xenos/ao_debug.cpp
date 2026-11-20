@@ -328,6 +328,5 @@ void XenosShutdownAoDebugKeys() {
   rex::ui::UnregisterBind("bind_gow2_mip_bias");
   rex::ui::UnregisterBind("bind_gow2_ao_view");
   rex::ui::UnregisterBind("bind_gow2_ao_quality");
-  rex::ui::UnregisterBind("bind_gow2_ao_algo");
   g_label.reset();
 }

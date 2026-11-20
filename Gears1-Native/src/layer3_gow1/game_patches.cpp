@@ -118,7 +118,8 @@ uint32_t Gow1NativeLines() {
   }();
   return lines;
 }
-uint32_t Gow1NativeWidth() { return (Gow1NativeLines() * 16u / 9u + 7u) / 8u * 8u; }
+// The game's own width times lines / 720 (a multiple of 8): the 16:10 and 4:3 video modes keep their shape.
+uint32_t Gow1NativeWidth(uint32_t game_width) { return (game_width * Gow1NativeLines() / 720u + 7u) / 8u * 8u; }
 }  // namespace
 void Gow1NativeSceneHeight(PPCRegister& r11) {  // after `li r11,720` at 0x824BC444
   if (!Gow1NativeLines()) return;
@@ -129,8 +130,9 @@ void Gow1NativeSceneHeight(PPCRegister& r11) {  // after `li r11,720` at 0x824BC
 void Gow1NativeSceneWidth(PPCRegister& r31) {  // before `li r5,120` at 0x824BC47C: the clamped width
   if (!Gow1NativeLines()) return;
   static std::atomic<bool> logged{false};
-  if (!logged.exchange(true)) REXLOG_INFO("gow1_native_lines: screen width {} -> {}", r31.u32, Gow1NativeWidth());
-  r31.u64 = Gow1NativeWidth();
+  const uint32_t width = Gow1NativeWidth(r31.u32);
+  if (!logged.exchange(true)) REXLOG_INFO("gow1_native_lines: screen width {} -> {}", r31.u32, width);
+  r31.u64 = width;
 }
 void Gow1NativeDeviceHeight(PPCRegister& r11) {  // after `li r11,720` at 0x824BC490: the height beside that width
   if (Gow1NativeLines()) r11.u64 = Gow1NativeLines();

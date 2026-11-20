@@ -956,19 +956,21 @@ uint32_t GowjNativeLines() {
   }();
   return lines;
 }
-uint32_t GowjNativeWidth() { return (GowjNativeLines() * 16u / 9u + 7u) / 8u * 8u; }
+// The game's own width times lines / 720 (a multiple of 8): the 16:10 and 4:3 video modes keep their shape.
+uint32_t GowjNativeWidth(uint32_t game_width) { return (game_width * GowjNativeLines() / 720u + 7u) / 8u * 8u; }
 }  // namespace
 void GowjNativeSceneWidth(PPCRegister& r5) {  // before `lis r11,-31925` at 0x82992694: the clamped width
   if (!GowjNativeLines()) return;
   static bool l = false;
-  LogOnce(l, "native lines: screen width", uint32_t(r5.u32), GowjNativeWidth());
-  r5.u64 = GowjNativeWidth();
+  const uint32_t width = GowjNativeWidth(r5.u32);
+  LogOnce(l, "native lines: screen width", uint32_t(r5.u32), width);
+  r5.u64 = width;
 }
 void GowjNativeCallHeight(PPCRegister& r6) {  // after `li r6,720` at 0x829926A4: the height passed with the width
   if (GowjNativeLines()) r6.u64 = GowjNativeLines();
 }
 void GowjNativeWidthCheck(PPCRegister& r11) {  // after `lwz r11,0(r30)` at 0x829926B8: compared with 1280
-  if (GowjNativeLines() && r11.u32 == GowjNativeWidth()) r11.u64 = 1280;
+  if (GowjNativeLines() && r11.u32 == GowjNativeWidth(1280)) r11.u64 = 1280;  // only the full-width (16:9) case
 }
 void GowjUltrawideSceneHeight(PPCRegister& r11) {
   if (GowjNativeLines()) {
