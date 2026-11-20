@@ -297,7 +297,8 @@ std::vector<Option> make_options(Game g) {
                { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p" }, 0,
                "How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), "
                "4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, "
-               "resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for "
+               "resampled to its exact size - on a 1080p screen that is 2x (2560x1440), four times the work of 720p "
+               "(GitHub #388). 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for "
                "weaker graphics cards; softer than real detail.", 340), "", "", true);
     // GitHub #59: the 1080p mode's RCAS sharpen made text and some textures look wrong under Wine / Proton (Linux,
     // NVIDIA). Automatic = on in Windows, off under Wine; On / Off override it everywhere.
