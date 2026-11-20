@@ -71,6 +71,11 @@ REXCVAR_DEFINE_INT32(gow2_patch_query_wait, 2, "Gears2",
                      "Jobs 231/232 (notes/60): sub_82807588 (UE3's block-until-a-query-has-its-answer) polls ONE query in "
                      "a loop; 1 = after 32 quick polls each retry sleeps until our GPU side writes guest memory (1 ms max); "
                      "2 (default) = as 1 when the frame rate is capped (vsync on or --gow2_max_fps not -1), else off; 0 = off");
+REXCVAR_DEFINE_INT32(gow2_patch_query_buffered, 0, "Gears2",
+                     "Speed study (Gears 2 TU6, opt-in): UE3's occlusion test (sub_82730F70) no longer waits for a query "
+                     "answer that is not back yet - the query stays pending for the next frame (its answer is read then) "
+                     "and this frame the object is 1 = drawn (never wrongly hidden), 2 = as it was last decided "
+                     "(PC UE3's lag; may show an uncovered object a frame late); 0 = the game's own wait");
 REXCVAR_DEFINE_BOOL(gow2_patch_skip_coalesced_check, false, "Gears2",
                     "Skip the Coalesced (engine .ini) hash check so edited files load (community patch, Sowa_95/boma)");
 REXCVAR_DEFINE_BOOL(gow2_patch_show_fps, false, "Gears2", "Turn on the engine's FPS and frame-time display (community patch, Sowa_95)");
@@ -220,6 +225,50 @@ void Gow2QueryWaitStep() {
   if (!logged.exchange(true)) REXLOG_INFO("gow2_patch_query_wait: on - the query wait loop sleeps between polls");
   thread_local Gow2WaitStreak streak;
   Gow2SleepStep(streak, 32);
+}
+
+// Speed study 19 Nov (--gow2_patch_query_buffered; notes 20261119-2015): the frame was the game's 3.7 ms plus ~1.3 ms
+// waiting for occlusion answers. sub_828170F0 (RHIGetOcclusionQueryResult) asks GetData once, then loops with a
+// flush until the answer is back - it ignores its bWait argument. Its only caller, sub_82730F70 (one primitive's
+// occlusion update), then always releases the query and issues a new one. With the switch on: GetData is asked once;
+// not back = return "no answer" and remember it; the hook on the caller's release (0x8273116C) then skips the release
+// and the re-issue (the query stays at 4(r29), read next frame, when it has landed) and gives this frame's decision.
+namespace {
+thread_local bool t_query_late = false;
+std::atomic<uint64_t> g_query_asked{0}, g_query_late{0};
+}  // namespace
+#if defined(GOW2_TU6) && GOW2_TU6
+extern "C" void __imp__sub_828170F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82992348(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_828170F0(PPCContext& ctx, uint8_t* base) {
+  if (REXCVAR_GET(gow2_patch_query_buffered) <= 0) {
+    __imp__sub_828170F0(ctx, base);
+    return;
+  }
+  ctx.r5.u64 = 4;  // GetData(query, out, sizeof(DWORD), no flush) - as the original's first ask
+  ctx.r6.u64 = 0;
+  sub_82992348(ctx, base);
+  const uint64_t asked = g_query_asked.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (ctx.r3.u32 == 0) {  // S_OK: the answer is in *out
+    ctx.r3.u64 = 1;
+    return;
+  }
+  t_query_late = true;
+  const uint64_t late = g_query_late.fetch_add(1, std::memory_order_relaxed) + 1;
+  if ((late & (late - 1)) == 0 && late >= 64)
+    REXLOG_INFO("gow2_patch_query_buffered: {} of {} answers not back when asked - kept for the next frame", late, asked);
+  ctx.r3.u64 = 0;
+}
+#endif
+// 0x8273116C `addi r4,r29,4` (before the release): jump to 0x82731408 with this frame's decision in r25 / r28
+// (r28 = occluded, r25 = take the visible path) - the pending query is neither released nor replaced.
+bool Gow2QueryKeepLate(PPCRegister& r25, PPCRegister& r28, PPCRegister& r29) {
+  if (!t_query_late) return false;
+  t_query_late = false;
+  const bool occluded = REXCVAR_GET(gow2_patch_query_buffered) == 2 && ue3::obj::Read32(r29.u32 + 20) != 0;
+  r28.u64 = occluded ? 1 : 0;
+  r25.u64 = occluded ? 0 : 1;
+  return true;
 }
 
 // Job 225 (notes/60): sub_82977688 is one step of the XDK's wait for the GPU (sub_8298C2A0 calls it until the GPU's read
