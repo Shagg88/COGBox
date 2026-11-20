@@ -510,8 +510,7 @@ void Gow2UltrawideSceneHeight(PPCRegister& r11, PPCRegister& f13) {
 void Gow2UltrawideUiHeight(PPCRegister& r3) {
   if (!REXCVAR_GET(gow2_ultrawide)) return;
   static bool logged = false;
-  uint32_t ui = Gow2WideHeight() == 550 ? 564u : (Gow2WideHeight() * 564u / 550u + 1u) & ~1u;
-  if (Gow2NativeLines()) ui = (ui * Gow2NativeLines() / 720u + 1u) & ~1u;   // 0.6.6: scaled with the scene (true 1080p)
+  const uint32_t ui = Gow2WideHeight() == 550 ? 564u : (Gow2WideHeight() * 564u / 550u + 1u) & ~1u;   // (true 1080p: scaled in GetViewportSize)
   if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: UI viewport height {} -> {}", r3.u32, ui); }
   r3.u64 = ui;
 }
@@ -563,6 +562,18 @@ extern "C" void GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_ORIGIN)(PPCContext& __res
 extern "C" void GOW2_UI_VIEWPORT_SIZE(PPCContext& __restrict ctx, uint8_t* base) {
   const uint32_t out = ctx.r5.u32;
   GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_SIZE)(ctx, base);
+  // 0.6.6 (job 2189: at true 1080p the pause menu sat in the top-left 1280x720 of the 1920x1080 picture): the scene
+  // client still reports the console's 1280x720 here while everything is drawn 1.5 times larger. The UI scenes lay
+  // themselves out from this size (GitHub #278), so it is scaled with the screen: 1280x720 -> 1920x1080.
+  if (Gow2NativeLines() && ctx.r3.u32 != 0 && out) {
+    const float w0 = uicentre::LoadF(base, out), h0 = uicentre::LoadF(base, out + 4);
+    const float k = float(Gow2NativeLines()) / 720.0f;
+    const float w1 = std::round(w0 * k), h1 = std::round(h0 * k);
+    uicentre::StoreF(base, out, w1);
+    uicentre::StoreF(base, out + 4, h1);
+    static std::atomic<bool> told{false};
+    if (!told.exchange(true)) REXLOG_INFO("gow2_native_lines: UI scene viewport {}x{} -> {}x{}", w0, h0, w1, h1);
+  }
   if (!uicentre::On() || ctx.r3.u32 == 0 || !out) return;
   const float w = uicentre::LoadF(base, out), h = uicentre::LoadF(base, out + 4);
   const float w169 = std::round(h * 16.0f / 9.0f / 2.0f) * 2.0f;
