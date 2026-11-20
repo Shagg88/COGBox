@@ -4620,3 +4620,10 @@ address = 0x824BC490  # `li r11,720`: the height stored beside the width for the
 name = "Gow1NativeDeviceHeight"
 registers = ["r11"]
 after_instruction = true
+
+# GitHub #400 (--gow1_skip_logos): the film player's per-tick check (sub_8222D9C0) - while a logo film plays, its
+# "a button was pressed" flag (r28) is set before the tests at 0x8222DB20 / 0x8222DB90; r31 = the player.
+[[entrypoint.midasm_hook]]
+address = 0x8222DB00  # `lis r11,-32006` (before it)
+name = "Gow1SkipLogoTick"
+registers = ["r28", "r31"]

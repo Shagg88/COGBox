@@ -215,6 +215,24 @@ void Gow1SkipLogoStep(PPCRegister& r11) {   // gow1_manifest.toml: the start-up 
   r11.u64 = 3;
 }
 void Gow1SkipLogoStep2(PPCRegister& r11) { Gow1SkipLogoStep(r11); }
+// GitHub #400 (hevesij, 0.6.5): "only the Microsoft logo is skipped; the Epic Games logo still appears". The two step
+// hooks above only act when the player steps from one film to the next (sub_8222E220); a logo that was started another
+// way - the first film of a copy without a rating film - played in full. The film player's per-tick check
+// (sub_8222D9C0) reads the pads and, on a button, calls its skip routine (sub_8222E088: the first call marks the
+// start-up films as being skipped, the next one stops the film and steps on). With --gow1_skip_logos, while the film
+// index (r31 + 68) is 1 (EpicLogo) or 2 (MGSLogo), the tick's "a button was pressed" flag (r28) is set just before it
+// is tested (0x8222DB00) - exactly what a player pressing A at the logo does, however that logo was started.
+void Gow1SkipLogoTick(PPCRegister& r28, PPCRegister& r31) {
+  if (!REXCVAR_GET(gow1_skip_logos)) return;
+  rex::Runtime* runtime = rex::Runtime::instance();
+  const uint8_t* m = runtime ? runtime->virtual_membase() : nullptr;
+  if (!m || !r31.u32) return;
+  const uint32_t index = GuestWord(m, r31.u32 + 68);
+  if (index != 1 && index != 2) return;
+  static std::atomic<bool> logged{false};
+  if (!logged.exchange(true)) REXLOG_INFO("gow1_skip_logos: logo film {} playing - skipped as a button press would", index);
+  r28.u64 = 1;
+}
 
 // 0.3.0 tidy-up: the job 708 chapter-jump experiment (URL starts) is gone with the launcher's "Start at". Its three
 // hooks stay in gow1_manifest.toml (the generated code calls them) but do nothing now - no per-tick check or logging.
