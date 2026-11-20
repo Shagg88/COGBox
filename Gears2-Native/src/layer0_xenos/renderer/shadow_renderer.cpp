@@ -2572,7 +2572,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint64_t t0 = __rdtsc();
     const bool strict = queries_mode_ == QueriesMode::kStrict;  // PR #43
     const bool answer = queries_mode_ == QueriesMode::kAnswer || strict;
-    if (strict) PollOcclusion();
+    // 19 Nov (job 2114: OnZpd ~6% of the renderer thread): every begin and end polled the oldest pending answer (two
+    // lost-device checks, the fence, a clock read) - 1100 times a frame. Answers land when the GPU finishes a list;
+    // the draw path polls every 32 draws (each query has a draw) and the idle path waits on the GPU's event, so here
+    // every 16th end is enough.
+    if (strict && zpd.is_end && (++zpd_poll_tick_ & 15u) == 0) PollOcclusion();
     uint8_t* report = zpd.report_address ? memory_->TranslatePhysical<uint8_t*>(zpd.report_address) : nullptr;
     if (!zpd.is_end) {
       if (occ_open_.open) {  // the previous query never got its end
@@ -2849,8 +2853,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                        backend_->Stats().pipelines_async + rcp_ready_left_);
     if (upscale_probe_ && frame_ % upscale_probe_ == 0) LogProbeFrame();
     FrameStep("upscaler end frame", [&] { UpscaleEndFrame(); });
+    XENOS_SITE(1);
     if (textures_) FrameStep("texture end frame", [&] { textures_->EndFrame(frame_); });
+    XENOS_SITE(1);
     FrameStep("destination eviction", [&] { EvictDestinations(); });  // patch 0032
+    XENOS_SITE(1);
     std::string lost;
     if (backend_->IsLost(&lost)) {
       if (!lost_logged_) REXLOG_ERROR("gow2_renderer: our device is lost ({}); shadow renderer stopped", lost);
@@ -2860,24 +2867,29 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!selftest_started_) StartTransferSelfTest();
     DecideLoadHold();  // patch 0063
     if (display_ours_) FrameStep("present image", [&] { RequestDisplay(regs, frontbuffer_ptr & 0x1FFFFFFFu, fb_width, fb_height); });
+    XENOS_SITE(1);
     native_hdr_valid_ = false; // never reuse another frame's scene during menus/loading
     hdr_effect_resolves_.clear();
     if (!export_ranges_.empty())  // patch 0042: this frame's merged export readbacks
       FrameStep("export readback copies", [&] { IssueExportReadbacks(); });
     FrameStep("submit", [&] { frame_fences_.push_back(backend_->Submit()); });
+    XENOS_SITE(1);
     occ_need_submit_ = false;  // PR #43 strict queries: the frame's submit carried any batch still open
     occ_closed_in_batch_ = 0;
     occ_batches_this_frame_ = 0;
     occ_idle_submits_this_frame_ = 0;
     XenosLatencyFrameSubmitted();  // patch 0135: Reflex RENDERSUBMIT_END
     FrameStep("next frame", [&] { backend_->NextFrame(); });
+    XENOS_SITE(1);  // then the frame throttle (waits for our GPU when too many frames are queued)
     FrameStep("frame throttle", [&] {  // PR #43: a GPU-bound frame shows here, not as an unnamed gap
       while (frame_fences_.size() > frames_in_flight_) {  // patch 0133: at most this many frames queued on our device
         backend_->WaitForFence(frame_fences_.front());
         frame_fences_.pop_front();
       }
     });
+    XENOS_SITE(1);
     if (queries_mode_ != QueriesMode::kOff) FrameStep("occlusion results", [&] { PollOcclusion(); });  // upl-s4c
+    XENOS_SITE(1);
     double fl_hold_ms = 0.0;  // frame log
     if (hold_this_frame_) {
       const auto th = std::chrono::steady_clock::now();
@@ -2888,7 +2900,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     hold_descs_.clear();
     hold_keys_.clear();
     if (display_ours_ && !present_ours_) ShowDisplay(frontbuffer_ptr & 0x1FFFFFFFu);
+    XENOS_SITE(1);
     if (present_ours_) FrameStep("deliver image", [&] { DeliverFrameImages(); });
+    XENOS_SITE(1);
     {
       PartScope ps(*this, kPartCompare);
       EndTraceFrame();
@@ -15152,6 +15166,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool ps_no_alpha_variant_ = false;  // speed study: --gow2_renderer_ps_no_alpha_variant
   uint64_t ps_noat_from_swap_ = 0;  // --gow2_renderer_ps_no_alpha_from_swap
   double occ_last_landed_ms_ = 0;
+  uint32_t zpd_poll_tick_ = 0;
   const rr::GuestShader* vs_memo_ = nullptr;  // review 19 Nov #8
   const rr::GuestShader* ps_memo_ = nullptr;
   uint64_t vs_memo_hash_ = 0, ps_memo_hash_ = 0;
