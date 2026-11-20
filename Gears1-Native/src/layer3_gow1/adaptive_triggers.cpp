@@ -32,6 +32,7 @@
 //   0x01 continuous resistance from a position       {0x01, start, force}                  [V] SDL 3.4 testcontroller.c
 //   0x02 section resistance (a "click" to pass)      {0x02, start, end, force}             [E] Nielk1's DS5 notes
 //   0x06 vibration beyond a position                 {0x06, frequency Hz, amplitude, start} [V] SDL test {0x06,15,63,128}
+#include <rex/cvar.h>
 #include <rex/input/input_system.h>
 #include <rex/logging/macros.h>
 #include <rex/runtime.h>
@@ -404,10 +405,46 @@ void ImpulseTick(rex::input::InputSystem* input, uint32_t user, const Seen& s, C
 // Game thread, every engine tick (cheats.cpp, the FEngineLoop::Tick override).
 // The DualSense feel every 125 ms; with --pad_trigger_rumble the players are read every tick (the impulse triggers'
 // shots).
+// --cogbox_test_state (tests only, log only): once a second, what the first local player is doing, from the engine's own
+// flags - so an unattended test can prove it measured gameplay and not the pause menu, a cutscene or a film
+// (Shagg, 20 Nov: jobs kept measuring the pause menu). A test must find "cogbox_test_state: GAMEPLAY" in the log.
+REXCVAR_DEFINE_BOOL(cogbox_test_state, false, "COGBox",
+                    "Tests: log once a second whether the first player is in gameplay (not paused, not in a cutscene, "
+                    "has a living pawn) - log only");
+static void TestStateLine(Clock::time_point now) {
+  static Clock::time_point next{};
+  if (now < next) return;
+  next = now + std::chrono::seconds(1);
+  static const int timeSeconds = obj::PropertyOffset(g_p.worldInfo, "TimeSeconds");
+  uint32_t players = 0, pc = 0, pawn = 0, wi = 0;
+  if (const uint32_t engine = obj::Read32(kGEngine)) {
+    const uint32_t data = obj::Read32(engine + uint32_t(g_p.gamePlayers));
+    players = std::min<uint32_t>(obj::Read32(engine + uint32_t(g_p.gamePlayers) + 4), 4);
+    const uint32_t lp = data && players ? obj::Read32(data) : 0;
+    if (lp && obj::IsA(lp, g_p.localPlayer)) pc = obj::Read32(lp + uint32_t(g_p.actorOfPlayer));
+  }
+  if (pc && !obj::IsA(pc, g_p.playerController)) pc = 0;
+  if (pc) pawn = obj::Read32(pc + uint32_t(g_p.pawnOfController));
+  if (pawn && !obj::IsA(pawn, g_p.pawn)) pawn = 0;
+  if (pc && g_p.worldInfoOfActor >= 0) wi = obj::Read32(pc + uint32_t(g_p.worldInfoOfActor));
+  const bool cutscene = pc && g_p.Flag(pc, g_p.cinematic, g_p.cinematicMask);
+  const int health = pawn && g_p.health >= 0 ? int(int32_t(obj::Read32(pawn + uint32_t(g_p.health)))) : 0;
+  const bool pauseKnown = wi && g_p.pauser >= 0;
+  const bool paused = pauseKnown && obj::Read32(wi + uint32_t(g_p.pauser)) != 0;
+  const float t = wi && timeSeconds >= 0 ? obj::ReadFloat(wi + uint32_t(timeSeconds)) : -1.f;
+  const bool gameplay = pawn && health > 0 && !cutscene && pauseKnown && !paused;
+  REXLOG_INFO("cogbox_test_state: {} | players {} | controller {} | pawn {} | health {} | cutscene {} | paused {} | "
+              "level time {:.1f} s",
+              gameplay ? "GAMEPLAY" : "not gameplay", players, pc ? "yes" : "no", pawn ? "yes" : "no", health,
+              cutscene ? "yes" : "no", !pauseKnown ? "?" : paused ? "yes" : "no", t);
+}
+
 void Gow1AdaptiveTriggersTick() {
   static int adaptive = -1;   // --pad_adaptive_triggers / --pad_trigger_rumble are read once (a launcher restart)
   static bool impulse = false;
+  static bool test = false;   // --cogbox_test_state
   if (adaptive < 0) {
+    test = REXCVAR_GET(cogbox_test_state);
     adaptive = rex::input::InputSystem::AdaptiveTriggersEnabled() ? 1 : 0;
     impulse = g_impulseOn = rex::input::InputSystem::TriggerRumbleEnabled();
     if (adaptive)
@@ -416,9 +453,9 @@ void Gow1AdaptiveTriggersTick() {
     if (impulse)
       REXLOG_INFO("impulse triggers: Gears 1 trigger pulses for Xbox pads on (GitHub #245), {}",
                   kVersion);
-    if (adaptive || impulse) StartObjectsInit();
+    if (adaptive || impulse || test) StartObjectsInit();
   }
-  if ((!adaptive && !impulse) || !g_objects_warm.load(std::memory_order_acquire)) return;
+  if ((!adaptive && !impulse && !test) || !g_objects_warm.load(std::memory_order_acquire)) return;
   const Clock::time_point now = Clock::now();
   static Clock::time_point next{};
   const bool step = now >= next;   // the DualSense feel's 125 ms step
@@ -429,6 +466,7 @@ void Gow1AdaptiveTriggersTick() {
     warned = true;
     return;
   }
+  if (test) TestStateLine(now);
   if (!step && !impulse) return;
   rex::input::InputSystem* input = Input();
   if (!input) return;
