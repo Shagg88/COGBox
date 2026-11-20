@@ -893,6 +893,10 @@ REXCVAR_DEFINE_INT32(gow2_renderer_tess_scale, 1, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_texture_stale_log, 0, "Gears2",
                      "Job 150 diagnostic: log textures that stayed unchanged for N frames and then got new bytes, with "
                      "our recent resolves that overlap them (0 = off; first 400 events)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_front_copy_lean, false, "Gears2",
+                    "Speed study (opt-in, to be picture-checked): the front buffer's resolve skips its copy into the "
+                    "scaled-memory window and into guest memory when our presenter shows the frame (it reads the scaled "
+                    "destination). Wrong if the game samples its own front buffer as a texture");
 REXCVAR_DEFINE_BOOL(gow2_present_gamma_to_smaa, false, "Gears2",
                     "Speed study (D3D12): with SMAA, the swap's gamma pass also writes SMAA's colour image, so the "
                     "full-screen pass that unpacked it from the gamma pass's words is left out (same values)");
@@ -1800,6 +1804,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     cache_->SetTexPostSkip(REXCVAR_GET(gow2_renderer_tex_post_skip));  // speed study
     tex_frac16_ = REXCVAR_GET(gow2_renderer_tex_frac16);
     ps_no_alpha_variant_ = REXCVAR_GET(gow2_renderer_ps_no_alpha_variant);
+    front_copy_lean_ = REXCVAR_GET(gow2_renderer_front_copy_lean);
     vertex_watch_min_ = uint64_t(std::clamp(REXCVAR_GET(gow2_renderer_vertex_watch_min_bytes), 64, int32_t(kWatchMinBytes)));
     ps_noat_from_swap_ = uint64_t(std::max(REXCVAR_GET(gow2_renderer_ps_no_alpha_from_swap), 0));
     if (ps_noat_from_swap_) ps_no_alpha_variant_ = false;  // on from that swap (the warm-up still makes the variants)
@@ -4118,6 +4123,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::PipelineHandle present_gamma_smaa_ = 0;  // --gow2_present_gamma_to_smaa
   bool gamma_to_smaa_ = false, gamma_feed_smaa_now_ = false, gamma_fed_smaa_ = false;
   uint64_t smaa_unpacks_skipped_ = 0;
+  bool front_copy_lean_ = false;  // --gow2_renderer_front_copy_lean
+  uint64_t front_lean_skips_ = 0;
   uint64_t gamma_to_smaa_from_ = 0;  // --gow2_present_gamma_to_smaa_from_swap (picture check in one run)
   // "Match my monitor": the resample pass and the image at the window's size.
   gpu::PipelineHandle present_resample_ = 0;
@@ -14540,6 +14547,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ++stats_.colour_resolves_compared;
     ScaledDest* sd = nullptr;
     bool scaled_mem = false;
+    bool front_lean = false;
     // Patch 0143 (upscaling modes): a scene-scale source above 1x (not MSAA) also fills the output-scale copy (nearest);
     // the passes below then run at the output scale with the source's scale in c3.y bits 8-15.
     const uint32_t cross = up_scale_in_ > 1 && !ms_src && source_scale == up_scale_in_ ? source_scale : 0u;
@@ -14560,10 +14568,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ResolveDraw(b, dx * res_scale_, dy * res_scale_, (dx + w) * res_scale_, (dy + h) * res_scale_);
         else
           ResolveDispatch(resolve_pipe, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
-        scaled_mem = ScaledToMemory(*sd, info, dx, dy, w, h, endian);
+        // 19 Nov (opt-in, --gow2_renderer_front_copy_lean; review 19 Nov #2): the front buffer's copy is read by our
+        // presenter from the scaled destination just written. Its copy into the scaled-memory window (a full-size
+        // pass) and into guest memory are only for a game that samples its own front buffer as a texture.
+        front_lean = front_copy_lean_ && present_ours_ && front_bases_.count(info.dest_base) != 0;
+        if (front_lean) ++front_lean_skips_;
+        else scaled_mem = ScaledToMemory(*sd, info, dx, dy, w, h, endian);
       }
     }
-    WriteResolveToGuest(dest, info, endian, words, dx, dy, w, h, scaled_mem);
+    if (!front_lean) WriteResolveToGuest(dest, info, endian, words, dx, dy, w, h, scaled_mem);
     if (hl_format_ && hl_taken_ && hl_snap_ && display_ours_ && dest_bytes == 4 && words == 1 && !ms_src &&
         !narrow_or_wide) {
       ++hl_st_.res_cands;
@@ -15091,6 +15104,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       occ_backend_refused_base_ = b.occlusion_refused;
       occ_stats_ = OcclusionStats{};
     }
+    if (front_copy_lean_)
+      REXLOG_INFO("gow2_renderer: front-buffer copies kept lean so far: {} (no scaled-memory window copy, no guest write)",
+                  front_lean_skips_);
     if (vertex_watch_min_ < kWatchMinBytes)
       REXLOG_INFO("gow2_renderer: small vertex ranges watched (from {} bytes) frames {}-{}: {:.2f} MB/frame not copied, "
                   "{:.1f}/frame found dynamic (copied at every use for 600 frames), {} ranges known",
