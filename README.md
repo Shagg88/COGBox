@@ -267,7 +267,7 @@ repository the texts are in `Gears2-Native/THIRD_PARTY_NOTICES.md` and `Gears2-N
 | FFmpeg XMA decoder (`avcodec-63.dll`, `avutil-61.dll`; also linked into `rexruntime.dll`) | 9.0.2 (launcher); Xenia fork (runtime) | LGPL-2.1-or-later (not a GPL build) | `licenses\FFmpeg-NOTICE.txt`, `FFmpeg-LGPL-2.1.txt` |
 | SDL3 (`SDL3.dll`) | 3.4.20 | zlib | `licenses\SDL3-LICENSE.txt` |
 | Dear ImGui, miniz, stb (stb_image, stb_dxt), LZMA SDK 7z decoder | - | MIT / MIT / MIT or public domain / public domain | `licenses\` |
-| SMAA, XeGTAO, FidelityFX CACAO, modcore (KiltedKernel), native mouse look (gow2/gow3-recomp) | - | MIT / MIT / MIT / MIT / BSD-3-Clause | `licenses\Gears2-Native-THIRD_PARTY_NOTICES.md`, `licenses\modcore-LICENSE.txt` (in this repository: `Gears2-Native/THIRD_PARTY_NOTICES.md`) |
+| SMAA, XeGTAO, modcore (KiltedKernel), native mouse look (gow2/gow3-recomp) | - | MIT / MIT / MIT / BSD-3-Clause | `licenses\Gears2-Native-THIRD_PARTY_NOTICES.md`, `licenses\modcore-LICENSE.txt` (in this repository: `Gears2-Native/THIRD_PARTY_NOTICES.md`) |
 | PsychoV35 HDR tone mapping (Carlos Lopez / ShortFuse; self-contained edition by mqhaji) and RenoDX grading code (ShortFuse and the RenoDX contributors) - Gears 2 and Gears 3 native HDR | - | MIT / MIT | `PsychoV35-LICENSE.txt`, `RenoDX-Grading-LICENSE.txt` in the Gears 2 and Gears 3 folders' `licenses` |
 | NVIDIA DLSS Super Resolution and Frame Generation (`nvngx_dlss.dll`, `nvngx_dlssg.dll`) | 310.9.16 | NVIDIA RTX SDKs License (v. March 14, 2024), proprietary | `licenses\NVIDIA-Streamline-DLSS-G-NOTICE.txt`, `licenses\dlss-sdk\` |
 | NVIDIA Streamline (`sl.*.dll`) and Reflex | 2.14.16 | MIT (Streamline); NVIDIA Reflex SDK licence | `licenses\streamline-sdk\`, `licenses\streamline-release\` |

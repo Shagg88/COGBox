@@ -126,7 +126,7 @@ class Gow1App : public rex::ReXApp {
     // some with stencil shadows): upscaled there, they were drawn unjittered over the jittered depth and failed in
     // patches that changed with the jitter phase - the light strobing over characters. The last copy, as Judgment.
     game_default("gow2_upscale_scene_last_copy", "true");
-    // Gears 1 draws no AO and has no fog pass to anchor ours to: with --gow2_ao=gtao, XeGTAO / CACAO is multiplied into
+    // Gears 1 draws no AO and has no fog pass to anchor ours to: with --gow2_ao=gtao, XeGTAO is multiplied into
     // the scene at its first full-screen scene copy, which comes right before the per-light passes - so only the base
     // pass's light (lightmaps, ambient) is darkened, not each light's own.
     game_default("gow2_ao_add_at_scene_copy", "true");

@@ -55,7 +55,6 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include "smaa/smaa_area_tex.h"
 #include "xenos/renderer/upscaler.h"
 #include "xenos/renderer/ao.h"
-#include "cacao_shaders.h"
 #include "xegtao_shaders.h"
 #include "ssil_shaders.h"
 #include "smaa/smaa_passes.h"
@@ -1059,12 +1058,6 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_object_motion, false, "Gears2",
                     "the mesh. Logged every log window ('object motion')");
 REXCVAR_DEFINE_STRING(gow2_ao_quality, "high", "Gears2",
                       "XeGTAO quality (notes/80): low (1 slice x 2 steps), medium (2 x 2), high (3 x 3), ultra (9 x 3)");
-REXCVAR_DEFINE_STRING(gow2_ao_algo, "xegtao", "Gears2",
-                      "The AO --gow2_ao=gtao draws (notes/81): xegtao, or cacao (FidelityFX CACAO; --gow2_ao_quality: low = half "
-                      "resolution, 5 taps; medium = 5 taps; high / ultra = 12 taps with depth MIPs). F6 changes it live");
-REXCVAR_DEFINE_INT32(gow2_ao_cacao_blur, 3, "Gears2",
-                     "CACAO's edge-sensitive blur passes (notes/81; 0-8, as AMD's, whose default is 2; 3 looked best in play; 0 only to measure). F8 changes it live "
-                     "while CACAO is shown; XeGTAO keeps its own --gow2_ao_denoise");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_max_screen_radius, 0.325, "Gears2",
                       "XeGTAO: how far its samples reach on screen, as a fraction of the screen height. Close to the "
                       "camera the effect radius covers much of the screen and its samples leave it - the shadows near "
@@ -1083,7 +1076,7 @@ REXCVAR_DEFINE_BOOL(gow2_ao_half, false, "Gears2",
                     "XeGTAO at half resolution (test, Shagg 20 Nov): the main and denoise passes run on a quarter of the "
                     "pixels (the depth pyramid's level 1), then a depth-aware pass brings the result to the scene's size. "
                     "Job 2137b: AO high cost 0.8 ms and ultra 1.5 ms of GPU time at 1440p. Softer; thin things may lose "
-                    "contact shadow - compare before using. Not CACAO");
+                    "contact shadow - compare before using");
 REXCVAR_DEFINE_BOOL(gow2_ao_prefilter_single, false, "Gears2",
                     "XeGTAO: build the depth pyramid's 5 levels in one dispatch (XeGTAO's PrefilterDepths16x16) instead of "
                     "five, each reading the whole scene depth again. Needs a backend that binds 5 UAVs (D3D12, Vulkan); "
@@ -1091,7 +1084,7 @@ REXCVAR_DEFINE_BOOL(gow2_ao_prefilter_single, false, "Gears2",
 REXCVAR_DEFINE_STRING(gow2_ao_test_script, "", "Gears2",
                       "Tests (Shagg 20 Nov: one launch, not one per setting): timed XeGTAO changes while the game runs - "
                       "\"<swap>:<key>=<value>,...\" applied at that finished-frame number, each logged as 'gow2_ao_test:'. "
-                      "Keys: quality=low|medium|high|ultra, denoise=0..3 (0 = automatic), algo=gtao|cacao, blur=0..8, "
+                      "Keys: quality=low|medium|high|ultra, denoise=0..3 (0 = automatic), "
                       "show=ours|none|game, half=0|1, single=0|1 (depth pyramid in one dispatch), mip=<offset>, view=0..5. Needs "
                       "--gow2_ao=gtao; with a script the half-size and one-dispatch shaders are built at start too");
 REXCVAR_DEFINE_INT32(gow2_ao_gpu_log, 0, "Gears2",
@@ -1145,7 +1138,7 @@ REXCVAR_DEFINE_DOUBLE(gow2_ssil_adapt_far, 2500.0, "Gears2",
                       "in proportion, on a log scale)");
 REXCVAR_DEFINE_INT32(gow2_ssil_view, 0, "Gears2", "SSIL: the starting view - 0 normal, 1 indirect light only, 2 split (left without, right with); Shift+Insert cycles it");
 REXCVAR_DEFINE_BOOL(gow2_ao_add_at_scene_copy, false, "Gears2",
-                    "Where the game draws no AO and has no fog pass to anchor ours (Gears 1): XeGTAO / CACAO runs on the "
+                    "Where the game draws no AO and has no fog pass to anchor ours (Gears 1): XeGTAO runs on the "
                     "scene depth and is multiplied into the scene at the frame's first full-screen scene copy (Gears 1: "
                     "before its per-light passes). With --gow2_ao=gtao and --gow2_ao_everywhere; gow1.exe sets true");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_add_radius, -1.0, "Gears2",
@@ -5954,12 +5947,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t ao_frames_ok_ = 0, ao_frames_none_ = 0;  // log window
   // Notes/80 s.4: XeGTAO's passes and textures (scene size): the view-depth pyramid (5 levels), the working AO term
   // and edges, the final AO. ao_ready_: this frame's final AO is made (the debug view shows it).
-  // Notes/81: FidelityFX CACAO, the other AO --gow2_ao=gtao can draw.
-  bool ao_use_cacao_ = false, cc_ok_ = false;
-  gpu::PipelineHandle cc_depth_pipe_ = 0, cc_normals_pipe_ = 0, cc_ssao_pipes_[2] = {}, cc_blur_pipes_[9] = {}, cc_apply_pipe_ = 0,
-                      cc_upscale_pipe_ = 0;
-  gpu::TextureHandle cc_depth_[4] = {}, cc_depth_odd_[4] = {}, cc_ao_[4] = {}, cc_ao2_[4] = {}, cc_normals_ = 0, cc_half_ = 0;
-  uint32_t cc_w_ = 0, cc_h_ = 0, cc_step_ = 0, cc_blur_passes_ = 3;
   std::array<double, 18> ao_pass_ms_{};  // --gow2_ao_pass_times (1-10 the AO, 11-17 SSIL)
   gpu::PipelineHandle ao_prefilter_pipe_ = 0, ao_main_pipe_ = 0, ao_denoise_pipe_ = 0, ao_debug_pipe_ = 0;
   gpu::PipelineHandle ao_prefilter5_pipe_ = 0;  // --gow2_ao_prefilter_single (CreateComputePipelineMips)
@@ -8369,26 +8356,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ao_denoise_pipe_ = make("xegtao_denoise_cs", common + rr::builtin::kXeGtaoDenoiseCs);
     ao_debug_pipe_ = make("xegtao_debug_cs", rr::builtin::kXeGtaoDebugCs);
     ao_pack_pipe_ = make("xegtao_pack_cs", rr::builtin::kXeGtaoPackCs);
-    // 0.6.6 (Shagg 20 Nov: drop CACAO): no longer offered - its 14 shaders are built only when the command line asks
-    // for it (--gow2_ao_algo=cacao, measurements); otherwise nothing of it is compiled or run and F6 stays on XeGTAO.
-    // Job 2169: CACAO (high) 6.08 ms a frame against XeGTAO high 5.36-5.46 and ultra 5.90.
-    if (REXCVAR_GET(gow2_ao_algo) == "cacao") {  // notes/81: every pass built at start, so F6 and F11 need no compile
-      const std::string cc = rr::builtin::kCacaoCommon;
-      cc_depth_pipe_ = make("cacao_depth_cs", cc + rr::builtin::kCacaoDepthCs);
-      cc_normals_pipe_ = make("cacao_normals_cs", cc + rr::builtin::kCacaoNormalsCs);
-      cc_ssao_pipes_[0] = make("cacao_ssao_q1_cs", "#define CC_Q 1\n" + cc + rr::builtin::kCacaoSsaoCs);
-      cc_ssao_pipes_[1] = make("cacao_ssao_q2_cs", "#define CC_Q 2\n" + cc + rr::builtin::kCacaoSsaoCs);
-      cc_apply_pipe_ = make("cacao_apply_cs", cc + rr::builtin::kCacaoApplyCs);
-      cc_upscale_pipe_ = make("cacao_upscale_cs", cc + rr::builtin::kCacaoUpscaleCs);
-      cc_ok_ = cc_depth_pipe_ && cc_normals_pipe_ && cc_ssao_pipes_[0] && cc_ssao_pipes_[1] && cc_apply_pipe_ && cc_upscale_pipe_;
-      for (uint32_t n = 1; n <= 8; ++n) {  // one shader per pass count, as AMD's
-        const std::string id = std::to_string(n);
-        cc_blur_pipes_[n] = make("cacao_blur" + id + "_cs", "#define CC_BLUR " + id + "\n" + cc + rr::builtin::kCacaoBlurCs);
-        cc_ok_ = cc_ok_ && cc_blur_pipes_[n];
-      }
-      if (!cc_ok_) REXLOG_WARN("gow2_ao: CACAO shaders failed to compile; XeGTAO only");
-      ao_use_cacao_ = cc_ok_ && REXCVAR_GET(gow2_ao_algo) == "cacao";
-    }
     ao_debug_ = std::clamp(REXCVAR_GET(gow2_ao_debug), 0, 5);
     // An upscaler that was asked for but isn't there (not built in, its shaders failed) accumulates nothing.
     ao_denoise_passes_ = rr::ao::DenoisePasses(REXCVAR_GET(gow2_ao_denoise), q, upscaler_ ? REXCVAR_GET(gow2_upscaler) : std::string("off"),
@@ -8413,13 +8380,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     XenosAoDebugSetState(ao_show_, uint32_t(ao_debug_), q, ao_denoise_passes_);
-    cc_blur_passes_ = uint32_t(std::clamp(REXCVAR_GET(gow2_ao_cacao_blur), 0, 8));
-    XenosAoDebugSetCacao(ao_use_cacao_, cc_ok_, cc_blur_passes_);  // notes/80 s.12: the keys start from here
     REXLOG_INFO("gow2_ao: XeGTAO {} ({} slices x {} steps), radius {}, power {}, {} denoise pass(es), shown: {}{}",
                 kQuality[q], kSlices[q], kSteps[q], REXCVAR_GET(gow2_ao_radius), REXCVAR_GET(gow2_ao_power),
-                ao_denoise_passes_, ao_show_ == 1 ? "none" : ao_show_ == 2 ? "the game's own" : ao_use_cacao_ ? "CACAO" : "XeGTAO",
+                ao_denoise_passes_, ao_show_ == 1 ? "none" : ao_show_ == 2 ? "the game's own" : "XeGTAO",
                 ao_debug_ ? ", debug view " + std::to_string(ao_debug_) : std::string());
-    if (ao_use_cacao_) REXLOG_INFO("gow2_ao: CACAO {}, {} blur pass(es); the XeGTAO numbers above apply if F6 switches to it", kQuality[q], cc_blur_passes_);
   }
 
   // Notes/80 s.4: XeGTAO on the frame's scene depth, into ao_final_ (scene size, visibility 0..1). Needs the frame's
@@ -8476,7 +8440,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
       ao_w_ = w, ao_h_ = h;
     }
-    if (ao_use_cacao_) return RunCacao(*depth, *k, w, h);  // notes/81: into the same ao_final_
     gpu::ComputeBindings b;
     b.constant_count = 16;
     b.constants[0] = w;
@@ -8631,7 +8594,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // current, mw x mh) is the upscaler's when SSIL runs inside RunUpscaler - then the frames accumulate (and bounce);
   // `reset`: a camera cut, the history is thrown away. Returns false when nothing was made.
   bool RunSsil(const rr::RenderTarget& rt, gpu::TextureHandle motion, uint32_t mw, uint32_t mh, bool reset) {
-    // SSIL runs only on XeGTAO's depth pyramid (a design choice: no pyramid of its own). None this frame - CACAO chosen
+    // SSIL runs only on XeGTAO's depth pyramid (a design choice: no pyramid of its own). None this frame
     // (F6 / F9), or no scene depth - pauses it; the label says so.
     const bool pyramid = ao_depth_ && ao_depth_frame_ == frame_;
     XenosSsilSetPaused(!pyramid);
@@ -8881,135 +8844,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void AoPassTag(uint32_t pass) {
     static const bool on = REXCVAR_GET(gow2_ao_pass_times);
     if (on) backend_->SetGpuTag(pass ? kAoPassTagBase + pass : 0u);
-  }
-
-  // Notes/81: FidelityFX CACAO on the frame's scene depth, into ao_final_ like XeGTAO, so everything after it is shared.
-  // One 2D texture per deinterleaved layer (cacao_shaders.h). Quality: 0 half resolution 5 taps, 1 5 taps, 2-3 12 taps.
-  bool RunCacao(const rr::RenderTarget& depth, const rr::ao::GtaoConstants& k, uint32_t w, uint32_t h) {
-    const uint32_t q = XenosAoDebugQuality() & 3u;
-    const uint32_t step = q == 0 ? 4u : 2u;
-    const uint32_t lw = (w + step - 1) / step, lh = (h + step - 1) / step;
-    if (cc_w_ != w || cc_h_ != h || cc_step_ != step) {
-      for (uint32_t i = 0; i < 4; ++i)
-        for (gpu::TextureHandle* t : {&cc_depth_[i], &cc_depth_odd_[i], &cc_ao_[i], &cc_ao2_[i]})
-          if (*t) backend_->DestroyTexture(*t), *t = 0;
-      for (gpu::TextureHandle* t : {&cc_normals_, &cc_half_})
-        if (*t) backend_->DestroyTexture(*t), *t = 0;
-      cc_w_ = cc_h_ = 0;
-      gpu::TextureDesc td;
-      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
-      bool ok = true;
-      for (uint32_t i = 0; i < 4; ++i) {
-        td.width = lw, td.height = lh, td.mips = 4, td.format = gpu::Format::kR32Float;
-        td.debug_name = "cacao view depth";
-        cc_depth_[i] = backend_->CreateTexture(td);
-        cc_depth_odd_[i] = backend_->CreateTexture(td);
-        td.mips = 1, td.format = gpu::Format::kR16G16Float;
-        td.debug_name = "cacao ao";
-        cc_ao_[i] = backend_->CreateTexture(td);
-        cc_ao2_[i] = backend_->CreateTexture(td);
-        ok = ok && cc_depth_[i] && cc_depth_odd_[i] && cc_ao_[i] && cc_ao2_[i];
-      }
-      td.width = lw * 2, td.height = lh * 2, td.mips = 1, td.format = gpu::Format::kR16G16Float;
-      td.debug_name = "cacao normals";
-      cc_normals_ = backend_->CreateTexture(td);
-      td.format = gpu::Format::kR16G16Float;
-      td.debug_name = "cacao half";
-      if (step == 4) cc_half_ = backend_->CreateTexture(td);
-      if (!ok || !cc_normals_ || (step == 4 && !cc_half_)) {
-        if (!ao_failed_logged_) REXLOG_WARN("gow2_ao: CACAO textures ({}x{}) could not be made; XeGTAO from the next frame", w, h);
-        ao_failed_logged_ = true;
-        cc_ok_ = false;  // review: no create / destroy every frame - the per-frame state then keeps XeGTAO
-        XenosAoDebugSetCacao(false, false, cc_blur_passes_);
-        return false;
-      }
-      cc_w_ = w, cc_h_ = h, cc_step_ = step;
-    }
-    const double add_r = REXCVAR_GET(gow2_ao_add_radius), add_p = REXCVAR_GET(gow2_ao_add_power);
-    const bool added = !ao_had_chain_last_;
-    const float radius = float(added && add_r >= 0.0 ? add_r : REXCVAR_GET(gow2_ao_radius));
-    const float power = float(added && add_p >= 0.0 ? add_p : REXCVAR_GET(gow2_ao_power)) * (1.5f / 2.2f);  // CACAO's default 1.5 at XeGTAO's 2.2
-    const float fade_from = 20000.0f, fade_to = 60000.0f;  // world units: well past the effect, only hides distant noise
-    gpu::ComputeBindings b;
-    b.constant_count = 16;
-    b.constants[0] = w;
-    b.constants[1] = h;
-    b.constants[2] = std::bit_cast<uint32_t>((float24_remap_ && (depth.key.storage_class & 1)) ? 2.0f : 1.0f);
-    b.constants[4] = std::bit_cast<uint32_t>(k.depth_unpack[0]);
-    b.constants[5] = std::bit_cast<uint32_t>(k.depth_unpack[1]);
-    b.constants[6] = std::bit_cast<uint32_t>(k.tan_half_fov[0]);
-    b.constants[7] = std::bit_cast<uint32_t>(k.tan_half_fov[1]);
-    b.constants[8] = std::bit_cast<uint32_t>(radius);
-    b.constants[9] = std::bit_cast<uint32_t>(power);
-    b.constants[10] = std::bit_cast<uint32_t>(k.tan_half_fov[1] / (radius * 1.2f));  // EffectSamplingRadiusNearLimitRec
-    b.constants[11] = step;
-    b.constants[12] = lw;
-    b.constants[13] = lh;
-    b.constants[14] = std::bit_cast<uint32_t>(-1.0f / (fade_to - fade_from));
-    b.constants[15] = std::bit_cast<uint32_t>(fade_from / (fade_to - fade_from) + 1.0f);
-    const uint32_t gx = (lw + 7) / 8, gy = (lh + 7) / 8;
-    // 1. Each layer's view depth; the MIPs only where the 12 taps use them.
-    AoPassTag(1);
-    const uint32_t mips = q >= 2 ? 4u : 1u;
-    b.srv[0] = depth.texture;
-    b.srv_plane[0] = 0;
-    for (uint32_t layer = 0; layer < 4; ++layer) {
-      for (uint32_t mip = 0; mip < mips; ++mip) {
-        b.constants[3] = layer | (mip << 8);
-        b.srv[1] = mip == 0 ? 0 : (mip & 1u) ? cc_depth_[layer] : cc_depth_odd_[layer];  // the level before
-        b.uav_texture = (mip & 1u) ? cc_depth_odd_[layer] : cc_depth_[layer];
-        b.uav_mip = mip;
-        backend_->Dispatch(cc_depth_pipe_, b, (std::max(lw >> mip, 1u) + 7) / 8, (std::max(lh >> mip, 1u) + 7) / 8, 1);
-      }
-    }
-    b.uav_mip = 0;
-    b.srv[1] = 0;
-    // 2. Normals from depth, on the merged grid.
-    AoPassTag(2);
-    b.constants[3] = 0;
-    b.uav_texture = cc_normals_;
-    backend_->Dispatch(cc_normals_pipe_, b, (lw * 2 + 7) / 8, (lh * 2 + 7) / 8, 1);
-    // 3. Each layer's obscurance and edges.
-    AoPassTag(3);
-    b.srv[1] = cc_normals_;
-    for (uint32_t layer = 0; layer < 4; ++layer) {
-      b.constants[3] = layer;
-      b.srv[0] = cc_depth_[layer];
-      b.srv[2] = q >= 2 ? cc_depth_odd_[layer] : 0;
-      b.uav_texture = cc_ao_[layer];
-      backend_->Dispatch(cc_ssao_pipes_[q >= 2 ? 1 : 0], b, gx, gy, 1);
-    }
-    // 4. The edge-sensitive blur (--gow2_ao_cacao_blur, F8).
-    AoPassTag(4);
-    b.srv[1] = b.srv[2] = 0;
-    gpu::TextureHandle result[4];
-    for (uint32_t layer = 0; layer < 4; ++layer) {
-      result[layer] = cc_ao_[layer];
-      if (cc_blur_passes_ == 0) continue;  // only to measure
-      b.srv[0] = cc_ao_[layer];
-      b.uav_texture = cc_ao2_[layer];
-      const uint32_t sx = 64u - 2u * cc_blur_passes_, sy = 48u - 2u * cc_blur_passes_;
-      backend_->Dispatch(cc_blur_pipes_[cc_blur_passes_], b, (lw + sx - 1) / sx, (lh + sy - 1) / sy, 1);
-      result[layer] = cc_ao2_[layer];
-    }
-    // 5. The layers merged; at half resolution then a depth-aware upsample.
-    AoPassTag(5);
-    for (uint32_t layer = 0; layer < 4; ++layer) b.srv[layer] = result[layer];
-    b.uav_texture = step == 4 ? cc_half_ : ao_final_;
-    backend_->Dispatch(cc_apply_pipe_, b, (lw * 2 + 7) / 8, (lh * 2 + 7) / 8, 1);
-    if (step == 4) {
-      b.srv[0] = cc_half_;
-      b.srv[1] = depth.texture;
-      b.srv_plane[1] = 0;
-      b.srv[2] = b.srv[3] = 0;
-      b.uav_texture = ao_final_;
-      AoPassTag(6);
-      backend_->Dispatch(cc_upscale_pipe_, b, (w + 7) / 8, (h + 7) / 8, 1);
-    }
-    AoPassTag(0);
-    ao_ready_ = true;
-    ++ao_runs_;
-    return true;
   }
 
   // Notes/80 s.4: the game's AO chain, by shape - its addresses move with the settings (notes/80 s.2). Resolves of a
@@ -9309,11 +9143,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     } else if (k == "denoise") {
       ok = rex::cvar::SetFlagByName("gow2_ao_denoise", v);
       if (ok) XenosAoDebugSetDenoisePasses(auto_denoise(XenosAoDebugQuality() & 3u));
-    } else if (k == "algo") {
-      ok = (v == "gtao" || v == "cacao") && (v == "gtao" || cc_ok_);
-      if (ok) XenosAoDebugSetCacao(v == "cacao", cc_ok_, XenosAoDebugCacaoBlur());
-    } else if (k == "blur") {
-      XenosAoDebugSetCacao(XenosAoDebugCacao(), cc_ok_, uint32_t(std::clamp(std::atoi(v.c_str()), 0, 8)));
     } else if (k == "show") {
       const uint32_t show = v == "none" ? 1u : v == "game" ? 2u : 0u;
       ok = v == "ours" || v == "none" || v == "game";
@@ -9334,9 +9163,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     } else {
       ok = false;
     }
-    REXLOG_INFO("gow2_ao_test: swap {}: {}={} {} | now quality {} | denoise {} | algo {} blur {} | show {} | half {} | "
+    REXLOG_INFO("gow2_ao_test: swap {}: {}={} {} | now quality {} | denoise {} | show {} | half {} | "
                 "single {} | mip {:.2f} | view {}", frame_, k, v, ok ? "applied" : "REFUSED", kQ[XenosAoDebugQuality() & 3u],
-                XenosAoDebugDenoisePasses(), XenosAoDebugCacao() ? "cacao" : "gtao", XenosAoDebugCacaoBlur(),
+                XenosAoDebugDenoisePasses(),
                 XenosAoDebugShow() == 1 ? "none" : XenosAoDebugShow() == 2 ? "game" : "ours", ao_half_ ? 1 : 0,
                 ao_prefilter5_pipe_ ? 1 : 0, double(REXCVAR_GET(gow2_ao_mip_offset)), XenosAoDebugView());
   }
@@ -9357,9 +9186,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (every > 0 && frame_ % uint64_t(every) == 0) {
       if (pass_times) {
         const double n = double(every);
-        REXLOG_INFO("gow2_ao: pass ms/frame: CACAO depth {:.3f} normals {:.3f} ao {:.3f} blur {:.3f} merge {:.3f} upsample {:.3f} | "
-                    "XeGTAO depth {:.3f} main {:.3f} denoise {:.3f} | pack {:.3f}",
-                    ao_pass_ms_[1] / n, ao_pass_ms_[2] / n, ao_pass_ms_[3] / n, ao_pass_ms_[4] / n, ao_pass_ms_[5] / n, ao_pass_ms_[6] / n,
+        REXLOG_INFO("gow2_ao: pass ms/frame: XeGTAO depth {:.3f} main {:.3f} denoise {:.3f} | pack {:.3f}",
                     ao_pass_ms_[7] / n, ao_pass_ms_[8] / n, ao_pass_ms_[9] / n, ao_pass_ms_[10] / n);
         if (ssil_ok_) {
           double ssil_total = 0.0;
@@ -9394,8 +9221,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ao_debug_ = int32_t(XenosAoDebugView());
       if (const gpu::PipelineHandle p = ao_main_pipes_[XenosAoDebugQuality() & 3u]) ao_main_pipe_ = p, ao_q_ = XenosAoDebugQuality() & 3u;
       ao_denoise_passes_ = std::clamp(XenosAoDebugDenoisePasses(), 1u, 3u);
-      ao_use_cacao_ = cc_ok_ && XenosAoDebugCacao();
-      cc_blur_passes_ = std::min(XenosAoDebugCacaoBlur(), 8u);
     }
     ssil_done_frame_ = false;  // --gow2_ssil: once a frame
     if (ssil_ok_) {
