@@ -544,8 +544,8 @@ std::vector<Option> make_options(Game g) {
     // runtime behaves exactly as before ("No Network Connection").
     add(make("SystemLink", "System Link - LAN play", Tab::Gameplay, Kind::Bool, PG, 0,
              "Lets the game's System Link find and join games on other PCs on your network (or on a LAN VPN "
-             "such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. Gears of War "
-             "and Gears 2 co-op worked in testing; other modes and the other games are less tested. Voice chat is not supported yet. Windows may ask about the firewall: "
+             "such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. "
+             "Voice chat is not supported yet. Windows may ask about the firewall: "
              "allow Private networks.", 325), "syslink");
     // 0.4.8 (GitHub #229, clovis-junior): the other players' addresses, as the reporter's extra-args.txt line
     // --net_peer_ip=... did (SDK patch 49b / 50) - typed here instead. IPv4 only (Radmin VPN 26.x, ZeroTier, Hamachi).
