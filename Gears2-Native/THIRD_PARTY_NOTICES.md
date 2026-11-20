@@ -61,3 +61,11 @@ INTELLECTUAL PROPERTY RIGHT EVEN IF COPYRIGHT HOLDER AND ITS AUTHORIZED REPRESEN
 POSSIBILITY OF SUCH DAMAGES. IN NO EVENT SHALL COPYRIGHT HOLDER OR ITS AUTHORIZED REPRESENTATIVES TOTAL LIABILITY FOR
 ALL DAMAGES, LOSSES, AND CAUSES OF ACTION (WHETHER IN CONTRACT, TORT (INCLUDING NEGLIGENCE) OR OTHERWISE) EXCEED THE
 AMOUNT OF US$10.
+
+### RenoDX HDR grading
+
+The native HDR UE3 grading bridge uses RenoDX reference strategies, adapted
+Oklab matrices and both games' smoothed-power HDR boost from the Dishonored
+sample, copyright (c) 2025 Carlos Lopez Jr. / ShortFuse. Its MIT notice
+is provided in `cogbox/licenses/RenoDX-Grading-LICENSE.txt` and distributed beside
+both game executables. See `../docs/ue3-hdr-grading.md` for upstream references.
