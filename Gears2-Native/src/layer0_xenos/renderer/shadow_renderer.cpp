@@ -2904,6 +2904,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return 0;
   }
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
+    // #399: the scene's height floor from this frame's front buffer (guest rows)
+    scene_min_height_ = fb_height >= 240 && fb_height < kSceneMinHeight ? fb_height : kSceneMinHeight;
     XENOS_SITE(1);
     if (!backend_) return;
     if (!thread_cpu_base_) thread_cpu_base_ = ThreadCpuTicks();
@@ -5981,6 +5983,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Guest pixels. 512 high, not 576: ultrawide (--gow2_ultrawide) renders 1280x550 at 1x, and DLSS / FSR never started
   // there with 576 (job 261).
   static constexpr uint32_t kSceneMinWidth = 1024, kSceneMinHeight = 512;
+  // GitHub #399 (FSR never started at 32:9): wider picture shapes draw a lower scene - 1280x360 at 32:9, down to 240 rows
+  // at 48:9 - which the fixed 512 turned away, so the camera was never found (no jitter, no upscaling, no XeGTAO
+  // constants). The floor follows the game's own front buffer: its height when that is below 512 (never under 240).
+  // Set at every swap from the frame just shown; 512 until a lower frame has been seen, so nothing changes at 16:9 / 21:9.
+  uint32_t scene_min_height_ = kSceneMinHeight;
+  uint32_t SceneMinHeight() const { return scene_min_height_; }
   // GitHub #323: the Gears games' full scene (720p, guest pixels) - the size an SDK upscaler grows to when a frame
   // exceeds the one it was made for (upscale::FitCreationSize).
   static constexpr uint32_t kSceneFullWidth = 1280, kSceneFullHeight = 720;
@@ -6626,12 +6634,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // depth get the jitter besides the camera draws - 1: also those whose vertex shader does not read c0-c3, 2: also
     // those with other c0-c3. A depth prepass drawn jittered and a base pass drawn unjittered fail UE3's depth-equal
     // test in patches (black / missing surfaces).
-    if (up_vp_auto_ && depth_writes && depth->guest_width >= kSceneMinWidth && depth->guest_height >= kSceneMinHeight) {
+    if (up_vp_auto_ && depth_writes && depth->guest_width >= kSceneMinWidth && depth->guest_height >= SceneMinHeight()) {
       ++up_scene_draws_seen_;
       if (ObjectRowsIdentity(r, vsg)) up_identity_seen_ = true;
     }
     if (up_vp_base_ < 0) {  // job 715: find the camera matrix on the first scene draw that has one
-      if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < kSceneMinHeight) return;
+      if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < SceneMinHeight()) return;
       FindCameraMatrix(r, vsg);
       if (up_vp_base_ < 0) return;
     }
@@ -6677,7 +6685,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const double det = handedness != 0 ? CameraDeterminant(c) : 0.0;
       const bool mirrored = handedness != 0 && std::isfinite(det) && det * double(handedness) < 0.0;
       if (mirrored) ++up_mirror_draws_;
-      if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < kSceneMinHeight ||
+      if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < SceneMinHeight() ||
           (up_vp_auto_ && !rows_camera && !ObjectRowsIdentity(r, vsg)) || !perspective || mirrored) {  // job 716
         // Job 726 (job 725's captures: the lighting on stone changed frame to frame in the INPUT): Gears 1 draws its
         // objects into the scene depth before the first level-geometry draw, so they were drawn unjittered while the
@@ -6801,7 +6809,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const bool u1010102 = (up_scene_formats_ & 2u) && rt.format == gpu::Format::kR10G10B10A2Unorm;
     return (f16 || u1010102) &&
            info.x0 == 0 && info.y0 == 0 &&
-           info.width_div_8 * 8 >= kSceneMinWidth && info.height_div_8 * 8 >= kSceneMinHeight;
+           info.width_div_8 * 8 >= kSceneMinWidth && info.height_div_8 * 8 >= SceneMinHeight();
   }
 
   // Notes/80 s.6: the scene depth for the upscaler and the motion pass, copied at the game's scene depth resolve. Gears 2
