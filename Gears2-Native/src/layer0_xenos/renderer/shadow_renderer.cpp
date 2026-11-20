@@ -183,7 +183,12 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_canary_maths, true, "Gears2",  // job 634
                     "instead of the exact FTZ / total-order / NaN emulation - ~17% smaller DXBC. Job 634 ran both forms "
                     "of all 3,423 shaders of a Judgment run on the same inputs: the same values everywhere but a "
                     "denormal passed through instead of flushed (0x00000001 for 0) in 7 vertex shaders");
-REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_skip, false, "Gears2",
+// 0.6.6 (Shagg 20 Nov: "Why would we turn speed up switches off? Ever?"): the speed study's switches are ON by default -
+// tex_post_skip, ps_no_alpha_variant, tex_frac16 = false, ps_r21 = false here; fused_scaled_resolve, front_copy_lean,
+// present_gamma_to_smaa and vertex_watch_min_bytes = 256 further down. Together: Gears 2 chapter 9 at 1440p about
+// 8 ms -> 5 ms a frame (jobs 2146 / 2161). Each keeps its switch only as a way back if one breaks a picture in one
+// game. Pictures checked in Gears 2; Gears 1, Gears 3 and Judgment still to be checked in a gameplay run.
+REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_skip, true, "Gears2",
                     "Speed study (with --gow2_renderer_tex_post_affine): a texture fetch whose slot needs no "
                     "post-processing (no sign / gamma / integer step, exponent adjust 1) skips it in one uniform branch. "
                     "Same values. Changes the pixel shaders (pipelines rebuild once)");
@@ -199,16 +204,16 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_ps_no_colour_variant, false, "Gears2",
                     "pixel shader only for the alpha test, kills or depth (no colour target written) uses a variant "
                     "without colour outputs, so the GPU runs only what feeds those. D3D12 / DXBC shaders; the variants "
                     "are compiled at first use (not kept across sessions yet)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_ps_no_alpha_variant, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_ps_no_alpha_variant, true, "Gears2",
                     "Speed study: a draw whose alpha test is off (ALWAYS) uses a variant of its pixel shader without the "
                     "alpha test - no discard instruction, so the GPU keeps early depth rejection (every pixel shader "
                     "that writes colour 0 otherwise carries the discard, whether the test is on or not). Same pictures; "
                     "a second variant of such shaders is translated on first use");
-REXCVAR_DEFINE_BOOL(gow2_renderer_ps_r21, true, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_ps_r21, false, "Gears2",
                     "Speed study (with --gow2_renderer_canary_r21): false = the 21-bit rounding of exp / log / rcp / rsq "
                     "/ sqrt only in vertex shaders, as Xenia Edge does (b13a0478d: in pixel shaders 'the extra "
                     "instructions cost too much per pixel'). Changes the pixel shaders");
-REXCVAR_DEFINE_BOOL(gow2_renderer_tex_frac16, true, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_tex_frac16, false, "Gears2",
                     "Speed study: false = a fixed-point texture's filtered value is not rounded to 16 fractional bits "
                     "(Canary's emulation of the hardware's filter precision). Differences are below 1/65536 - with "
                     "--gow2_renderer_tex_post_skip most fetches then skip the post-processing");
@@ -910,16 +915,16 @@ REXCVAR_DEFINE_INT32(gow2_renderer_tess_scale, 1, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_texture_stale_log, 0, "Gears2",
                      "Job 150 diagnostic: log textures that stayed unchanged for N frames and then got new bytes, with "
                      "our recent resolves that overlap them (0 = off; first 400 events)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_front_copy_lean, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_front_copy_lean, true, "Gears2",
                     "Speed study (opt-in, to be picture-checked): the front buffer's resolve skips its copy into the "
                     "scaled-memory window and into guest memory when our presenter shows the frame (it reads the scaled "
                     "destination). Wrong if the game samples its own front buffer as a texture");
-REXCVAR_DEFINE_BOOL(gow2_present_gamma_to_smaa, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_present_gamma_to_smaa, true, "Gears2",
                     "Speed study (D3D12): with SMAA, the swap's gamma pass also writes SMAA's colour image, so the "
                     "full-screen pass that unpacked it from the gamma pass's words is left out (same values)");
 REXCVAR_DEFINE_INT32(gow2_present_gamma_to_smaa_from_swap, 0, "Gears2",
                      "Speed study (picture check): --gow2_present_gamma_to_smaa only from this swap on");
-REXCVAR_DEFINE_INT32(gow2_renderer_vertex_watch_min_bytes, 16384, "Gears2",
+REXCVAR_DEFINE_INT32(gow2_renderer_vertex_watch_min_bytes, 256, "Gears2",
                      "Speed study: vertex ranges of at least this many bytes are watched for writes and copied again "
                      "only when written (16384 = as before: smaller ranges are copied at every use). Below 16384, a "
                      "smaller range that changes at two checks in a row is taken as a dynamic buffer and copied at "
@@ -1265,7 +1270,7 @@ REXCVAR_DEFINE_INT32(gow2_renderer_fused_scaled_kinds, 3, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_const_gen_skip, true, "Gears2",
                     "Job 240 (default on since job 249; shots identical in ch10 / ch02): skip the float-constant compare and copy for a draw when no register write reached the "
                     "VS / PS float constants since that slot's last upload (render-pipe generation counters)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_fused_scaled_resolve, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_fused_scaled_resolve, true, "Gears2",
                     "Job 238: the resolve shaders' scaled pass writes straight into the scaled-memory windows (one pass "
                     "per window), skipping the scaled destination texture and the copy from it. Front-buffer copies keep "
                     "the old path (the presenter reads the scaled destination)");
