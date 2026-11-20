@@ -1930,6 +1930,25 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     const bool realOcclusion = (s.i("Api") == 0 || vkQueries) && !env.wine && g != Game::Gears1 &&
                                (g != Game::Gears2 || cap_exe(env, "gow2_renderer_queries"));
     if (realOcclusion) a.push_back("--gow2_renderer_queries=strict");
+    // 0.6.6 speed set (Shagg 20 Nov: "all four gears games need to have the same speed up gears 2 has"): the speed
+    // study's renderer switches, which took Gears 2 chapter 9 at 1440p from about 8 ms a frame to about 5 (jobs 2146 /
+    // 2161: 5.04 / 4.96 ms). They are opt-in in the shared renderer, so without these arguments no player gets them.
+    // Each is passed only when the exe has it. Pictures were checked in Gears 2 (pause menu and gameplay); Gears 1,
+    // Gears 3 and Judgment still need their picture check in a gameplay run before a release.
+    {
+        const bool vk = runs_vulkan(s, env);
+        static const char* const k_speed[][2] = {
+            { "gow2_renderer_ps_no_alpha_variant", "--gow2_renderer_ps_no_alpha_variant=true" },
+            { "gow2_renderer_tex_post_skip", "--gow2_renderer_tex_post_skip=true" },
+            { "gow2_renderer_tex_frac16", "--gow2_renderer_tex_frac16=false" },
+            { "gow2_renderer_ps_r21", "--gow2_renderer_ps_r21=false" },
+            { "gow2_renderer_fused_scaled_resolve", "--gow2_renderer_fused_scaled_resolve=true" },
+            { "gow2_renderer_vertex_watch_min_bytes", "--gow2_renderer_vertex_watch_min_bytes=256" },
+            { "gow2_renderer_front_copy_lean", "--gow2_renderer_front_copy_lean=true" },
+        };
+        for (const auto& k : k_speed) if (cap_exe(env, k[0])) a.push_back(k[1]);
+        if (!vk && cap_exe(env, "gow2_present_gamma_to_smaa")) a.push_back("--gow2_present_gamma_to_smaa=true");   // D3D12 only
+    }
     // Notes/80: XeGTAO (2 high, 3 ultra); notes/81: CACAO (4); 0 Off goes through the game's own [SystemSettings] below,
     // 1 changes nothing
     if (avail("AO") && s.i("AO") >= 2) {
