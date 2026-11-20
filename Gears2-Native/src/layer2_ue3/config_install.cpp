@@ -469,12 +469,16 @@ REXCVAR_DEFINE_STRING(gow2_movie_voice_group, "auto", "Gears2",
 // track IDs of its TEXT language's group; with --ue3_voice_language set to another language the header is shown with
 // that group's IDs swapped with the voice language's (the same 12-byte swap as above, between two groups, or a group
 // and the base mix for English). That needs to know which language each group holds, which the file does not say:
-// --gow2_movie_voice_order lists the languages of groups 1..n as the voice codes, e.g. "FRA,ITA,DEU,ESN,ESM". Empty
-// (default) = unknown, the movies keep the text language as before. Only with --gow2_movie_voice_group=auto, and only
-// for a movie with exactly as many groups as the list.
-REXCVAR_DEFINE_STRING(gow2_movie_voice_order, "", "Gears2",
-                      "GitHub #375: the languages of the movies' voice groups 1..n (e.g. FRA,ITA,DEU,ESN,ESM), so "
-                      "movies play in --ue3_voice_language; empty = movies keep the text language");
+// --gow2_movie_voice_order lists the languages of groups 1..n as the voice codes. Empty = the movies keep the text
+// language. Only with --gow2_movie_voice_group=auto, and only for a movie with exactly as many groups as the list.
+// 0.6.6 default "FRA,ITA,DEU,ESN,ESM" (Shagg 20 Nov: fix it without waiting): the retail movies carry five groups and
+// the industry's fixed order for them is E-F-I-G-S (English base, French, Italian, German, Spanish) with Latin American
+// Spanish last. NOT MEASURED BY EAR YET. It only acts when the Voice language differs from the text language - a case
+// that played the wrong (text) language before, so a wrong guess cannot break a setup that was right.
+REXCVAR_DEFINE_STRING(gow2_movie_voice_order, "FRA,ITA,DEU,ESN,ESM", "Gears2",
+                      "GitHub #375: the languages of the movies' voice groups 1..n, so movies play in "
+                      "--ue3_voice_language (default: the usual E-F-I-G-S order plus ESM); empty = movies keep the "
+                      "text language");
 
 namespace {
 // -1 off, 0 auto, n forced
