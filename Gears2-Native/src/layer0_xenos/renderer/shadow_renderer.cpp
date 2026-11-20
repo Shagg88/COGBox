@@ -14609,7 +14609,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "skipped {:.1f}/frame ({:.2f} Mpx/frame), texture memo hits {:.0f}/frame, fill transfers skipped {:.1f}/frame "
                   "({:.2f} Mpx/frame) + passes {:.1f}/frame, fill-bounded ownership draws {:.1f}/frame (multi-rect {:.1f}), float-constant uploads skipped by generation {:.0f}/frame, compacted {:.0f}/frame ({:.2f} KB/frame not uploaded) | of which blocked "
                   "on our GPU {:.3f} ({} waits) | texture tables reused {} | state calls skipped {} | constant uploads "
-                  "skipped {} | ownership fast path {} | transfer runs {} | alternate rule {} | descriptors {} (ring waits {}) | "
+                  "skipped {} | ownership fast path {} (slow claims {}, tiles walked {}, tiles that changed owner {}, book changes {}) | transfer runs {} | alternate rule {} | descriptors {} (ring waits {}) | "
                   "pipelines {} (same as the previous draw {}) | upload-ring waits {}",
                   frame_ - uint64_t(log_every_) + 1, frame_, split, total / log_every_,
                   (bs.gpu_ms - gpu_ms_base_) / log_every_, bs.gpu_lists_timed - gpu_lists_base_,
@@ -14629,7 +14629,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   double(stats_.fill_transfers_skipped) / log_every_, double(stats_.fill_px_skipped) / 1e6 / log_every_,
                   double(stats_.fill_passes_skipped) / log_every_, double(stats_.fill_ownership_draws) / log_every_, double(stats_.fill_multi_rect_draws) / log_every_, double(stats_.const_gen_skips) / log_every_, double(stats_.compacted_uploads) / log_every_, double(stats_.compacted_bytes_saved) / 1024.0 / log_every_,
                   (bs.fence_wait_ms - gpu_wait_base_ms_) / log_every_, bs.fence_waits, bs.texture_tables_reused,
-                  bs.state_calls_skipped, bs.constant_uploads_skipped, rts_->FastHits(), stats_.transfer_passes,
+                  bs.state_calls_skipped, bs.constant_uploads_skipped, rts_->FastHits(), rts_->SlowClaims(), rts_->SlowTiles(), rts_->TakenTiles(), rts_->BookChanges(),
+                  stats_.transfer_passes,
                   alt_mode_ == 2 ? "always" : "off", bs.descriptors_allocated,
                   bs.descriptor_ring_waits, bs.pipelines, bs.pipeline_memo_hits, bs.ring_waits);
       gpu_wait_base_ms_ = bs.fence_wait_ms;

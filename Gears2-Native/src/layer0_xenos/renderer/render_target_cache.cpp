@@ -234,6 +234,7 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
     ++fast_hits_;
     return;
   }
+  ++slow_claims_;
   bool changed = false;
   const uint32_t tile_mask = edram::TileMask();   // read once: the stores below could alias the global
   uint32_t run_owner = 0, run_tiles = 0;
@@ -270,6 +271,7 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
       if (rel >= tile_limit) break;
       const uint32_t tile = (target.key.base_tiles + rel) & tile_mask;
       uint32_t& o = owner_[bi][tile];
+      ++slow_tiles_;
       if (traced && trace_tiles_->test(tile))
         trace_fn_(tile, rel, book, o ? FindById(o) : nullptr, target, take_ownership);
       if (o && o != target.id) {
@@ -284,6 +286,7 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
       if (take_ownership) {
         if (o != target.id || clear_known_[bi][tile] != clear_known || clear_bits_[bi][tile] != clear_bits)
           changed = true;
+        if (o != target.id) ++taken_tiles_;
         if (bi == 0 && o != target.id) taint_[tile] = 0;
         o = target.id;
         clear_known_[bi][tile] = clear_known;
@@ -292,7 +295,7 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
     }
   }
   flush();
-  if (changed) ++book_epoch_[bi];
+  if (changed) ++book_epoch_[bi], ++book_changes_;
   if (take_ownership && !clear_known) {
     // Now the owner of all of [c0,c1) x [r0,r1) within the limit.
     oc = {true, book_epoch_[bi], c0, c1, r0, r1, tile_limit};

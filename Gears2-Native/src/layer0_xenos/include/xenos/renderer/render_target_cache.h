@@ -247,8 +247,15 @@ class RenderTargetCache {
     taint_[(target.key.base_tiles + offset) & edram::TileMask()] = taint;
   }
   uint64_t FastHits() const { return fast_hits_; }
+  // Slow-path totals (Shagg 20 Nov: measure everything in the frame): claims that walked tiles, tiles walked, tiles
+  // that changed owner, and changes of a book (each one sends every target back through the slow path once).
+  uint64_t SlowClaims() const { return slow_claims_; }
+  uint64_t SlowTiles() const { return slow_tiles_; }
+  uint64_t TakenTiles() const { return taken_tiles_; }
+  uint64_t BookChanges() const { return book_changes_; }
  private:
   uint64_t fast_hits_ = 0;
+  uint64_t slow_claims_ = 0, slow_tiles_ = 0, taken_tiles_ = 0, book_changes_ = 0;
   uint32_t next_id_ = 1;
   const std::bitset<edram::kTileCountMax>* trace_tiles_ = nullptr;
   TraceFn trace_fn_;

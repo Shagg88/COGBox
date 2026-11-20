@@ -33,3 +33,14 @@ short run per game that presses one button at a time with a screenshot after eac
 ## Mistakes this page exists to stop
 - Job 1450, jobs 1671-1688, 1834 / 1836, 2143, 2153: measured the pause menu and reported it as gameplay.
 - Never judge "reached gameplay" from a frame count or a frame time; use the state line and look at a screenshot.
+
+## Every performance question: measure the whole frame in ONE job (Shagg, 20 Nov)
+Never queue a job that answers one question. A job that has to run carries, beside its clean timing runs, a
+diagnostics run of the same scene with everything on (its frame times do not count):
+`--gow2_renderer_cpu_split=2 --gow2_renderer_gpu_by_target=true --gow2_frame_log=true --gow2_draw_stats=300`
+`--gow2_resolve_log_frames=<two frames> --gow2_renderer_log_aliases=200 --gow2_renderer_draw_report_frame=<frame>`
+`--gow2_renderer_draw_report_frames=2 --gow2_profile=30 --gow2_profile_start=3600 --gow2_profile_top=20`
+`--gow2_hitch_report_ms=30 --gow2_texture_phase_log_ms=15 --gow2_ao_gpu_log=<N> (with AO on) --cogbox_test_state=true`
+Read from it: CPU split per part, GPU time per category and per target, the ownership slow-path counters (slow
+claims, tiles walked, tiles that changed owner, book changes), per-draw GPU time, copies per frame, alias pairs,
+hitches, texture phases, the profile (build with symbols so it names our functions).
