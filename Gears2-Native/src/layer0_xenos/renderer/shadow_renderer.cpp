@@ -893,6 +893,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_tess_scale, 1, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_texture_stale_log, 0, "Gears2",
                      "Job 150 diagnostic: log textures that stayed unchanged for N frames and then got new bytes, with "
                      "our recent resolves that overlap them (0 = off; first 400 events)");
+REXCVAR_DEFINE_BOOL(gow2_present_gamma_to_smaa, false, "Gears2",
+                    "Speed study (D3D12): with SMAA, the swap's gamma pass also writes SMAA's colour image, so the "
+                    "full-screen pass that unpacked it from the gamma pass's words is left out (same values)");
+REXCVAR_DEFINE_INT32(gow2_present_gamma_to_smaa_from_swap, 0, "Gears2",
+                     "Speed study (picture check): --gow2_present_gamma_to_smaa only from this swap on");
 REXCVAR_DEFINE_INT32(gow2_renderer_vertex_watch_min_bytes, 16384, "Gears2",
                      "Speed study: vertex ranges of at least this many bytes are watched for writes and copied again "
                      "only when written (16384 = as before: smaller ranges are copied at every use). Below 16384, a "
@@ -2413,6 +2418,25 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         const gpu::ShaderHandle pg =
             cache_->GetBuiltin("present_gamma_cs", rr::builtin::kPresentGammaCs, gpu::ShaderStage::kCompute);
         present_gamma_ = pg ? backend_->CreateComputePipeline(pg) : 0;
+        // 19 Nov (speed study, job 2116: the present chain is 0.93 ms of our GPU's 4.3 ms a frame at 1440p): with SMAA
+        // the gamma pass's packed words were unpacked into SMAA's colour image by a second full-screen pass. This
+        // variant writes that image too (u1, the same n / 1023 values), so the unpack pass is not needed.
+        gamma_to_smaa_ = REXCVAR_GET(gow2_present_gamma_to_smaa) && backend_->GetShaderIL() == gpu::ShaderIL::kDxil;
+        gamma_to_smaa_from_ = uint64_t(std::max(REXCVAR_GET(gow2_present_gamma_to_smaa_from_swap), 0));
+        if (gamma_to_smaa_) {
+          std::string src = rr::builtin::kPresentGammaCs;
+          const std::string out = "RWTexture2D<uint> xe_out : register(u0);";
+          const std::string last = "xe_out[id.xy] = orr | (og << 10u) | (ob << 20u) | (3u << 30u);";
+          const size_t a = src.find(out), b = src.find(last);
+          if (a != std::string::npos && b != std::string::npos) {
+            src.insert(b + last.size(), "\n  xe_smaa[id.xy] = float4(float(orr), float(og), float(ob), 1023.0f) * (1.0f / 1023.0f);");
+            src.insert(a + out.size(), "\nRWTexture2D<unorm float4> xe_smaa : register(u1);");
+            const gpu::ShaderHandle pgs = cache_->GetBuiltin("present_gamma_smaa_cs", src, gpu::ShaderStage::kCompute);
+            present_gamma_smaa_ = pgs ? backend_->CreateComputePipeline(pgs) : 0;
+          }
+          REXLOG_INFO("gow2_present: gamma pass writes SMAA's colour image directly: {}",
+                      present_gamma_smaa_ ? "on" : "SHADER MISSING (off)");
+        }
         gpu::TextureDesc rd;
         rd.width = 256 + 128 * 3;
         rd.format = gpu::Format::kR32Uint;
@@ -3822,6 +3846,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.srv[0] = src.texture;
     b.srv[1] = ramp_texture_;
     b.uav_texture = present_out_;
+    gamma_fed_smaa_ = false;
+    if (gamma_feed_smaa_now_ && smaa_ && present_gamma_smaa_ && XenosSwapCount() >= gamma_to_smaa_from_ && EnsureSmaa(w, h)) {
+      b.uav2_texture = smaa_color_;
+      backend_->Dispatch(present_gamma_smaa_, b, (w + 7) / 8, (h + 7) / 8, 1);
+      gamma_fed_smaa_ = true;
+      return true;
+    }
     backend_->Dispatch(present_gamma_, b, (w + 7) / 8, (h + 7) / 8, 1);
     return true;
   }
@@ -3855,7 +3886,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if(const auto* owner=rts_->FindAny(native_hdr_key_))CompleteJudgmentScene(*owner);
     }
     const bool native_frame = hdr_ && hdr_encode_ && native_hdr_valid_ && !judgment_scene_pending_ && src.native_hdr_generation == native_hdr_generation_;
-    if (!GammaPass(regs, src, fb_width, fb_height, w, h, table, native_frame)) {
+    gamma_feed_smaa_now_ = true;  // only this call: the reference / HUD-less chains keep their own unpack
+    const bool gamma_ok = GammaPass(regs, src, fb_width, fb_height, w, h, table, native_frame);
+    gamma_feed_smaa_now_ = false;
+    if (!gamma_ok) {
+      gamma_fed_smaa_ = false;
       ++ours_stats_.not_presented;
       return;
     }
@@ -4080,6 +4115,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool vk_headless_present_ = false;  // notes/68: Vulkan, our present without a presenter (frame shots only)
   bool present_ours_ = false;
   gpu::PipelineHandle present_unpack_ = 0;
+  gpu::PipelineHandle present_gamma_smaa_ = 0;  // --gow2_present_gamma_to_smaa
+  bool gamma_to_smaa_ = false, gamma_feed_smaa_now_ = false, gamma_fed_smaa_ = false;
+  uint64_t smaa_unpacks_skipped_ = 0;
+  uint64_t gamma_to_smaa_from_ = 0;  // --gow2_present_gamma_to_smaa_from_swap (picture check in one run)
   // "Match my monitor": the resample pass and the image at the window's size.
   gpu::PipelineHandle present_resample_ = 0;
   gpu::TextureHandle present_scaled_ = 0;
@@ -4766,8 +4805,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   // The present image (present_out_, w x h packed words) anti-aliased in place.
   bool SmaaPass(uint32_t w, uint32_t h, gpu::TextureHandle native = 0) {
-    if (!EnsureSmaa(w, h)) return false;
-    {
+    if (!EnsureSmaa(w, h)) {
+      gamma_fed_smaa_ = false;
+      return false;
+    }
+    if (gamma_fed_smaa_) {  // --gow2_present_gamma_to_smaa: this frame's gamma pass wrote smaa_color_ itself
+      gamma_fed_smaa_ = false;
+      ++smaa_unpacks_skipped_;
+    } else {
       gpu::ComputeBindings b;
       b.constants[0] = w;
       b.constants[1] = h;
