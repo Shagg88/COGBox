@@ -1940,15 +1940,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // Notes/80: XeGTAO (2 high, 3 ultra); notes/81: CACAO (4); 0 Off goes through the game's own [SystemSettings] below,
     // 1 changes nothing
     if (avail("AO") && s.i("AO") >= 2) {
-        if (s.i("AO") == 4 && !cap_exe(env, "or cacao (FidelityFX CACAO")) {
-            notes.push_back("launcher: CACAO is not in this build - the game's own AO");
-        } else {
+        {   // 0.6.6: CACAO (4) is dropped - Store::view turns a saved 4 into On, and the launcher never asks for it
             a.push_back("--gow2_ao=gtao");
-            if (s.i("AO") == 4) {   // low, with the blur passes that looked best in play
-                a.push_back("--gow2_ao_algo=cacao");
-                a.push_back("--gow2_ao_quality=low");
-                a.push_back("--gow2_ao_cacao_blur=3");
-            } else {
+            {
                 a.push_back(s.i("AO") == 3 ? "--gow2_ao_quality=ultra" : "--gow2_ao_quality=high");
                 // Shagg's to-do 1(d) (XeGTAO ~5 ms/frame): High denoises twice (medium); Ultra leaves it to the game's
                 // automatic choice (#204: 2 without DLSS / FSR / XeSS, by the scene scale with one)
