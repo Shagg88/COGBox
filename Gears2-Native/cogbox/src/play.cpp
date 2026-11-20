@@ -24,6 +24,7 @@ static const char *exit_meaning(DWORD code)
     case 0xC0000374: return "its memory got corrupted (0xC0000374)";
     case 0xC000001D: return "this CPU lacks an instruction the build needs (0xC000001D) - the ports are built for CPUs with AVX2 (2013 and newer)";
     case 0xC0000135: return "a file it needs next to it is missing (0xC0000135) - unzip the COGBox release again, keeping every file";
+    case 0xC0000139: return "the game's exe and a DLL next to it are from different COGBox versions (0xC0000139) - unzip the COGBox release again over the old files, keeping every file";   // GitHub #382
     case 0xC0000142: return "a DLL it needs failed to start (0xC0000142)";
     case 0x887A0005: return "the graphics card stopped responding or its driver was reset (0x887A0005)";
     case 0x887A0006: return "the graphics card stopped responding (0x887A0006)";
@@ -39,7 +40,9 @@ static const char *exit_meaning(DWORD code)
 // System32, Windows, PATH), and the imports of the DLLs found outside Windows (ours, the runtime's) are checked too.
 // The file is mapped, not read, so only the header and import pages are touched. Delay-loaded DLLs don't stop a start
 // and are left out; api-ms-win-* / ext-ms-* names are API sets Windows resolves itself.
-static std::vector<std::string> pe_imports(const std::string &path)
+// GitHub #382: with `syms`, also each DLL's functions imported by name (ordinal imports are left out).
+typedef std::vector<std::pair<std::string, std::vector<std::string>>> ImportSyms;
+static std::vector<std::string> pe_imports(const std::string &path, ImportSyms *syms = nullptr)
 {
     std::vector<std::string> out;
     HANDLE f = CreateFileW(widen(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
@@ -85,6 +88,22 @@ static std::vector<std::string> pe_imports(const std::string &path)
                         std::string name;
                         for (uint64_t i = s; i < n && i < s + 260 && b[i]; i++) name += (char)b[i];
                         if (!name.empty()) out.push_back(name);
+                        if (syms && !name.empty()) {
+                            std::vector<std::string> fns;
+                            const bool is64 = magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC;
+                            const uint64_t step = is64 ? 8 : 4;
+                            uint64_t th = off(d->OriginalFirstThunk ? d->OriginalFirstThunk : d->FirstThunk);
+                            for (int j = 0; j < 20000 && th + step <= n; j++, th += step) {
+                                const uint64_t v = is64 ? *(const uint64_t *)(b + th) : *(const uint32_t *)(b + th);
+                                if (!v) break;
+                                if (v >> (is64 ? 63 : 31)) continue;   // by ordinal
+                                const uint64_t ns = off((DWORD)v);
+                                std::string fn;
+                                for (uint64_t i = ns + 2; ns < n && i < n && i < ns + 2 + 512 && b[i]; i++) fn += (char)b[i];
+                                if (!fn.empty()) fns.push_back(fn);
+                            }
+                            syms->push_back({ name, fns });
+                        }
                     }
                 }
             }
@@ -146,6 +165,44 @@ static std::vector<std::string> missing_dlls(const std::string &exe)
         }
     }
     return missing;
+}
+
+// GitHub #382 (0xC0000139, STATUS_ENTRYPOINT_NOT_FOUND): the exe (or a DLL of ours it loads) imports a function that
+// the DLL found for it doesn't have - files from different COGBox versions side by side (a release unzipped partly, a
+// file the antivirus put back from an older copy). Checked for our own files only (the exe's folder and shared): each
+// such DLL is mapped without running its code and asked for every function its importer names. Empty = nothing found.
+static std::string mismatched_imports(const std::string &exe)
+{
+    const std::vector<std::string> dirs = dll_dirs(exe);
+    const size_t own = dir_exists(join(exe_dir(), "shared")) ? 2 : 1;
+    std::vector<std::string> seen, todo = { exe };
+    std::string out;
+    int found = 0;
+    for (size_t t = 0; t < todo.size() && t < 24 && found < 4; t++) {
+        ImportSyms syms;
+        pe_imports(todo[t], &syms);
+        const std::string importer = todo[t].substr(todo[t].find_last_of("\\/") + 1);
+        for (const auto &ds : syms) {
+            const std::string name = lower_ascii(ds.first);
+            if (name.rfind("api-ms-", 0) == 0 || name.rfind("ext-ms-", 0) == 0) continue;
+            size_t i = 0;
+            while (i < own && i < dirs.size() && !file_exists(join(dirs[i], ds.first))) i++;
+            if (i >= own || i >= dirs.size()) continue;   // not one of ours
+            const std::string dll = join(dirs[i], ds.first);
+            if (std::find(seen.begin(), seen.end(), name) == seen.end()) { seen.push_back(name); todo.push_back(dll); }
+            HMODULE h = LoadLibraryExW(widen(dll).c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
+            if (!h) continue;
+            int miss = 0;
+            std::string first;
+            for (const std::string &fn : ds.second)
+                if (!GetProcAddress(h, fn.c_str())) { if (!miss++) first = fn; }
+            FreeLibrary(h);
+            if (miss && found++ < 4)
+                out += (out.empty() ? "" : "; ") + importer + " needs " + std::to_string(miss) + " function(s) that " + ds.first +
+                       " doesn't have (first: " + first.substr(0, 80) + ")";
+        }
+    }
+    return out;
 }
 
 // What usually brings a missing DLL back (English: appended after the translated message, like the DLL names).
@@ -449,6 +506,8 @@ void play_start(App &a, int g, bool prepare)
     {   // GitHub #194: a DLL the game can't start without, said before it fails with 0xC0000135
         const std::vector<std::string> miss = missing_dlls(exe);
         if (!miss.empty()) argText += "launcher: DLL(s) the game imports that aren't in its folder, shared, System32 or PATH: " + missing_dlls_text(miss) + "\r\n";
+        const std::string mism = mismatched_imports(exe);   // GitHub #382: said before it fails with 0xC0000139
+        if (!mism.empty()) argText += "launcher: files from different versions side by side: " + mism + "\r\n";
     }
     argText += "launcher: start prepared in " + std::to_string(SDL_GetTicks() - prep0) + " ms\r\n";
     write_file(join(logDir, "args.txt"), argText);
@@ -654,6 +713,10 @@ void play_poll(App &a)
         const std::vector<std::string> miss = missing_dlls(a.run.exe);
         what += miss.empty() ? std::string(". Missing DLL: none found by COGBox's check of the game's imports")
                              : ". Missing DLL: " + missing_dlls_text(miss);
+    }
+    if (known && code == 0xC0000139) {   // GitHub #382: which files (English, like the DLL names above)
+        const std::string mism = mismatched_imports(a.run.exe);
+        if (!mism.empty()) what += ". Mismatch: " + mism;
     }
     std::string log;
     if (read_file(join(a.run.logDir, d.logName), log, 64u << 20) &&
