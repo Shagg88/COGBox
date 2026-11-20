@@ -39,7 +39,8 @@ games.
   - The "Game version" choice and the disc builds of Gears 2 / Gears 3: title updates have been required since 0.4.0,
     and Title Update 6 is now the only version built.
 - **True 1080p.** The 1080p render resolution now makes the game itself draw 1920x1080 - real detail, where it used
-  to be 720p upscaled and sharpened. With Ultrawide on, 1080p is still the upscaled kind.
+  to be 720p upscaled and sharpened. With Ultrawide on, Gears 2 and Gears 3 scale the wide picture the same way
+  (1280x550 becomes 1920x826); Judgment and Gears of War still upscale there.
 - **Notices:** the XeGTAO, SMAA, stb_dxt and native mouse look licence texts are in `THIRD_PARTY_NOTICES.md`; Intel's
   terms are gone with XeSS.
 

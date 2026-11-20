@@ -465,13 +465,14 @@ bool Gow2UltrawideNoConstrain() { return REXCVAR_GET(gow2_ultrawide); }  // jump
 REXCVAR_DEFINE_INT32(gow2_native_lines, 0, "Gears2",
                      "Experiment (true 1080p): the game's own screen height in lines, 0 = 720 as on the console. 1080 "
                      "makes the game draw 1920x1080 itself (width = lines x 16 / 9, a multiple of 8). Needs "
-                     "--gow2_renderer_edram_extended=true. Gears 2 TU6 only; not with --gow2_ultrawide")
+                     "--gow2_renderer_edram_extended=true. With --gow2_ultrawide the wide picture is scaled the same way "
+                     "(1280x550 becomes 1920x826)")
     .range(0, 1440);
 namespace {
 uint32_t Gow2NativeLines() {
   static const uint32_t lines = [] {
     const int v = REXCVAR_GET(gow2_native_lines);
-    if (v <= 720 || REXCVAR_GET(gow2_ultrawide)) return 0u;
+    if (v <= 720) return 0u;   // 0.6.6: also with --gow2_ultrawide (the wide height is scaled by lines / 720)
     return uint32_t(v + 7) / 8u * 8u;
   }();
   return lines;
@@ -493,9 +494,11 @@ void Gow2NativeSceneWidthMax(PPCRegister& r11) { Gow2NativeSceneWidth(r11); }   
 
 void Gow2UltrawideSceneHeight(PPCRegister& r11, PPCRegister& f13) {
   if (Gow2NativeLines()) {
+    // with ultrawide: the wide height (550 of 720 at 21:9) times lines / 720, even - the width hooks give 1280 -> 1920
+    const uint32_t rows = REXCVAR_GET(gow2_ultrawide) ? (Gow2WideHeight() * Gow2NativeLines() / 720u + 1u) & ~1u : Gow2NativeLines();
     static bool logged = false;
-    if (!logged) { logged = true; REXLOG_INFO("gow2_native_lines: screen height {} -> {} (aspect factor {})", r11.u32, Gow2NativeLines(), f13.f64); }
-    r11.u64 = Gow2NativeLines();
+    if (!logged) { logged = true; REXLOG_INFO("gow2_native_lines: screen height {} -> {} (aspect factor {}{})", r11.u32, rows, f13.f64, REXCVAR_GET(gow2_ultrawide) ? ", ultrawide" : ""); }
+    r11.u64 = rows;
     return;
   }
   if (!REXCVAR_GET(gow2_ultrawide)) return;
@@ -507,7 +510,8 @@ void Gow2UltrawideSceneHeight(PPCRegister& r11, PPCRegister& f13) {
 void Gow2UltrawideUiHeight(PPCRegister& r3) {
   if (!REXCVAR_GET(gow2_ultrawide)) return;
   static bool logged = false;
-  const uint32_t ui = Gow2WideHeight() == 550 ? 564u : (Gow2WideHeight() * 564u / 550u + 1u) & ~1u;
+  uint32_t ui = Gow2WideHeight() == 550 ? 564u : (Gow2WideHeight() * 564u / 550u + 1u) & ~1u;
+  if (Gow2NativeLines()) ui = (ui * Gow2NativeLines() / 720u + 1u) & ~1u;   // 0.6.6: scaled with the scene (true 1080p)
   if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: UI viewport height {} -> {}", r3.u32, ui); }
   r3.u64 = ui;
 }

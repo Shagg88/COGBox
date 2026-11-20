@@ -300,8 +300,8 @@ std::vector<Option> make_options(Game g) {
                { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p" }, 0,
                "How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), "
                "4x: 5120x2880. Real detail, not an upscale. A resolution above your screen's is shrunk to fit it "
-               "(supersampling): on a 1080p screen 2x draws four times the pixels of 720p (GitHub #388). 1080p: the game itself draws 1920x1080 - real detail, between 1x and 2x in cost. (With Ultrawide on, or "
-               "a game build from before 0.6.6, 1080p is 720p upscaled with sharpening instead.)", 340), "", "", true);
+               "(supersampling): on a 1080p screen 2x draws four times the pixels of 720p (GitHub #388). 1080p: the game itself draws 1920x1080 - real detail, between 1x and 2x in cost. (In Judgment and Gears of War "
+               "with Ultrawide on, 1080p is still 720p upscaled with sharpening.)", 340), "", "", true);
     // GitHub #59: the 1080p mode's RCAS sharpen made text and some textures look wrong under Wine / Proton (Linux,
     // NVIDIA). Automatic = on in Windows, off under Wine; On / Off override it everywhere.
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
@@ -1212,7 +1212,8 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "FsrVulkan") on = runs_vulkan(s, env) && fsr_vulkan(env);      // review: opt-in, Vulkan builds with AMD's VK DLLs
     else if (o.id == "Sharpen") {   // GitHub #59: the UPSCALED 1080p only (0.6.6: with Ultrawide, or an exe without true 1080p)
         static const char* const k_nl[kGameCount] = { "gow2_native_lines", "gow3_native_lines", "gowj_native_lines", "gow1_native_lines" };
-        const bool trueLines = !s.b("Ultrawide") && cap_exe(env, k_nl[static_cast<int>(g)]) && cap_exe(env, "gow2_renderer_edram_extended");
+        const bool trueLines = cap_exe(env, k_nl[static_cast<int>(g)]) && cap_exe(env, "gow2_renderer_edram_extended") &&
+                               (!s.b("Ultrawide") || cap_exe(env, "the wide picture is scaled the same way"));
         on = s.i("Resolution") == 5 && !trueLines;
         if (s.i("Resolution") == 5 && trueLines) { a.ok = false; a.why = "Not needed: 1080p is drawn by the game itself."; return a; }
     }
@@ -1761,13 +1762,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PS1 837-842: render resolution ("Match my monitor" = scale 0 + native size; counts as 2x below)
     int scale = s.i("Resolution") + 1;
     // 0.6.6 (Shagg 20 Nov: "I want the 1080p replaced with the true 1080p"): the 1080p choice makes the GAME draw
-    // 1920x1080 (--gowN_native_lines=1080 into the extended EDRAM) instead of 720p upscaled. Not with Ultrawide (the
-    // native-lines hooks and the ultrawide hooks sit on the same instructions) and not on an exe without the switch:
-    // those keep the old upscaled 1080p below.
+    // 1920x1080 (--gowN_native_lines=1080 into the extended EDRAM) instead of 720p upscaled. Judgment / Gears 1 with
+    // Ultrawide (their wide hooks are not scaled yet) and an exe without the switch keep the old upscaled 1080p below.
     static const char* const k_nativeLines[kGameCount] = { "gow2_native_lines", "gow3_native_lines", "gowj_native_lines",
                                                            "gow1_native_lines" };
-    const bool true1080 = scale == 6 && !(avail("Ultrawide") && on("Ultrawide")) && cap_exe(env, k_nativeLines[gi]) &&
-                          cap_exe(env, "gow2_renderer_edram_extended");
+    // With Ultrawide: only an exe that scales the wide picture too (Gears 2 / Gears 3 since 0.6.6 - its description says so).
+    const bool true1080 = scale == 6 && cap_exe(env, k_nativeLines[gi]) && cap_exe(env, "gow2_renderer_edram_extended") &&
+                          (!(avail("Ultrawide") && on("Ultrawide")) || cap_exe(env, "the wide picture is scaled the same way"));
     if (true1080) {
         a.insert(a.end(), { "--gow2_renderer_resolution_scale=1", std::string("--") + k_nativeLines[gi] + "=1080",
                             "--gow2_renderer_edram_extended=true", "--gow2_present_native_size=true" });
