@@ -5,6 +5,12 @@
 
 namespace xenos::renderer::native_hdr {
 struct SceneEffectProfile { uint64_t hash, fingerprint; uint32_t words; };
+inline constexpr uint64_t kGears3SceneBlend = 0xBBEB98BA9BE44831ull;
+inline constexpr uint64_t kGears3SceneBlendVertex = 0xD6034F64206F878Bull;
+inline bool IsJudgmentFxaa(uint64_t ps, uint64_t vs) {
+  return (ps == 0x8309620DF190ABDFull && vs == 0xDDE732FE7045AADDull) ||
+         (ps == 0x16CBC2E3D5BEC0A5ull && vs == 0x4B3A7954F2660D9Cull);
+}
 inline const SceneEffectProfile* FindSceneEffect(uint64_t hash) {
   static constexpr SceneEffectProfile profiles[] = {
     {0x8356D7C3D65FE328ull,0xBB708F8C299FD402ull,96},
@@ -14,6 +20,8 @@ inline const SceneEffectProfile* FindSceneEffect(uint64_t hash) {
     // Judgment FXAA. Original alpha luma and edge/UV logic stay intact.
     {0x8309620DF190ABDFull,0xBD5BB78CFE396879ull,135},
     {0x16CBC2E3D5BEC0A5ull,0x707DDFD1C3744044ull,345},
+    // Gears 3 late blend: scene resolve t0 and independent BC1 texture t1.
+    {kGears3SceneBlend, 0x87B935D6F31CE638ull, 360},
   };
   for(const auto& p:profiles)if(p.hash==hash)return &p;
   return nullptr;

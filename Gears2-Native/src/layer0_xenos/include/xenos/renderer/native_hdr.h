@@ -33,6 +33,19 @@ inline bool IsAdditionalUiVertex(uint64_t hash) {
   return hash==0xE49D26F998B9A5B3ull || hash==0xF9EBE3D4293EC775ull || hash==0x6EB1D77A55840B2Dull;
 }
 
+inline bool IsCapturedStencilUi(uint64_t ps, uint64_t vs) {
+  return (ps == 0xA7AB2D75C169DFDEull && vs == 0xE49D26F998B9A5B3ull) ||
+         (ps == 0x19055C4D86C6C08Cull && vs == 0xF9EBE3D4293EC775ull) ||
+         (ps == 0x1DE36FC34E4B7E48ull && vs == 0x6EB1D77A55840B2Dull);
+}
+
+inline bool IsJudgmentAdditiveUi(uint64_t ps) {
+  return ps == 0x34632F4F93A1C06Full || ps == 0x8C3D375A058D6CADull;
+}
+
+inline constexpr uint64_t kGears2Modulation = 0x975FA1FF58D16FC0ull;
+inline constexpr uint64_t kGears2ModulationVertex = 0x1118AFE982CA762Dull;
+
 // Evaluate a scene-sampling Canvas material with both the real HDR scene and
 // its original SDR resolve. The difference is scene energy, not UI emission.
 // The generated game program stays transient; this contains only translator
