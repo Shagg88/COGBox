@@ -20,11 +20,11 @@ includes = []
 # shared context in memory, so the compiler can hold them in host registers. The XenonRecomp-family options; the
 # riskier two (skip_lr, non_volatile_as_local: unwinding and setjmp read them from the context) stay off for now.
 skip_msr = false
-ctr_as_local = false
-xer_as_local = false
-reserved_as_local = false
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
 cr_as_local = true   # job 223: alone ch10 12.47 vs 13.82 ms (-10%); job 225 checks it (shots, 2x, capped)
-non_argument_as_local = false
+non_argument_as_local = true   # speed study 20 Nov: all six, WITH tools/localize_fix.py after codegen (build.ps1); job 223 crashed at boot without it
 # 0.4.9 (cg049, plan-049-perf item 7): r14-r31 / f14-f31 / v in host locals. docs/scan-049-codegen-safety.md: statically safe,
 # exclusion list empty (no guest unwind/exception resume in this runtime; setjmp/longjmp already non-functional). Job 233: -4 to -5%.
 non_volatile_as_local = true

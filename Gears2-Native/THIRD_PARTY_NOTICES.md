@@ -87,3 +87,9 @@ Use and Redistribution. You may use and redistribute the software, which is prov
 * No reverse engineering, decompilation, or disassembly of the Software is permitted, nor any modification or
   alteration of the Software or its operation at any time, including during execution.
 
+## localize_fix.py (build-time tool, not shipped)
+
+`tools/localize_fix.py` is from the Gears of War 2 PC port by Santiago Quiroz Upegui and the gow2-recomp contributors
+(https://github.com/santiquiroz/gears-of-war-2-pc-port), BSD 3-Clause. Licence text: `tools/localize_fix.LICENSE.txt`.
+It rewrites the generated C++ after code generation so the `*_as_local` recompiler options are safe.
+

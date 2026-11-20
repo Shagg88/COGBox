@@ -51,6 +51,26 @@ $gen | Select-String 'Unresolved|error|Error|warn' | Select-Object -First 15 | F
 $gen | Select-Object -Last 3 | ForEach-Object { Write-Host "  gen: $_" }
 $tg = [int]((Get-Date)-$t).TotalSeconds
 
+# Speed study (20 Nov): with non_argument_as_local = true in the manifest the generated code needs tools\localize_fix.py
+# (santiquiroz's port, BSD-3): registers a function reads from its caller go back through the context. Job 223: without
+# it the game crashes at boot. Runs on every build of such a manifest (codegen rewrote the files it changed).
+$mfName = if ($Tu6) { 'gow2_manifest_tu6.toml' } else { 'gow2_manifest.toml' }
+if ($genOk -and (Select-String -LiteralPath (Join-Path $root $mfName) -Pattern '^\s*non_argument_as_local\s*=\s*true' -Quiet)) {
+  $t = Get-Date
+  $pyExe = $null; $pyArgs = @()
+  if (Get-Command py -ErrorAction SilentlyContinue) { $pyExe = 'py'; $pyArgs = @('-3') }
+  elseif (Get-Command python -ErrorAction SilentlyContinue) { $pyExe = 'python' }
+  if (-not $pyExe) { Write-Host '  localize_fix: no Python (py / python) on PATH - the build stops here'; $genOk = $false }
+  else {
+    $lf = & $pyExe @pyArgs (Join-Path $root 'tools\localize_fix.py') "$genDir\*.cpp" 2>&1
+    $lfOk = $LASTEXITCODE -eq 0
+    $lf | Out-File -LiteralPath (Join-Path $root "out\localize_fix$logSfx.log") -Encoding utf8
+    $lf | Select-Object -Last 8 | ForEach-Object { Write-Host "  localize_fix: $_" }
+    Write-Host ("  localize_fix: {0} in {1} s" -f $(if ($lfOk) { 'done' } else { 'FAILED' }), [int]((Get-Date)-$t).TotalSeconds)
+    if (-not $lfOk) { $genOk = $false }
+  }
+}
+
 $tb = 0; $ok = $false
 if ($genOk) {
   # Re-configure so CMake picks up generated/default/sources.cmake, then compile everything.
