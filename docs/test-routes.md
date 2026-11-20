@@ -16,6 +16,7 @@ Gears 2 (and Gears 3 / Judgment) started straight into a chapter with no control
 | Gears 2 | `--gow2_launch="GearGame_P?loadcheckpoint=0?chapter=9 -nostartupmovies -FIXEDSEED"` | `30:A:0.3, 36:LUP:3, 40:LT:3, 41.5:RT:0.3, 44:RLEFT:1, 46:RUP:0.4, 47:RDOWN:0.8, 49:LUP:3` (route 1857; ONE A = Resume, a second A rolls) | jobs 1857, 2092 |
 | Gears 3 | `SP_Coast_P`, no `--gow3_cheats` (keeps the game paused), `--cogbox_test_skip_movies`, ini `bSkipAllMatinees=TRUE` | A at 5 / 10 / 15 / 20 s, CancelCine at 30 / 35 / 40 s | job 1840 V3 |
 | Gears 1 | chapter launch | none needed (does not pause) | job 1589 notes |
+| Judgment | `--ue3_launch="SP_00_Museum_P -nostartupmovies"` | `25:BACK:0.3, 27:BACK:0.3, 45:BACK:0.3, 47:BACK:0.3` (`--gow2_input_script`; BACK TWICE skips the intro film) | job 2145: gameplay (Old Town, "Meet up with the convoy") by frame 1200 at 60 fps, still there at frame 6000 |
 
 ## Known facts, not yet a proven route
 - Judgment: a film is skipped with the BACK button pressed TWICE (Shagg, 20 Nov). `SP_00_Museum_P` opens on a
