@@ -893,6 +893,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_tess_scale, 1, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_texture_stale_log, 0, "Gears2",
                      "Job 150 diagnostic: log textures that stayed unchanged for N frames and then got new bytes, with "
                      "our recent resolves that overlap them (0 = off; first 400 events)");
+REXCVAR_DEFINE_INT32(gow2_renderer_vertex_watch_min_bytes, 16384, "Gears2",
+                     "Speed study: vertex ranges of at least this many bytes are watched for writes and copied again "
+                     "only when written (16384 = as before: smaller ranges are copied at every use). Below 16384, a "
+                     "smaller range that changes at two checks in a row is taken as a dynamic buffer and copied at "
+                     "every use for the next 600 frames");
 REXCVAR_DEFINE_BOOL(gow2_renderer_vertex_reuse, true, "Gears2",
                     "A direct vertex range drawn again before the next release point (fence, read pointer, interrupt) "
                     "and in the same command list reuses its ring copy without reading the guest bytes again (job "
@@ -1542,6 +1547,7 @@ struct FrameStats {
            vertex_other_type = 0,  // patch 0049
            memexport_readback_waits = 0, export_waits = 0, depth_alias_dropped = 0, vertex_pages_kept_pending = 0, texture_dependent = 0, alias_tiles = 0, alias_events = 0, pending_shaders = 0,
            shader_errors = 0, pipeline_failures = 0, other_failures = 0, copies = 0, depth_resolves = 0, colour_resolves = 0,
+           vertex_small_skipped_bytes = 0, vertex_small_volatile = 0,  // 19 Nov: --gow2_renderer_vertex_watch_min_bytes
            vertex_bytes = 0, index_bytes = 0, empty = 0, vertex_skipped_bytes = 0, texture_bytes = 0,
            vertex_direct_bytes = 0, vertex_reused_bytes = 0, vertex_memo_hits = 0, xfer_px[4] = {},
            stencil_passes_skipped = 0, texture_memo_hits = 0, readonly_transfers_skipped = 0, readonly_px_skipped = 0,
@@ -1789,6 +1795,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     cache_->SetTexPostSkip(REXCVAR_GET(gow2_renderer_tex_post_skip));  // speed study
     tex_frac16_ = REXCVAR_GET(gow2_renderer_tex_frac16);
     ps_no_alpha_variant_ = REXCVAR_GET(gow2_renderer_ps_no_alpha_variant);
+    vertex_watch_min_ = uint64_t(std::clamp(REXCVAR_GET(gow2_renderer_vertex_watch_min_bytes), 64, int32_t(kWatchMinBytes)));
     ps_noat_from_swap_ = uint64_t(std::max(REXCVAR_GET(gow2_renderer_ps_no_alpha_from_swap), 0));
     if (ps_noat_from_swap_) ps_no_alpha_variant_ = false;  // on from that swap (the warm-up still makes the variants)
     cache_->SetMulMinAbs(REXCVAR_GET(gow2_renderer_dxbc_mul_min_abs));  // job 634
@@ -13658,8 +13665,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           return;
         }
       }
+      // 19 Nov (speed study, job 2114: UploadVertexData 7.9% of the renderer thread; ~2 MB of ranges under 16 KB copied
+      // every frame, most of them meshes that never change): with --gow2_renderer_vertex_watch_min_bytes below 16 KB a
+      // smaller range is watched too - until it has changed at two checks in a row; then it is a dynamic buffer and
+      // goes straight to the ring again for 600 frames (a watched page the game writes costs a fault on its thread).
+      const bool big = size >= kWatchMinBytes;
+      WatchedRange* small_w = nullptr;
+      bool small_watch = false;
+      if (!big && upload_watch_ && size >= vertex_watch_min_) {
+        small_w = &vertex_versions_[(uint64_t(address) << 32) | uint32_t(size)];
+        small_w->last_frame = frame_;
+        small_watch = frame_ >= small_w->direct_until;
+      }
       // Small ranges (rewritten every frame): straight from the upload ring, no copy into the mirror (job 160).
-      if (vertex_direct_ && !(size >= kWatchMinBytes && upload_watch_)) {
+      if (vertex_direct_ && !(big && upload_watch_) && !small_watch) {
         // Job 174 reuse: the same range again in the same command list and release epoch reuses its ring copy (valid for
         // every draw in that list). Cleanup 2 (patch 0050): job 170's hash-checked dedupe, never made the default, is gone.
         uint32_t off = UINT32_MAX;
@@ -13693,16 +13712,25 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       // Ranges of 64 KB and more are watched (GuestWatch: CPU writes and kernel reads reported by the guest memory
       // system) and copied again only when written since; smaller ones (dynamic buffers rewritten every frame) are
       // copied on every draw, where watching would cost more than the copy.
-      if (size >= kWatchMinBytes && upload_watch_) {
+      if ((big || small_watch) && upload_watch_) {
         const uint64_t key = (uint64_t(address) << 32) | uint32_t(size);
         auto it = vertex_versions_.find(key);
-        if (it != vertex_versions_.end() && it->second.version == watch_->Version(address, uint32_t(size))) {
+        if (it != vertex_versions_.end() && it->second.seen &&
+            it->second.version == watch_->Version(address, uint32_t(size))) {
           it->second.last_frame = frame_;  // patch 0149
+          it->second.changes = 0;
           stats_.vertex_skipped_bytes += size;
+          if (!big) stats_.vertex_small_skipped_bytes += size;
           return;
         }
         watch_->Watch(address, uint32_t(size));  // before the copy: a write during it bumps the version
         WatchedRange& w = vertex_versions_[key];
+        if (!big && w.seen && ++w.changes >= 2) {  // changed at two checks in a row: a dynamic buffer
+          w.direct_until = frame_ + 600;
+          w.changes = 0;
+          ++stats_.vertex_small_volatile;
+        }
+        w.seen = true;
         w.version = watch_->Version(address, uint32_t(size));
         w.last_frame = frame_;  // patch 0149 (the XXH3 of the range here was never read: removed)
       }
@@ -15018,6 +15046,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       occ_backend_refused_base_ = b.occlusion_refused;
       occ_stats_ = OcclusionStats{};
     }
+    if (vertex_watch_min_ < kWatchMinBytes)
+      REXLOG_INFO("gow2_renderer: small vertex ranges watched (from {} bytes) frames {}-{}: {:.2f} MB/frame not copied, "
+                  "{:.1f}/frame found dynamic (copied at every use for 600 frames), {} ranges known",
+                  vertex_watch_min_, frame_ - uint64_t(log_every_) + 1, frame_,
+                  double(stats_.vertex_small_skipped_bytes) / 1048576.0 / log_every_,
+                  double(stats_.vertex_small_volatile) / log_every_, vertex_versions_.size());
     textures_->ResetCounters();
     stats_ = FrameStats{};
     drawn_base_ = 0;  // cleanup: drawn_base_ counts from this reset
@@ -15124,8 +15158,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Ranges of kWatchMinBytes+ copied under the watch: version at the copy and the bytes' hash (for the self-check).
   struct WatchedRange {
     uint64_t version = 0, last_frame = 0;  // patch 0149: last_frame for EvictStaleUploads
+    uint64_t direct_until = 0;             // 19 Nov: a small range found dynamic is not watched before this frame
+    uint8_t changes = 0;                   // changed at this many checks in a row
+    bool seen = false;                     // version holds a copy's version
   };
   static constexpr uint64_t kWatchMinBytes = 16u << 10;
+  uint64_t vertex_watch_min_ = kWatchMinBytes;  // --gow2_renderer_vertex_watch_min_bytes
   std::unordered_map<uint64_t, WatchedRange> vertex_versions_;  // (address << 32 | size)
   // Converted index buffers of kWatchMinBytes+ (guest bytes), keyed by everything the conversion depends on.
   struct CachedIndices {
