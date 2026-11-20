@@ -8517,6 +8517,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         backend_->Dispatch(ao_prefilter_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
       }
     }
+    // The main passes may be deferred (AoFinish): without this the last pyramid tag stayed in force and the game's own
+    // draws up to the first AO read were booked on the pyramid (job 2169: 1.1 ms of 1.2 on level 4 / the one dispatch).
+    if (timed) backend_->SetGpuTag(0);
     ao_depth_frame_ = frame_;  // SSIL reads the pyramid later in the frame
     AoPassTag(0);
     if (defer) {   // the main passes when the AO is first read (AoFinish): a later scene-depth copy may replace the pyramid
