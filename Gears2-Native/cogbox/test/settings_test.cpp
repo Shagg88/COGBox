@@ -170,6 +170,12 @@ const char* const k_builtin[] = {
     "game=2;Pool=3;FrameCap=2;Vsync=1;rt=vs;hz=165;FrameGen=1;exe=fg,fif,mute;files=fgdll;Mute=1;LowLag=1;gpus=Intel(R) UHD Graphics/NVIDIA GeForce GTX 1080",
     "game=2;AAMode=3;gpus=NVIDIA GeForce GTX 1080;files=fsr;FrameCap=4;Shake=2;Fov=125;DoF=0;Cheats=1;Mutators=1",
     "game=2;Resolution=4;Fullscreen=0;WindowSize=5;Mnk=1;Sens=0.1;DeadZoneL=25;DeadZoneR=8;Vibration=0;Monitor=1;screens=1;HDR=1",
+    // GitHub #377: a slider at 1 or more is the stick's whole dead zone - the game's own leaves its bindings
+    "game=0;upd=1;DeadZoneL=5;DeadZoneR=7",        // Gears 2: camera (0.3) and movement (0.3) bindings to 0, both sliders sent
+    "game=0;upd=1;DeadZoneL=0;DeadZoneR=7",        // camera only
+    "game=1;upd=1;DeadZoneL=5;DeadZoneR=7",        // Gears 3: movement only (its camera binding has no dead zone)
+    "game=2;upd=1;DeadZoneL=5;DeadZoneR=0",        // Judgment: movement only
+    "game=0;upd=1;DeadZoneL=5;DeadZoneR=7;Mnk=1",  // keyboard and mouse on: movement binding left alone
     "game=0;AdaptiveTriggers=1;exe=adt;rt=adt",   // GitHub #245, Gears 2: sent
     "game=0;AdaptiveTriggers=1;rt=adt",           // Gears 2 exe without the weapon table: greyed, not sent
     "game=2;AdaptiveTriggers=1;exe=adt;rt=adt",   // Judgment exe without its own weapon table (Gears 3's needle): not sent
@@ -533,6 +539,15 @@ int summary() {
         both.load_ini("[General]\nDeadZoneL=7\nDeadZone=3\nDeadZoneR=9\n");
         const Settings b = both.view(Game::Gears3, e);
         if (b.i("DeadZoneL") != 7 || b.i("DeadZoneR") != 9) { std::cout << "FAIL saved sliders overridden by the old choice\n"; ++fails; }
+        // GitHub #377: a saved "Radial stick dead zone" choice (3 = 16 %) moves to the right slider unless that is set
+        Store rad;
+        rad.load_ini("[General]\nRadialDZ=3\n");
+        const Settings rs = rad.view(Game::Gears2, e);
+        if (rs.i("DeadZoneR") != 16 || rs.i("DeadZoneL") != 0) { std::cout << "FAIL old radial choice not moved to the right slider\n"; ++fails; }
+        Store rad2;
+        rad2.load_ini("[General]\nRadialDZ=3\nDeadZoneR=9\n");
+        if (rad2.view(Game::Gears2, e).i("DeadZoneR") != 9) { std::cout << "FAIL saved right slider overridden by the old radial choice\n"; ++fails; }
+        if (rad.save_ini().find("RadialDZ") != std::string::npos) { std::cout << "FAIL old radial choice written back\n"; ++fails; }
         const std::string saved = old.save_ini();
         if (saved.find("DeadZoneL=15") == std::string::npos || saved.find("\nDeadZone=") != std::string::npos) { std::cout << "FAIL dead zone save\n"; ++fails; }
     }

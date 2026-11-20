@@ -471,19 +471,18 @@ std::vector<Option> make_options(Game g) {
     // 0.6.5 (Shagg 16 Nov 22:22: "simple thumbstick deadzones like those found in popular emulators"): one slider per
     // stick, 0-50 % in 1 % steps (was one 6-step choice for both). The old saved "DeadZone" choice is read into both
     // (Store::load). Same runtime switches as before (left_ / right_stick_deadzone_percentage, a fraction), read per poll.
+    // GitHub #377 (Shagg 19 Nov: "Joystick deadzone settings are a staple ... One slider for each stick"): from 1 up the
+    // slider is the stick's WHOLE dead zone - round, rescaled from its edge - and the game's own (30 % on movement in
+    // every game; on the camera 20-30 % in Gears 1, 30 % in Gears 2, 20 % in Judgment, none in Gears 3's binding) is
+    // taken out of its bindings (build_args), so 5 means 5 %. 0 = the game's own, unchanged. Replaces the anti-dead
+    // zone sliders of c0db23a and the "Radial stick dead zone" choice (GitHub #95; a saved one moves to the right slider).
     add(number("DeadZoneL", "Left stick dead zone (%)", Tab::Controls, Kind::Int, SH, 0, 50, 1, 0,
-               "Left stick movement smaller than this is ignored - raise it if the stick drifts. 0 = only the game's own "
-               "dead zone.", 382));
+               "How far the left stick moves before you start walking. 0 = the game's own (about 30). From 1 up it "
+               "replaces the game's own: lower for quicker response, higher if the stick drifts. With keyboard and "
+               "mouse on, it is added to the game's own instead.", 382));
     add(number("DeadZoneR", "Right stick dead zone (%)", Tab::Controls, Kind::Int, SH, 0, 50, 1, 0,
-               "Right stick movement smaller than this is ignored - raise it if the camera drifts. 0 = only the game's own "
-               "dead zone.", 0));
-    // GitHub #95: a round (radial) dead zone on both sticks, rescaled from its edge - Gears 3's feel for Gears 1 and 2.
-    // SDK patch 55 (pad_radial_deadzone). In Gears 1 and 2 the game's own per-axis dead zone on the look binding is
-    // taken off at the same time (below), so the round one is the one you feel.
-    add(choice("RadialDZ", "Radial stick dead zone", Tab::Controls, SH, { "Game's own", "8%", "12%", "16%", "20%", "25%" }, 0,
-               "A round dead zone on both sticks (measured from the centre, not per axis), so small diagonal aim moves "
-               "are not swallowed. Gears 1 and 2's own square dead zone on the camera is removed with it. Game's own = "
-               "unchanged.", 0), "padlayout");
+               "How far the right stick moves before the camera turns. 0 = the game's own (20 to 30; Gears 3 has its "
+               "own). From 1 up it replaces the game's own: lower for finer aiming, higher if the camera drifts.", 0));
     // GitHub #97: controller layouts (SDK patch 55, pad_remap). Custom = CogBox.ini [Pad] Remap=, e.g. "a=b,b=a" - 0.6.3:
     // edited on the Controls tab (page.cpp pad_layout_section, PadMap in the header).
     add(choice("PadLayout", "Controller layout", Tab::Controls, SH,
@@ -1551,6 +1550,7 @@ bool Store::load_ini(const std::string& text) {
     // 0.6.5: the old 6-step "DeadZone" choice (both sticks) goes into each slider not saved in the file itself
     int oldDeadZone = -1;
     bool dzRead[2] = {};
+    int oldRadial = 0;   // GitHub #377: the "Radial stick dead zone" choice (0.6.x) goes into the right slider when that is 0
     // The PS1's flat keys (launcher-settings.json converted to key=value) are read in [General] too.
     struct Legacy { const char* key; int game; const char* id; };
     static const Legacy legacy[] = {
@@ -1593,6 +1593,7 @@ bool Store::load_ini(const std::string& text) {
             }
             if (key == "FrameCapList") { capList2[0] = x >= 2; continue; }
             if (key == "DeadZone") { oldDeadZone = std::max(0, std::min(5, static_cast<int>(x))); any = true; continue; }
+            if (key == "RadialDZ") { oldRadial = std::max(0, std::min(5, static_cast<int>(x))); any = true; continue; }
             if (key == "DeadZoneL") dzRead[0] = true;
             if (key == "DeadZoneR") dzRead[1] = true;
             if (key == "BrightnessDefault") continue;   // 0.6.1: the setting is gone (see the top of this file)
@@ -1636,6 +1637,11 @@ bool Store::load_ini(const std::string& text) {
     if (oldDeadZone >= 0) {
         if (!dzRead[0]) top["DeadZoneL"] = std::round(k_deadValue[oldDeadZone] * 100.0);
         if (!dzRead[1]) top["DeadZoneR"] = std::round(k_deadValue[oldDeadZone] * 100.0);
+    }
+    if (oldRadial > 0) {
+        static const int k_radialPct[6] = { 0, 8, 12, 16, 20, 25 };
+        auto it = top.find("DeadZoneR");
+        if (it == top.end() || it->second < 1) top["DeadZoneR"] = k_radialPct[oldRadial];
     }
     for (int g = 0; g < kGameCount; ++g)
         if (capRead[g + 1] && !capList2[g + 1]) per[g]["FrameCap"] = old_cap_list1_to_2(per[g]["FrameCap"]);
@@ -1982,6 +1988,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (on("CheatHud")) a.push_back("--ue3_cheat_hide_hud=true");
     if (kOfferFirstPerson && on("FirstPerson")) a.push_back(g == Game::Gears2 ? "--gow2_first_person=true" : g == Game::Judgment ? "--gowj_first_person=true" :
                                        "--gow3_first_person=true");
+    // GitHub #377: can this start replace binding text (as mouseLook's condition), and which sticks' sliders are on
+    const bool dzBind = (!isG1 || cap_exe(env, "gow1_ini_edits")) && !(g == Game::Gears2 && !useUpdate && !env.g2_disc_ini_edits);
+    const bool dzLeft = s.i("DeadZoneL") > 0 && !s.b("Mnk"), dzRight = s.i("DeadZoneR") > 0;
     // PS1 873-898: the game's own engine settings through --ue3_ini_edits
     {
         const std::string ei = k_engineIni[gi];
@@ -2078,21 +2087,22 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // full stick. With keyboard and mouse on, the binding gets no dead zone and k_lookBoost x the speed; the mouse is
         // scaled down by the same factor (same feel, 4x the ceiling) and a controller used alongside gets both undone by
         // the SDK (patch 38: pad_look_scale / pad_look_deadzone). Each game's own binding text, from its Coalesced_int.
-        // GitHub #95: with the radial dead zone on, Gears 1 and 2's look binding loses its own per-axis dead zone (the
-        // same binding text the mouse-look edits below replace; Speed unchanged). Not with mouseLook, which does it too.
-        if (!mouseLook && avail("RadialDZ") && s.i("RadialDZ") > 0 && (g == Game::Gears2 || isG1)) {
-            if (g == Game::Gears2) {
-                const std::string fi = "GearInput.ini|Engine.PlayerInput|~=";
-                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.3>Axis aTurn Speed=1.0 DeadZone=0.0");
-                ini.push_back(fi + "Axis aLookup Speed=0.75 DeadZone=0.3>Axis aLookup Speed=0.75 DeadZone=0.0");
-                ini.push_back(fi + "Axis aLookup Speed=-0.75 DeadZone=0.3>Axis aLookup Speed=-0.75 DeadZone=0.0");
-            } else {
-                const std::string fi = "WarInput.ini|Engine.PlayerInput|~=";
-                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.2>Axis aTurn Speed=1.0 DeadZone=0.0");
-                ini.push_back(fi + "Axis aLookup Speed=0.8 DeadZone=0.2>Axis aLookup Speed=0.8 DeadZone=0.0");
-                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.3>Axis aTurn Speed=1.0 DeadZone=0.0");
-                ini.push_back(fi + "Axis aLookup Speed=0.75 DeadZone=0.3>Axis aLookup Speed=0.75 DeadZone=0.0");
+        // GitHub #377 (was #95's radial choice): with a stick's slider at 1 or more, the game's own per-axis dead zone
+        // leaves that stick's bindings, so the slider's round one (sent below) is the only one. Each game's own binding
+        // text (job 2121b, 19 Nov, from its Coalesced; Speed unchanged). Camera: not with mouseLook, whose edits below
+        // do it too; Gears 3's camera binding has none. Movement: not with keyboard and mouse on (the walk key's stick
+        // values were tuned against the game's own dead zone).
+        if (dzBind) {
+            const std::string fi = std::string(isG1 ? "WarInput.ini" : "GearInput.ini") + "|Engine.PlayerInput|~=";
+            auto zero = [&](const char* axis, const char* speed, const char* dz) {
+                ini.push_back(fi + "Axis " + axis + " Speed=" + speed + " DeadZone=" + dz + ">Axis " + axis + " Speed=" + speed + " DeadZone=0.0");
+            };
+            if (dzRight && !mouseLook) {
+                if (g == Game::Gears2) { zero("aTurn", "1.0", "0.3"); zero("aLookup", "0.75", "0.3"); zero("aLookup", "-0.75", "0.3"); }
+                else if (isG1) { zero("aTurn", "1.0", "0.2"); zero("aLookup", "0.8", "0.2"); zero("aTurn", "1.0", "0.3"); zero("aLookup", "0.75", "0.3"); }
+                else if (isGJ) { zero("aTurn", "1.0", "0.2"); zero("aLookup", "1.0", "0.2"); zero("aLookup", "-1.0", "0.2"); }
             }
+            if (dzLeft) { zero("aBaseY", "1.0", "0.3"); zero("aBaseY", "-1.0", "0.3"); zero("aStrafe", "1.0", "0.3"); }
         }
         if (mouseLook) {
             const std::string fi = "GearInput.ini|Engine.PlayerInput|~=";
@@ -2208,12 +2218,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (!s.b("Vibration")) a.push_back("--vibration=false");
     if (on("AdaptiveTriggers")) a.push_back("--pad_adaptive_triggers=true");   // GitHub #245 (greyed: never sent)
     if (on("TriggerRumble")) a.push_back("--pad_trigger_rumble=true");         // 0.6.3, GitHub #245 (greyed: never sent)
-    // GitHub #95 / #97 (SDK patch 55): radial dead zone and controller layout
-    if (avail("RadialDZ")) {
-        static const double k_radial[6] = { 0, 0.08, 0.12, 0.16, 0.20, 0.25 };
-        const int r = std::max(0, std::min(5, s.i("RadialDZ")));
-        if (r > 0) a.push_back("--pad_radial_deadzone=" + fmt_double(k_radial[r]));
-    }
+    // GitHub #97 (SDK patch 55): controller layout (#95's radial dead zone is the right stick's slider now, #377)
     if (avail("PadLayout")) {
         const int l = std::max(0, std::min(4, s.i("PadLayout")));
         const std::string clean = pad_remap_clean(l < 4 ? std::string(pad_layout_preset(l)) : env.pad_remap);   // 0.6.3: shared
@@ -2399,7 +2404,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back("--ue3_mouse_fov_comp=" + fmt_double(100.0 / static_cast<double>(s.i("Fov"))));
         if (mouseLook) {
             a.push_back("--pad_look_scale=0.25");
-            a.push_back(std::string("--pad_look_deadzone=") + (g == Game::Gears2 ? "0.3" : isG3 ? "0" : "0.2"));
+            // GitHub #377: with the right slider on, that is the controller's whole camera dead zone
+            a.push_back(std::string("--pad_look_deadzone=") + (dzRight ? "0" : g == Game::Gears2 ? "0.3" : isG3 ? "0" : "0.2"));
         }
         bool defaultKeys = true;
         for (const KeyAction &k : key_actions(g)) {   // 0.2.0: the Gears layout, or the player's own keys (Controls tab)
