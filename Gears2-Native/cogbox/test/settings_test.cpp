@@ -317,7 +317,15 @@ int summary() {
         Environment e; e.update_ready = true;
         Store st; Settings s = st.view(Game::Gears3, e);
         set_value(Game::Gears3, s, "Preset", PresetUltra);
-        if (s.i("Resolution") != 4 || s.i("Preset") != 2) { std::cout << "FAIL preset\n"; ++fails; }
+        if (s.i("Resolution") != 1 || s.i("Preset") != 2) { std::cout << "FAIL preset\n"; ++fails; }
+        // 0.6.6: a saved "Match my monitor" (4) becomes the scale it picked: 1080p / 1440p screens 2x, 4K 3x, unknown 2x
+        for (const auto& c : { std::array<int, 3>{ 1920, 1080, 1 }, std::array<int, 3>{ 2560, 1440, 1 }, std::array<int, 3>{ 3840, 2160, 2 },
+                               std::array<int, 3>{ 1280, 720, 0 }, std::array<int, 3>{ 0, 0, 1 } }) {
+            Environment e2; e2.update_ready = true; e2.monitor_w = c[0]; e2.monitor_h = c[1];
+            Store st2; st2.top["Resolution"] = 4;
+            const Settings s2 = st2.view(Game::Gears2, e2);
+            if (s2.i("Resolution") != c[2]) { std::cout << "FAIL match-my-monitor migration " << c[0] << "x" << c[1] << ": " << s2.i("Resolution") << "\n"; ++fails; }
+        }
         set_value(Game::Gears3, s, "Fov", 110);
         if (s.i("Preset") != 3) { std::cout << "FAIL preset -> custom\n"; ++fails; }
         s.set("Sens", 1.7);   // (not "Start": removed in 0.3.0, a saved value is ignored)

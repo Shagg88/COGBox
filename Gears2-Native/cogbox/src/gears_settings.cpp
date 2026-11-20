@@ -293,12 +293,14 @@ std::vector<Option> make_options(Game g) {
         add(std::move(o), "gpucard");
     }
     // Render resolution: no PS1 tooltip; text from 59-how-to-play's Picture table.
+    // 0.6.6 (Shagg 20 Nov: "we need to get rid of the match my monitor option. It causes too many problems. People can
+    // select their own resolution"): choice 4 stays in the list so saved numbers keep their meaning (5 = 1080p), but it
+    // is no longer offered (page.cpp) and a saved 4 becomes the scale it used to pick (Store::view).
     add(choice("Resolution", "Render resolution", Tab::Graphics, PG,
                { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p" }, 0,
                "How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), "
-               "4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, "
-               "resampled to its exact size - on a 1080p screen that is 2x (2560x1440), four times the work of 720p "
-               "(GitHub #388). 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for "
+               "4x: 5120x2880. Real detail, not an upscale. A resolution above your screen's is shrunk to fit it "
+               "(supersampling): on a 1080p screen 2x draws four times the pixels of 720p (GitHub #388). 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for "
                "weaker graphics cards; softer than real detail.", 340), "", "", true);
     // GitHub #59: the 1080p mode's RCAS sharpen made text and some textures look wrong under Wine / Proton (Linux,
     // NVIDIA). Automatic = on in Windows, off under Wine; On / Off override it everywhere.
@@ -1366,7 +1368,7 @@ void apply_preset(Settings& s, int p) {
     static const P v[3] = {        // PS1 579-581
         { 0, 0, 0, false, false, false, 0, 0, true, true, true, 0, 100 },
         { 1, 3, 1, true, true, true, 1, 1, true, true, true, 0, 100 },   // fps: FrameCap indices (3 = 60, 5 = 120)
-        { 4, 5, 1, true, true, true, 2, 2, true, true, true, 0, 100 },
+        { 1, 5, 1, true, true, true, 2, 2, true, true, true, 0, 100 },   // 0.6.6: 2x (was Match my monitor)
     };
     const P& x = v[p];
     s.set("Preset", p);
@@ -1510,6 +1512,8 @@ Settings Store::view(Game g, const Environment& env) const {
         s.set(o.id, clamp_value(o, x, &env));   // PS1 300 / 431 / 437-438 clamping
     }
     s.set("Version", static_cast<int>(effective_version(g, s, env)));   // PS1 459
+    // 0.6.6: "Match my monitor" (4) is gone - a saved 4 is the whole-number scale it picked on this screen (1x-4x)
+    if (s.i("Resolution") == 4) s.set("Resolution", std::clamp(expected_render_scale(g, s, env), 1, 4) - 1);
     if ((g == Game::Judgment || g == Game::Gears1) && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
     if (g == Game::Gears1 && !gears1_lang(s.i("Lang"))) s.set("Lang", 0);   // a language Gears 1 has no text for
     return s;
