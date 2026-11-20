@@ -11319,7 +11319,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   static uint32_t CanaryLimit(uint32_t base, const uint32_t* bases, uint32_t n) {
     uint32_t limit = ::xenos::edram::Tiles();
     for (uint32_t i = 0; i < n; ++i) {
-      const uint32_t d = (bases[i] + ::xenos::edram::Tiles() - base) % ::xenos::edram::Tiles();
+      const uint32_t d = (bases[i] - base) & ::xenos::edram::TileMask();
       if (d) limit = std::min(limit, d);
     }
     return limit;

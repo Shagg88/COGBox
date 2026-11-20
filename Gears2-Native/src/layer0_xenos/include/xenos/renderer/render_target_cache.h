@@ -244,7 +244,7 @@ class RenderTargetCache {
   // through transfers from a colour target we can't reinterpret yet (M2), 2 = from another unmodelled source. A new
   // owner starts at 0; the renderer sets it after deciding the transfer.
   void SetTaint(const RenderTarget& target, uint32_t offset, uint8_t taint) {
-    taint_[(target.key.base_tiles + offset) % edram::Tiles()] = taint;
+    taint_[(target.key.base_tiles + offset) & edram::TileMask()] = taint;
   }
   uint64_t FastHits() const { return fast_hits_; }
  private:

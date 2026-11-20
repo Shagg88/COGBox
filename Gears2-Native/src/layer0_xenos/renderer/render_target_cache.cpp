@@ -235,6 +235,7 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
     return;
   }
   bool changed = false;
+  const uint32_t tile_mask = edram::TileMask();   // read once: the stores below could alias the global
   uint32_t run_owner = 0, run_tiles = 0;
   // FindById searches every target: neighbouring tiles almost always share an owner, so remember the last one.
   uint32_t found_id = 0;
@@ -267,9 +268,9 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
     for (uint32_t col = c0; col < c1; ++col) {
       const uint32_t rel = row_start + col;
       if (rel >= tile_limit) break;
-      const uint32_t tile = (target.key.base_tiles + rel) % edram::Tiles();
+      const uint32_t tile = (target.key.base_tiles + rel) & tile_mask;
       uint32_t& o = owner_[bi][tile];
-      if (trace_tiles_ && trace_fn_ && trace_tiles_->test(tile))
+      if (traced && trace_tiles_->test(tile))
         trace_fn_(tile, rel, book, o ? FindById(o) : nullptr, target, take_ownership);
       if (o && o != target.id) {
         if (o != run_owner) {
@@ -308,7 +309,7 @@ void RenderTargetCache::ForEachOverlap(uint32_t first_tile, uint32_t tile_count,
     const uint32_t t_count = TileCount(*t, t->height);
     // Two ranges on a circle of 2048 tiles overlap if either start lies inside the other range.
     auto inside = [](uint32_t x, uint32_t start, uint32_t len) {
-      return ((x + edram::Tiles() - start) % edram::Tiles()) < len;
+      return ((x - start) & edram::TileMask()) < len;
     };
     if (inside(first_tile, t->key.base_tiles, t_count) || inside(t->key.base_tiles, first_tile, tile_count)) fn(*t);
   }

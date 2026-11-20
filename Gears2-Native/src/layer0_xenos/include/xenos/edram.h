@@ -33,6 +33,9 @@ constexpr uint32_t kTileCountMax = 8192;
 constexpr uint32_t kBaseTilesBitsMax = 13;
 inline uint32_t g_tile_count = kTileCount;
 inline uint32_t Tiles() { return g_tile_count; }
+// Both counts are powers of two: wrap a tile index with "& TileMask()", never "% Tiles()" - a division per tile in
+// the ownership loops cost about 1 ms a frame at 720p (job 2153b: ownership 0.70 -> 1.71 ms with the count a variable).
+inline uint32_t TileMask() { return g_tile_count - 1u; }
 inline void SetExtended(bool on) { g_tile_count = on ? kTileCountMax : kTileCount; }
 constexpr uint32_t kResolveAlignmentPixels = 8;
 
