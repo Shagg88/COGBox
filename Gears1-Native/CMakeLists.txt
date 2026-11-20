@@ -152,7 +152,8 @@ if(WIN32 AND EXISTS ${GN_XESS_DIR}/inc/xess/xess_d3d12.h AND EXISTS ${GN_XESS_DI
 endif()
 option(GN_WITH_DLSS "Build NVIDIA DLSS in (needs Gears 2's third_party/dlss-sdk)" ${GN_DLSS_FOUND})
 option(GN_WITH_FSR "Build AMD FSR in (needs Gears 2's third_party/fidelityfx-sdk)" ${GN_FFX_FOUND})
-option(GN_WITH_XESS "Build Intel XeSS in (needs Gears 2's third_party/xess-sdk)" ${GN_XESS_FOUND})
+# 0.6.6 (Shagg 20 Nov: "drop XeSS and XeSS generation"): never built in. FORCE, so a build folder that cached ON turns off.
+set(GN_WITH_XESS OFF CACHE BOOL "Intel XeSS (dropped in 0.6.6)" FORCE)
 message(STATUS "Gears1-Native: upscalers - DLSS ${GN_WITH_DLSS} (SDK found: ${GN_DLSS_FOUND}), FSR ${GN_WITH_FSR} (SDK found: ${GN_FFX_FOUND}), XeSS ${GN_WITH_XESS} (SDK found: ${GN_XESS_FOUND})")
 if(GN_WITH_DLSS AND GN_DLSS_FOUND)
     target_sources(gn_layer0_xenos PRIVATE ${GN_LAYER0_DIR}/renderer/dlss_upscaler.cpp)

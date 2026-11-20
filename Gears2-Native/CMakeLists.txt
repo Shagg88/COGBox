@@ -321,7 +321,8 @@ if(WIN32 AND EXISTS ${GN_XESS_DIR}/inc/xess/xess_d3d12.h AND EXISTS ${GN_XESS_DI
 endif()
 option(GN_WITH_DLSS "Build NVIDIA DLSS in (needs third_party/dlss-sdk)" ${GN_DLSS_FOUND})
 option(GN_WITH_FSR "Build AMD FSR in (needs third_party/fidelityfx-sdk)" ${GN_FFX_FOUND})
-option(GN_WITH_XESS "Build Intel XeSS in (needs third_party/xess-sdk)" ${GN_XESS_FOUND})
+# 0.6.6 (Shagg 20 Nov: "drop XeSS and XeSS generation"): never built in. FORCE, so a build folder that cached ON turns off.
+set(GN_WITH_XESS OFF CACHE BOOL "Intel XeSS (dropped in 0.6.6)" FORCE)
 message(STATUS "Gears2-Native: upscalers - DLSS ${GN_WITH_DLSS} (SDK found: ${GN_DLSS_FOUND}), FSR ${GN_WITH_FSR} (SDK found: ${GN_FFX_FOUND}), XeSS ${GN_WITH_XESS} (SDK found: ${GN_XESS_FOUND})")
 # Patch 0135: NVIDIA Reflex through NVAPI (github.com/NVIDIA/nvapi), in third_party/nvapi when a job has downloaded it.
 set(GN_NVAPI_DIR ${CMAKE_SOURCE_DIR}/third_party/nvapi)
@@ -417,7 +418,7 @@ if(WIN32 AND EXISTS ${GN_XESS_DIR}/inc/xess_fg/xefg_swapchain_d3d12.h AND EXISTS
    AND EXISTS ${GN_XESS_DIR}/bin/libxess_fg.dll AND EXISTS ${GN_XESS_DIR}/bin/libxell.dll)
     set(GN_XEFG_FOUND ON)
 endif()
-option(GN_WITH_XEFG "Build Intel XeSS frame generation in (needs the XeSS 3 SDK with xess_fg / xell)" ${GN_XEFG_FOUND})
+set(GN_WITH_XEFG OFF CACHE BOOL "Intel XeSS frame generation (dropped in 0.6.6)" FORCE)   # 0.6.6: dropped with XeSS
 message(STATUS "Gears2-Native: Intel XeSS frame generation ${GN_WITH_XEFG} (SDK found: ${GN_XEFG_FOUND})")
 if(GN_WITH_XEFG AND GN_XEFG_FOUND)
     target_compile_definitions(gn_layer0_xenos PRIVATE GN_HAVE_XEFG)

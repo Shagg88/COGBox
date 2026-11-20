@@ -729,7 +729,7 @@ bool xefg_present(const Environment& env) {
 }
 
 bool framegen_choice_hidden(int index, const Environment& env) {
-    if (index == k_fgXefg) return !xefg_present(env);
+    if (index == k_fgXefg) return true;   // 0.6.6 (Shagg 20 Nov): Intel XeSS frame generation is dropped - never listed
     return framegen_is_dlss(index) && !dlss_fg_present(env);
 }
 
@@ -1514,6 +1514,11 @@ Settings Store::view(Game g, const Environment& env) const {
     s.set("Version", static_cast<int>(effective_version(g, s, env)));   // PS1 459
     // 0.6.6: "Match my monitor" (4) is gone - a saved 4 is the whole-number scale it picked on this screen (1x-4x)
     if (s.i("Resolution") == 4) s.set("Resolution", std::clamp(expected_render_scale(g, s, env), 1, 4) - 1);
+    // 0.6.6 (Shagg 20 Nov: "drop XeSS and XeSS generation"): the choices keep their numbers so the others keep their
+    // meaning, but they are no longer offered; a saved XeSS becomes SMAA, a saved XeSS frame generation AMD's (what the
+    // game fell back to when Intel's could not run).
+    if (s.i("AAMode") == 4) s.set("AAMode", 1);
+    if (s.i("FrameGen") == k_fgXefg) s.set("FrameGen", 1);
     if ((g == Game::Judgment || g == Game::Gears1) && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
     if (g == Game::Gears1 && !gears1_lang(s.i("Lang"))) s.set("Lang", 0);   // a language Gears 1 has no text for
     return s;

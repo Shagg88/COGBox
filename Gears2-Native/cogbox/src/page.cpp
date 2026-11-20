@@ -1102,6 +1102,7 @@ static void option_row(App &a, int g, const gs::Option &o)
             std::vector<int> ord;
             for (int i = 0; i < (int)items.size(); i++) ord.push_back(i);
             if (o.id == "Resolution" && items.size() == 6) ord = { 0, 5, 1, 2, 3 };   // 0.6.6: Match my monitor (4) no longer offered
+            if (o.id == "AAMode" && items.size() == 6) ord = { 0, 1, 2, 3, 5 };       // 0.6.6: XeSS (4) dropped
             for (int i : ord) {
                 if (o.id == "FrameGen" && i != idx && gs::framegen_choice_hidden(i, a.env[g])) continue;   // NVIDIA DLSS FG: only with its DLLs
                 gs::Availability ca = gs::choice_available(o, G, i);
@@ -1827,8 +1828,6 @@ static void about_tab(App &a, int g)
             "NVIDIA, GeForce RTX, DLSS and Reflex are trademarks of NVIDIA Corporation.");
     ui_note("AMD FidelityFX\u2122 Super Resolution (FSR) \u2014 Uses AMD FidelityFX FSR technology (AMD FidelityFX SDK). "
             "AMD, FidelityFX and FSR are trademarks of Advanced Micro Devices, Inc.");
-    ui_note("Intel\u00AE XeSS \u2014 Uses Intel XeSS technology (XeSS Super Resolution, XeSS Frame Generation, XeLL). "
-            "Intel and XeSS are trademarks of Intel Corporation or its subsidiaries.");
     if (small_button("Licences folder")) {
         const std::string ld = join(exe_dir(), "licenses");
         if (dir_exists(ld)) open_folder(a, ld); else set_message(a, "The licenses folder is missing - unzip the release again.", true);

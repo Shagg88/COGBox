@@ -326,6 +326,14 @@ int summary() {
             const Settings s2 = st2.view(Game::Gears2, e2);
             if (s2.i("Resolution") != c[2]) { std::cout << "FAIL match-my-monitor migration " << c[0] << "x" << c[1] << ": " << s2.i("Resolution") << "\n"; ++fails; }
         }
+        // 0.6.6: XeSS (AAMode 4) and Intel XeSS frame generation (FrameGen 7) are dropped - saved ones become SMAA / AMD's
+        {
+            Environment e3; e3.update_ready = true;
+            Store st3; st3.top["AAMode"] = 4; st3.top["FrameGen"] = 7;
+            const Settings s3 = st3.view(Game::Gears2, e3);
+            if (s3.i("AAMode") != 1 || s3.i("FrameGen") != 1) { std::cout << "FAIL XeSS migration: AAMode " << s3.i("AAMode") << " FrameGen " << s3.i("FrameGen") << "\n"; ++fails; }
+            if (!framegen_choice_hidden(k_fgXefg, e3)) { std::cout << "FAIL XeSS frame generation still listed\n"; ++fails; }
+        }
         set_value(Game::Gears3, s, "Fov", 110);
         if (s.i("Preset") != 3) { std::cout << "FAIL preset -> custom\n"; ++fails; }
         s.set("Sens", 1.7);   // (not "Start": removed in 0.3.0, a saved value is ignored)
