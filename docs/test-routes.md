@@ -24,10 +24,16 @@ Gears 2 (and Gears 3 / Judgment) started straight into a chapter with no control
   screenshots show gameplay.
 - Gears 2 `SP_Assault_P` / `SP_Hospital_P` with no pad: pause menu over the level - used ON PURPOSE as a still scene
   for like-for-like cost and picture comparisons; always label those numbers "paused scene".
-- Gears 3 and Judgment TITLE SCREEN: job 2145's scripted START at 25 s did nothing because the game was still LOADING
-  then (log: "the loading movie stopped after 21.6 s" and the frame limiter start are logged at the same moment as the
-  press, shader prebuild still running). Not a code fault: press START at 40 s or later (and again at 45 s). The menu
-  items after it are still unmapped.
+- Gears 3 and Judgment TITLE SCREEN (job 2174, 20 Nov: one frame shot a second from start-up, 3440x1440, test
+  profile): both games leave "Press Start" BY THEMSELVES by about 27 s - no press is needed, and a START sent later
+  lands on whatever came next. (Job 2145's "START does nothing" was this, not a loading problem.)
+  - Judgment: title at ~20 s; by 27 s a first-run box "NEW TO GEARS OF WAR?" is up - A = "I'm new", B = "I know the
+    basics". START and the D-pad do nothing on it. Press B (or A) at 30 s or later; the main menu behind it has not
+    been mapped yet.
+  - Gears 3: the MAIN MENU is up by 39 s. Items top to bottom: Campaign, Versus, Horde, Beast, Stats & Awards, Event
+    Calendar, Exit Game (A accept, B back, START options). Stats & Awards and Event Calendar carry an orange "!"
+    icon (meaning not confirmed). The highlight moved with no pad press sent (guess: the mouse pointer over the
+    menu) - move the pointer out of the window before trusting D-pad counts.
 - Gears 2 title screen: attract mode starts about 2 min 15 s after launch.
 - Loading a given checkpoint slot needs the front end (Campaign > Continue / Load), not `?loadcheckpoint=1`.
 
