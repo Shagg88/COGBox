@@ -202,6 +202,10 @@ void Gow2QueryPollYield() {
 void Gow2QueryWaitStep() {
   thread_local XenosWaitClock fl_clock;  // the frame log times this wait in every mode (also the spinning ones)
   XenosFrameWaitStep fl_step(kXenosWaitGameQuery, fl_clock);
+  if (XenosTimelineOn()) {  // speed study: when in the frame the game waits for answers
+    XenosTimelineMark(1, kTlGameQueryWaitBegin, true);
+    XenosTimelineMark(1, kTlGameQueryWaitEnd, false);
+  }
   const int32_t mode = REXCVAR_GET(gow2_patch_query_wait);
   if (mode == 0) return;
   // Job 232: uncapped (vsync off and no frame limit) the sleep cost ~2% in job 231; capped it saves ~0.3 of a core.

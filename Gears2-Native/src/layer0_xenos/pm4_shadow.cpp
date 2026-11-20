@@ -550,7 +550,10 @@ class RenderPipe {
             std::memcpy(regs.values, live_->values, sizeof(regs.values));  // the producer waits right after this
           }
           BumpAllConstGens();
+          XenosTimelineMark(2, kTlRenSwapBegin, false);
           XenosDispatchOurSwap(regs, it.a, it.b, it.c);
+          XenosTimelineMark(2, kTlRenSwapEnd, false);
+          XenosTimelineAdvance(2);
           if (it.snap) {
             XenosRendererRelease();  // as the synced swap's drain did: our deferred guest-memory copies land first
             // The title sees this swap complete now, as with the synced swap. Known differences (review of 0148): an
@@ -750,6 +753,10 @@ class Pm4Execute final : public DrawObserver {
             }
             if (g_pipe) {  // job 173: in order with the draws, on the renderer thread
               PipeChanges();
+              if (is_end && XenosTimelineOn()) {  // speed study: when the GPU thread parses the queries
+                XenosTimelineMark(1, kTlPm4ZpdFirst, true);
+                XenosTimelineMark(1, kTlPm4ZpdLast, false);
+              }
               RenderPipe::Item& it = g_pipe->Add(RenderPipe::kZpd);
               it.a = report;
               it.b = is_end ? 1u : 0u;
@@ -783,6 +790,10 @@ class Pm4Execute final : public DrawObserver {
           }
           env.own_swap = [this, rf, done = s->swap_done, ahead](uint32_t fb, uint32_t w, uint32_t h) {
             FrameLogSwap();  // the frame log's game frame ends here (its GPU-thread waits first)
+            if (XenosTimelineOn()) {  // speed study: the next frame's zero, before this thread waits for the renderer
+              XenosTimelineMark(1, kTlPm4Swap, false);
+              XenosTimelineAdvance(1);
+            }
             if (g_pipe) {  // job 173: the renderer thread presents; we wait for it (a swap is a frame boundary)
               PipeChanges();
               if (ahead) {  // patch 0148: the renderer calls done() itself once it presented

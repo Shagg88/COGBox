@@ -2557,12 +2557,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
               const ObservedIndexBuffer* index_buffer, bool major_mode_explicit) override {
     if (!backend_ || backend_->IsLost()) return;
     const uint64_t t0 = __rdtsc();
+    XenosTimelineMark(2, kTlRenFirstDraw, true);
     fill_.valid = false;  // job 185
     if (queries_mode_ == QueriesMode::kStrict) {
       // PR #43 (legoliamneeson): a closed batch of queries gets its own submission (at most 4 extra per frame) so the
       // guest waiting on them does not wait for the rest of the frame's GPU work; results are polled every 32 draws.
       if (occ_need_submit_ && !occ_open_.open && occ_closed_in_batch_ && occ_batches_this_frame_ < 4) {
         CountedSubmitEarly(kSubmitQueryDraw);
+        XenosTimelineMark(2, kTlRenQuerySubmit, false);
         occ_need_submit_ = false;
         occ_closed_in_batch_ = 0;
         ++occ_batches_this_frame_;
@@ -2619,6 +2621,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // the draw path polls every 32 draws (each query has a draw) and the idle path waits on the GPU's event, so here
     // every 16th end is enough.
     if (strict && zpd.is_end && (++zpd_poll_tick_ & 15u) == 0) PollOcclusion();
+    if (zpd.is_end && XenosTimelineOn()) {
+      XenosTimelineMark(2, kTlRenZpdFirst, true);
+      XenosTimelineMark(2, kTlRenZpdLast, false);
+    }
     uint8_t* report = zpd.report_address ? memory_->TranslatePhysical<uint8_t*>(zpd.report_address) : nullptr;
     if (!zpd.is_end) {
       if (occ_open_.open) {  // the previous query never got its end
@@ -2664,6 +2670,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         pending.draws = uint32_t(attempted);
         pending.scale = q.scale ? q.scale : res_scale_;
         pending.queued_at = std::chrono::steady_clock::now();
+        pending.tl_frame = XenosTimelineFrame(2);
         occ_pending_.push_back(pending);
         occ_need_submit_ = true;
         ++occ_closed_in_batch_;
@@ -2721,6 +2728,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           occ_stats_.latency_ms += lat;
           occ_stats_.latency_ms_max = std::max(occ_stats_.latency_ms_max, lat);
           occ_last_landed_ms_ = lat;
+          XenosTimelineMark(2, kTlRenAnswerLast, false, int64_t(p.tl_frame));
           samples = rr::queries::AnswerCache::ToGuestSamples(samples, p.scale * p.scale);
           ++occ_stats_.results;
           if (!samples) ++occ_stats_.zero;
@@ -15579,6 +15587,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint32_t draws = 0;
     uint32_t scale = 1;  // patch 0141: host pixels per guest pixel of the draws it counted
     std::chrono::steady_clock::time_point queued_at{};  // PR #43 strict: when its end was recorded
+    uint64_t tl_frame = 0;  // --gow2_frame_timeline: the renderer frame it was recorded in
   };
   std::deque<PendingOcclusion> occ_pending_;
   rr::queries::AnswerCache occ_answers_;

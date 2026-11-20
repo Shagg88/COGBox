@@ -364,6 +364,30 @@ struct XenosFrameWaitStep {
 bool XenosFrameLogOn();
 void XenosFrameAddWait(uint32_t kind, double ms, uint32_t waits = 1);  // a wait measured by its caller
 void XenosFrameGuestSwap();  // GPU thread: the game handed over a frame (its swap)
+
+// Speed study (19 Nov): --gow2_frame_timeline - when each thread reaches the same points of a frame, as milliseconds
+// after the GPU thread passed the previous swap, averaged per 600 frames in one log line. Shows where the time between
+// the game issuing its occlusion queries and reading their answers goes (the game's wait for them holds the frame).
+enum XenosTimelineEvent : uint32_t {
+  kTlGameQueryWaitBegin = 0,  // game thread: first step of UE3's wait for a query answer in this frame
+  kTlGameQueryWaitEnd,        // game thread: its last step
+  kTlPm4ZpdFirst,             // GPU thread: first / last query end of the frame parsed
+  kTlPm4ZpdLast,
+  kTlPm4Swap,                 // GPU thread: the frame's swap parsed (the next frame's zero)
+  kTlRenFirstDraw,            // renderer thread: first draw of the frame
+  kTlRenZpdFirst,             // renderer thread: first / last query end
+  kTlRenZpdLast,
+  kTlRenQuerySubmit,          // renderer thread: the closed query batch submitted (last such submit)
+  kTlRenAnswerLast,           // renderer thread: the frame's last answer written
+  kTlRenSwapBegin,            // renderer thread: the frame's swap begins / is done
+  kTlRenSwapEnd,
+  kXenosTlCount
+};
+bool XenosTimelineOn();
+// thread: 1 = GPU (PM4) thread and the game thread's events, 2 = renderer. frame < 0 = that thread's current frame.
+void XenosTimelineMark(uint32_t thread, uint32_t event, bool first_only, int64_t frame = -1);
+uint64_t XenosTimelineFrame(uint32_t thread);
+void XenosTimelineAdvance(uint32_t thread);  // after that thread's swap mark
 // Our renderer thread, at the end of each swap: what that frame cost on our side.
 struct XenosRenderedFrame {
   double cpu_ms = 0;            // renderer thread busy on the frame (includes the three waits below)

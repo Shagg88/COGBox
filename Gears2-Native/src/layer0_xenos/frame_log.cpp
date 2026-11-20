@@ -420,6 +420,70 @@ void XenosFrameAddWait(uint32_t kind, double ms, uint32_t waits) {
   if (waits) g_wait_count[kind].fetch_add(waits, std::memory_order_relaxed);
 }
 
+// ---- Speed study: --gow2_frame_timeline (dev_tools.h) ----
+REXCVAR_DEFINE_BOOL(gow2_frame_timeline, false, "Gears2",
+                    "Speed study diagnostic: one log line per 600 frames with the average time (ms after the GPU thread "
+                    "passed the previous swap) at which the game waits for query answers, the GPU thread parses the "
+                    "queries and the swap, and the renderer draws, records the queries, submits them, writes the last "
+                    "answer and does the swap");
+namespace {
+constexpr uint32_t kTlSlots = 64;
+std::atomic<uint64_t> g_tl[kTlSlots][kXenosTlCount];
+std::atomic<uint64_t> g_tl_frame[3];
+double g_tl_sum[kXenosTlCount];
+uint32_t g_tl_n[kXenosTlCount];
+uint32_t g_tl_frames = 0;
+}  // namespace
+
+bool XenosTimelineOn() {
+  static const bool on = REXCVAR_GET(gow2_frame_timeline);
+  return on;
+}
+uint64_t XenosTimelineFrame(uint32_t thread) { return g_tl_frame[thread < 3 ? thread : 0].load(std::memory_order_relaxed); }
+void XenosTimelineMark(uint32_t thread, uint32_t event, bool first_only, int64_t frame) {
+  if (!XenosTimelineOn() || event >= kXenosTlCount || thread >= 3) return;
+  const uint64_t f = frame >= 0 ? uint64_t(frame) : g_tl_frame[thread].load(std::memory_order_relaxed);
+  std::atomic<uint64_t>& slot = g_tl[f % kTlSlots][event];
+  const uint64_t now = Qpc();
+  if (first_only) {
+    uint64_t expected = 0;
+    slot.compare_exchange_strong(expected, now, std::memory_order_relaxed);
+  } else {
+    slot.store(now, std::memory_order_relaxed);
+  }
+}
+void XenosTimelineAdvance(uint32_t thread) {
+  if (!XenosTimelineOn() || thread >= 3) return;
+  const uint64_t f = g_tl_frame[thread].fetch_add(1, std::memory_order_relaxed) + 1;
+  // the slot this thread writes next: its own events start empty
+  const uint32_t lo = thread == 1 ? uint32_t(kTlGameQueryWaitBegin) : uint32_t(kTlRenFirstDraw);
+  const uint32_t hi = thread == 1 ? uint32_t(kTlPm4Swap) : uint32_t(kTlRenSwapEnd);
+  for (uint32_t e = lo; e <= hi; ++e) g_tl[f % kTlSlots][e].store(0, std::memory_order_relaxed);
+  if (thread != 2 || f < 8) return;
+  // Renderer: frame k = f - 4 is complete on every thread (its answers landed, the game's wait for them is in k + 1,
+  // charged to slot k + 1 as "the wait at the start of the next frame"). Zero = the GPU thread's swap before frame k.
+  const uint64_t k = f - 4;
+  const uint64_t zero = g_tl[(k - 1) % kTlSlots][kTlPm4Swap].load(std::memory_order_relaxed);
+  if (!zero) return;
+  for (uint32_t e = 0; e < kXenosTlCount; ++e) {
+    const uint64_t t = g_tl[k % kTlSlots][e].load(std::memory_order_relaxed);
+    if (!t) continue;
+    g_tl_sum[e] += (double(t) - double(zero)) * 1000.0 / double(QpcFreq());
+    ++g_tl_n[e];
+  }
+  if (++g_tl_frames < 600) return;
+  auto a = [](uint32_t e) { return g_tl_n[e] ? g_tl_sum[e] / g_tl_n[e] : -999.0; };
+  REXLOG_INFO("gow2_frame_timeline: frames to {} (ms after the GPU thread passed the previous swap; -999 = never): "
+              "game waits for answers {:.2f} -> {:.2f} ({} frames) | GPU thread: queries {:.2f} -> {:.2f}, swap {:.2f} | "
+              "renderer: first draw {:.2f}, queries {:.2f} -> {:.2f}, batch submitted {:.2f}, last answer {:.2f} "
+              "({} frames), swap {:.2f} -> {:.2f}",
+              k, a(kTlGameQueryWaitBegin), a(kTlGameQueryWaitEnd), g_tl_n[kTlGameQueryWaitBegin], a(kTlPm4ZpdFirst),
+              a(kTlPm4ZpdLast), a(kTlPm4Swap), a(kTlRenFirstDraw), a(kTlRenZpdFirst), a(kTlRenZpdLast),
+              a(kTlRenQuerySubmit), a(kTlRenAnswerLast), g_tl_n[kTlRenAnswerLast], a(kTlRenSwapBegin), a(kTlRenSwapEnd));
+  for (uint32_t e = 0; e < kXenosTlCount; ++e) { g_tl_sum[e] = 0.0; g_tl_n[e] = 0; }
+  g_tl_frames = 0;
+}
+
 void XenosFrameGuestSwap() {
   if (!REXCVAR_GET(gow2_frame_log)) return;
   Log().GuestSwap();
