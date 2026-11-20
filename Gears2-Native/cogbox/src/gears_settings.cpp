@@ -1213,6 +1213,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "Sharpen") {   // GitHub #59: the UPSCALED 1080p only (0.6.6: with Ultrawide, or an exe without true 1080p)
         static const char* const k_nl[kGameCount] = { "gow2_native_lines", "gow3_native_lines", "gowj_native_lines", "gow1_native_lines" };
         const bool trueLines = cap_exe(env, k_nl[static_cast<int>(g)]) && cap_exe(env, "gow2_renderer_edram_extended") &&
+                               cap_exe(env, "_native_lines: UI scene viewport") &&
                                (!s.b("Ultrawide") || cap_exe(env, "the wide picture is scaled the same way"));
         on = s.i("Resolution") == 5 && !trueLines;
         if (s.i("Resolution") == 5 && trueLines) { a.ok = false; a.why = "Not needed: 1080p is drawn by the game itself."; return a; }
@@ -1767,7 +1768,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     static const char* const k_nativeLines[kGameCount] = { "gow2_native_lines", "gow3_native_lines", "gowj_native_lines",
                                                            "gow1_native_lines" };
     // With Ultrawide: only an exe that scales the wide picture too (Gears 2 / Gears 3 since 0.6.6 - its description says so).
+    // Job 2189 (20 Nov): at true 1080p the games' own menus (pause, front end) stayed 1280x720 in the top-left corner
+    // in all four games. Only an exe that lays its menus out for the larger screen gets true 1080p - it carries the
+    // log text "_native_lines: UI scene viewport" (Gears 2 since 5010144); the others keep the upscaled 1080p.
     const bool true1080 = scale == 6 && cap_exe(env, k_nativeLines[gi]) && cap_exe(env, "gow2_renderer_edram_extended") &&
+                          cap_exe(env, "_native_lines: UI scene viewport") &&
                           (!(avail("Ultrawide") && on("Ultrawide")) || cap_exe(env, "the wide picture is scaled the same way"));
     if (true1080) {
         a.insert(a.end(), { "--gow2_renderer_resolution_scale=1", std::string("--") + k_nativeLines[gi] + "=1080",
