@@ -1899,6 +1899,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     standin_wait_budget_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_standin_wait_ms));  // patch 0045
     standin_wait_left_ms_ = standin_wait_budget_ms_;
     if (REXCVAR_GET(gow2_renderer_shader_warmup)) {
+      SeedNoAlphaFromPipelineList();   // 0.6.6: the variants the recorded pipelines will ask for
       const rr::ShaderCache::WarmResult w = cache_->WarmFromDisk();
       REXLOG_INFO("gow2_renderer: shader warm-up: {} recorded shaders, {} already known, {} loaded from disk, {} queued "
                   "to compile, {} failed ({:.0f} ms: listing {:.0f}, reading {:.0f}, translating {:.0f}, making {:.0f}; {} from the "
@@ -12829,14 +12830,30 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // longer matches a draw costs one wasted build, nothing else. ----
   struct PipelineRecord {
     uint64_t vs_hash = 0, ps_hash = 0;
-    uint32_t tess_n = 0, flags = 0;  // flags: 1 = pixel shader, 2 = rect-list geometry shader, 4 = PS without alpha test
+    uint32_t tess_n = 0, flags = 0;  // flags: 1 = pixel shader, 2 = rect-list geometry shader, 4 = PS without alpha test,
+                                     // 8 = written by a build that records flag 4 (kRecVariantAware)
     gpu::GraphicsPipelineDesc desc;  // vs / ps / gs = 0
   };
+  // 0.6.6 (job 2187, 20 Nov): with the no-alpha-test pixel shaders on by default, EVERY pixel-shader pipeline the two
+  // test sessions made was that variant (Gears 2 chapter 9: 333 of 333, Gears 3 Coast: 389 of 389) - so a player's own
+  // pipelines.list from 0.6.5 and the shipped recipe packs, recorded before the variant existed (no flag 4), described
+  // pipelines no draw asks for any more: all of them were built for nothing and every real one was made again during
+  // play. A record from such a build (no flag 8) is therefore read as the variant; a build that knows the variant sets
+  // flag 8 on what it writes, so its flag 4 (or the lack of it: a draw with a real alpha test) is taken as written.
+  static constexpr uint32_t kRecVariantAware = 8u;
+  static bool AdoptOldRecords() {
+    return REXCVAR_GET(gow2_renderer_ps_no_alpha_variant) && REXCVAR_GET(gow2_renderer_ps_no_alpha_from_swap) <= 0;
+  }
+  static bool AdoptOldRecord(PipelineRecord& r) {   // true when the record was changed
+    if (!(r.flags & 1u) || (r.flags & (4u | kRecVariantAware)) || !AdoptOldRecords()) return false;
+    r.flags |= 4u;
+    return true;
+  }
   static constexpr uint32_t kPipelineListMagic = 0x4C50474Eu;  // "NGPL"
   static constexpr uint32_t kPipelineListVersion = 1;          // bump when GraphicsPipelineDesc's meaning changes
   static uint64_t PipelineRecordKey(const PipelineRecord& r) {
     uint64_t h = gpu::HashPipelineDesc(r.desc);
-    for (uint64_t v : {r.vs_hash, r.ps_hash, uint64_t(r.tess_n) << 32 | r.flags}) {
+    for (uint64_t v : {r.vs_hash, r.ps_hash, uint64_t(r.tess_n) << 32 | (r.flags & ~kRecVariantAware)}) {
       h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
     }
     return h;
@@ -12914,9 +12931,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           hdr[1] == kPipelineListVersion && hdr[2] == sizeof(PipelineRecord)) {
         header_ok = true;
         PipelineRecord r;
+        uint64_t adopted = 0;
         while (f.read(reinterpret_cast<char*>(&r), sizeof(r))) {  // a torn last record (a hard exit) is ignored
+          adopted += AdoptOldRecord(r) ? 1 : 0;
           if (recorded_.insert(PipelineRecordKey(r)).second) records.push_back(r);
         }
+        if (adopted)
+          REXLOG_INFO("gow2_renderer: recorded pipelines: {} records from before the no-alpha-test pixel shaders are read "
+                      "as that variant (0.6.6)", adopted);
       }
     }
     std::error_code ec;
@@ -13070,6 +13092,23 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     std::fflush(nullptr);
     std::_Exit(0);  // the title never starts; nothing else of the process needs a clean shutdown
   }
+  // 0.6.6: the warm-up makes the no-alpha-test variant only of pixel shaders on ucode/noat.list (drawn that way before).
+  // A pipelines.list from 0.6.5 has none listed, so its records - now read as the variant - would all be skipped
+  // ("shader not ready"). The list's pixel shaders are handed to the cache before the warm-up.
+  void SeedNoAlphaFromPipelineList() {
+    if (!cache_ || !AdoptOldRecords() || !REXCVAR_GET(gow2_renderer_pipeline_precreate)) return;
+    std::ifstream f(cache_->Dir() / "pipelines.list", std::ios::binary);
+    uint32_t hdr[3] = {};
+    if (!f || !f.read(reinterpret_cast<char*>(hdr), sizeof(hdr)) || hdr[0] != kPipelineListMagic ||
+        hdr[1] != kPipelineListVersion || hdr[2] != sizeof(PipelineRecord)) return;
+    std::vector<uint64_t> hashes;
+    PipelineRecord r;
+    while (f.read(reinterpret_cast<char*>(&r), sizeof(r))) {
+      AdoptOldRecord(r);
+      if ((r.flags & 5u) == 5u) hashes.push_back(r.ps_hash);
+    }
+    cache_->SeedNoAlpha(hashes);
+  }
   void RecordPipeline(const gpu::GraphicsPipelineDesc& d, uint64_t vs_hash, uint64_t ps_hash, uint32_t tess_n,
                       uint32_t ps_variant = 0) {
     PipelineRecord r;
@@ -13077,7 +13116,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     r.ps_hash = ps_hash;
     r.tess_n = tess_n;
     // flag 4 (review 19 Nov #11): the pixel shader is the variant without the alpha test - the replay finds that one
-    r.flags = (d.ps ? 1u : 0u) | (d.gs ? 2u : 0u) | (d.ps && ps_variant ? 4u : 0u);
+    r.flags = (d.ps ? 1u : 0u) | (d.gs ? 2u : 0u) | (d.ps && ps_variant ? 4u : 0u) | kRecVariantAware;
     r.desc = d;
     r.desc.vs = r.desc.ps = r.desc.gs = 0;
     if (!recorded_.insert(PipelineRecordKey(r)).second) return;
@@ -13189,8 +13228,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     rcp_pack_hash_ = XXH3_64bits(b.data(), b.size());  // 0.6.3
     rcp_records_.resize(rcp_.records.size());
-    for (size_t i = 0; i < rcp_records_.size(); ++i)
+    uint64_t rcp_adopted = 0;
+    for (size_t i = 0; i < rcp_records_.size(); ++i) {
       std::memcpy(&rcp_records_[i], rcp_.records[i].data(), sizeof(PipelineRecord));
+      rcp_adopted += AdoptOldRecord(rcp_records_[i]) ? 1 : 0;   // 0.6.6: a pack recorded before the variant existed
+    }
+    if (rcp_adopted)
+      REXLOG_INFO("gow2_renderer: chapter recipe pack: {} of {} records read as the no-alpha-test variant (0.6.6)",
+                  rcp_adopted, rcp_records_.size());
     rcp_state_.assign(rcp_records_.size(), 0);
     rcp_active_.assign(rcp_records_.size(), 0);
     for (uint32_t i = 0; i < uint32_t(rcp_records_.size()); ++i) {

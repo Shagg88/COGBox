@@ -242,6 +242,9 @@ class ShaderCache {
   // Review 19 Nov #11: the warm-up also makes the no-alpha-test variant of each pixel shader an earlier session drew
   // that way (ucode/noat.list), so recorded pipelines with that variant are found at the start.
   void SetPsNoAlphaWarm(bool on) { ps_noat_warm_ = on; }
+  // 0.6.6: more pixel shaders whose variant the warm-up should make (the recorded pipelines' - before WarmFromDisk).
+  // In memory only: ucode/noat.list still lists what was drawn.
+  void SeedNoAlpha(const std::vector<uint64_t>& hashes) { noat_.insert(hashes.begin(), hashes.end()); }
   void SetMulMinAbs(bool on) { mul_min_abs_ = on; }                // job 634
   // Job 636: the leaner DXBC forms (xenos::hlsl::HlslOptions dxbc_structured_jumps ... dxbc_coalesce_moves).
   struct Lean {

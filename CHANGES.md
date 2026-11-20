@@ -13,6 +13,10 @@ games.
   rounding, 21-bit maths rounding in vertex shaders only, small vertex ranges copied only when they change, a leaner
   front-buffer copy, and on DirectX 12 the gamma pass feeding SMAA directly. These were test switches until now; they
   are the defaults in 0.6.6, each with a switch to turn it back off.
+- **Your shader lists carry over.** The pipelines recorded by an older version, and the lists shipped with COGBox, are
+  read as the new faster shaders, so they are prepared before play as before (without this every one of them was
+  built for nothing and made again mid-game). The first start of each game after updating still reads the game's
+  packages once.
 - **Upscalers at 32:9 and wider** (#399): FSR, DLSS and SMAA T2x never started when the picture was lower than 512
   rows (32:9 draws 1280x360). The limit now follows the picture.
 - **Ambient occlusion: Default or On.** One switch replaces the list. On is XeGTAO (high) at half resolution - about
