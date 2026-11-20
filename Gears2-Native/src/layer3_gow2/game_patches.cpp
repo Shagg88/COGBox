@@ -71,8 +71,11 @@ REXCVAR_DEFINE_INT32(gow2_patch_query_wait, 2, "Gears2",
                      "Jobs 231/232 (notes/60): sub_82807588 (UE3's block-until-a-query-has-its-answer) polls ONE query in "
                      "a loop; 1 = after 32 quick polls each retry sleeps until our GPU side writes guest memory (1 ms max); "
                      "2 (default) = as 1 when the frame rate is capped (vsync on or --gow2_max_fps not -1), else off; 0 = off");
-REXCVAR_DEFINE_BOOL(gow2_patch_skip_coalesced_check, false, "Gears2",
-                    "Skip the Coalesced (engine .ini) hash check so edited files load (community patch, Sowa_95/boma)");
+// GitHub #392 / PR #393 (Shagg 19 Nov: "a behind the scenes option rather than something to select in the launcher"):
+// on by default, so an edited Coalesced loads with no launcher setting; =false brings the game's own check back.
+REXCVAR_DEFINE_BOOL(gow2_patch_skip_coalesced_check, true, "Gears2",
+                    "Skip the Coalesced (engine .ini) hash check so edited files load (community patch, Sowa_95/boma); "
+                    "on by default (GitHub #392), false = the game's own check");
 REXCVAR_DEFINE_BOOL(gow2_patch_show_fps, false, "Gears2", "Turn on the engine's FPS and frame-time display (community patch, Sowa_95)");
 REXCVAR_DEFINE_INT32(gow2_patch_texture_pool_mb, 196, "Gears2",
                      "Texture pool size in MB (0 = the game's 140; default 196 as Canary's Texture Streaming Fix, boma)");
