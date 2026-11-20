@@ -1210,7 +1210,12 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
         if (!v.ok) { a.ok = false; a.why = "DirectX 12 only for now. " + v.why; return a; }
     } else if (o.id == "FrameGen" && env.wine) { a.ok = false; a.why = env.mac ? "Not on a Mac (CrossOver)." : "Vulkan only on Proton / Wine."; return a; }
     else if (o.id == "FsrVulkan") on = runs_vulkan(s, env) && fsr_vulkan(env);      // review: opt-in, Vulkan builds with AMD's VK DLLs
-    else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
+    else if (o.id == "Sharpen") {   // GitHub #59: the UPSCALED 1080p only (0.6.6: with Ultrawide, or an exe without true 1080p)
+        static const char* const k_nl[kGameCount] = { "gow2_native_lines", "gow3_native_lines", "gowj_native_lines", "gow1_native_lines" };
+        const bool trueLines = !s.b("Ultrawide") && cap_exe(env, k_nl[static_cast<int>(g)]) && cap_exe(env, "gow2_renderer_edram_extended");
+        on = s.i("Resolution") == 5 && !trueLines;
+        if (s.i("Resolution") == 5 && trueLines) { a.ok = false; a.why = "Not needed: 1080p is drawn by the game itself."; return a; }
+    }
     else if (o.id == "Ssil" && s.i("AO") != 2 && s.i("AO") != 3) {                    // SSIL runs on XeGTAO's depth pyramid
         a.ok = false; a.why = "Needs Ambient occlusion: On."; return a;
     }
