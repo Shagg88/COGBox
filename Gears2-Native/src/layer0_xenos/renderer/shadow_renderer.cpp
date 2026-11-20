@@ -1088,6 +1088,12 @@ REXCVAR_DEFINE_BOOL(gow2_ao_prefilter_single, false, "Gears2",
                     "XeGTAO: build the depth pyramid's 5 levels in one dispatch (XeGTAO's PrefilterDepths16x16) instead of "
                     "five, each reading the whole scene depth again. Needs a backend that binds 5 UAVs (D3D12, Vulkan); "
                     "otherwise the five dispatches are used. false (default) = five dispatches, as 0.4.5");
+REXCVAR_DEFINE_STRING(gow2_ao_test_script, "", "Gears2",
+                      "Tests (Shagg 20 Nov: one launch, not one per setting): timed XeGTAO changes while the game runs - "
+                      "\"<swap>:<key>=<value>,...\" applied at that finished-frame number, each logged as 'gow2_ao_test:'. "
+                      "Keys: quality=low|medium|high|ultra, denoise=0..3 (0 = automatic), algo=gtao|cacao, blur=0..8, "
+                      "show=ours|none|game, half=0|1, single=0|1 (depth pyramid in one dispatch), mip=<offset>, view=0..5. Needs "
+                      "--gow2_ao=gtao; with a script the half-size and one-dispatch shaders are built at start too");
 REXCVAR_DEFINE_INT32(gow2_ao_gpu_log, 0, "Gears2",
                      "XeGTAO cost: every N frames, the average GPU time of each XeGTAO pass (depth pyramid levels 0-4, main, "
                      "each denoise pass) from the backend's GPU timestamps. 0 = off. Not while --gow2_renderer_draw_report_frame "
@@ -5961,6 +5967,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::TextureHandle ao_depth_ = 0, ao_work_ = 0, ao_work2_ = 0, ao_edges_ = 0, ao_final_ = 0;
   // --gow2_ao_half: the working textures and ao_half_final_ are half-size; ao_final_ stays the scene's size
   bool ao_half_ = false;
+  // --gow2_ao_test_script: timed changes in one run
+  struct AoTestStep { uint64_t swap = 0; std::string key, value; };
+  std::vector<AoTestStep> ao_test_;
+  size_t ao_test_next_ = 0;
+  bool ao_half_can_ = false;                       // the half-size shaders exist
+  gpu::PipelineHandle ao_prefilter5_built_ = 0;    // the one-dispatch pyramid shader exists (ao_prefilter5_pipe_: in use)
   uint32_t ao_q_ = 2;  // the quality preset in use (index into the main pipelines)
   gpu::TextureHandle ao_half_final_ = 0;
   gpu::PipelineHandle ao_upsample_pipe_ = 0;
@@ -8304,11 +8316,34 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return s ? backend_->CreateComputePipeline(s) : 0;
     };
     ao_prefilter_pipe_ = make("xegtao_prefilter_cs", common + rr::builtin::kXeGtaoPrefilterCs);
-    if (REXCVAR_GET(gow2_ao_prefilter_single)) {  // one dispatch for the 5 levels (falls back to the five if refused)
+    {  // --gow2_ao_test_script: "<swap>:<key>=<value>,..."
+      std::stringstream list(REXCVAR_GET(gow2_ao_test_script));
+      std::string one;
+      while (std::getline(list, one, ',')) {
+        const size_t colon = one.find(':'), eq = one.find('=');
+        if (colon == std::string::npos || eq == std::string::npos || eq < colon) {
+          if (!one.empty()) REXLOG_WARN("gow2_ao_test: step '{}' not understood (<swap>:<key>=<value>)", one);
+          continue;
+        }
+        AoTestStep st;
+        st.swap = std::strtoull(one.substr(0, colon).c_str(), nullptr, 10);
+        st.key = one.substr(colon + 1, eq - colon - 1);
+        st.value = one.substr(eq + 1);
+        while (!st.key.empty() && st.key.front() == ' ') st.key.erase(0, 1);
+        ao_test_.push_back(std::move(st));
+      }
+      std::stable_sort(ao_test_.begin(), ao_test_.end(), [](const AoTestStep& a, const AoTestStep& b) { return a.swap < b.swap; });
+      if (!ao_test_.empty()) REXLOG_INFO("gow2_ao_test: {} timed step(s), first at swap {}", ao_test_.size(), ao_test_.front().swap);
+    }
+    const bool ao_testing = !ao_test_.empty();
+    if (REXCVAR_GET(gow2_ao_prefilter_single) || ao_testing) {  // one dispatch for the 5 levels (falls back to the five if refused)
       const gpu::ShaderHandle s5 = cache_->GetBuiltin("xegtao_prefilter5_cs", common + rr::builtin::kXeGtaoPrefilter5Cs,
                                                       gpu::ShaderStage::kCompute);
-      ao_prefilter5_pipe_ = s5 ? backend_->CreateComputePipelineMips(s5) : 0;
-      REXLOG_INFO("gow2_ao: XeGTAO depth pyramid in one dispatch {}", ao_prefilter5_pipe_ ? "on" : "NOT available - five dispatches");
+      ao_prefilter5_built_ = s5 ? backend_->CreateComputePipelineMips(s5) : 0;
+      if (REXCVAR_GET(gow2_ao_prefilter_single)) {
+        ao_prefilter5_pipe_ = ao_prefilter5_built_;
+        REXLOG_INFO("gow2_ao: XeGTAO depth pyramid in one dispatch {}", ao_prefilter5_pipe_ ? "on" : "NOT available - five dispatches");
+      }
     }
     for (uint32_t i = 0; i < 4; ++i)
       ao_main_pipes_[i] = make(std::string("xegtao_main_") + kQuality[i] + "_cs",
@@ -8316,7 +8351,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                    common + rr::builtin::kXeGtaoMainCs);
     ao_main_pipe_ = ao_main_pipes_[q];
     ao_q_ = q;
-    if (REXCVAR_GET(gow2_ao_half)) {
+    if (REXCVAR_GET(gow2_ao_half) || ao_testing) {
       bool ok = true;
       for (uint32_t i = 0; i < 4; ++i) {
         ao_main_half_pipes_[i] = make(std::string("xegtao_main_half_") + kQuality[i] + "_cs",
@@ -8325,8 +8360,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         ok = ok && ao_main_half_pipes_[i];
       }
       ao_upsample_pipe_ = make("xegtao_upsample_cs", common + rr::builtin::kXeGtaoUpsampleCs);
-      ao_half_ = ok && ao_upsample_pipe_;
-      REXLOG_INFO("gow2_ao: XeGTAO at half resolution {}", ao_half_ ? "on (--gow2_ao_half)" : "NOT available (shaders failed) - full size");
+      ao_half_can_ = ok && ao_upsample_pipe_;
+      if (REXCVAR_GET(gow2_ao_half)) {
+        ao_half_ = ao_half_can_;
+        REXLOG_INFO("gow2_ao: XeGTAO at half resolution {}", ao_half_ ? "on (--gow2_ao_half)" : "NOT available (shaders failed) - full size");
+      }
     }
     ao_denoise_pipe_ = make("xegtao_denoise_cs", common + rr::builtin::kXeGtaoDenoiseCs);
     ao_debug_pipe_ = make("xegtao_debug_cs", rr::builtin::kXeGtaoDebugCs);
@@ -9245,6 +9283,57 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ao_gpu_frames_ = 0;
     for (double& v : ao_gpu_ms_) v = 0.0;
   }
+  // --gow2_ao_test_script: one timed change, through the same live state the F-keys use (the frame's AO is done; the
+  // next frame runs with it). Every step is logged with the state it leaves, so a test can cut the log into segments.
+  void ApplyAoTestStep(const AoTestStep& st) {
+    static constexpr const char* kQ[4] = {"low", "medium", "high", "ultra"};
+    const std::string& k = st.key;
+    const std::string& v = st.value;
+    bool ok = true;
+    auto auto_denoise = [&](uint32_t q) {
+      return rr::ao::DenoisePasses(REXCVAR_GET(gow2_ao_denoise), q, upscaler_ ? REXCVAR_GET(gow2_upscaler) : std::string("off"),
+                                   up_scale_in_ ? up_scale_in_ : res_scale_);
+    };
+    if (k == "quality") {
+      uint32_t q = 4;
+      for (uint32_t i = 0; i < 4; ++i)
+        if (v == kQ[i]) q = i;
+      ok = q < 4 && ao_main_pipes_[q];
+      if (ok) XenosAoDebugSetState(XenosAoDebugShow(), XenosAoDebugView(), q, auto_denoise(q));   // as a start with that quality
+    } else if (k == "denoise") {
+      ok = rex::cvar::SetFlagByName("gow2_ao_denoise", v);
+      if (ok) XenosAoDebugSetDenoisePasses(auto_denoise(XenosAoDebugQuality() & 3u));
+    } else if (k == "algo") {
+      ok = (v == "gtao" || v == "cacao") && (v == "gtao" || cc_ok_);
+      if (ok) XenosAoDebugSetCacao(v == "cacao", cc_ok_, XenosAoDebugCacaoBlur());
+    } else if (k == "blur") {
+      XenosAoDebugSetCacao(XenosAoDebugCacao(), cc_ok_, uint32_t(std::clamp(std::atoi(v.c_str()), 0, 8)));
+    } else if (k == "show") {
+      const uint32_t show = v == "none" ? 1u : v == "game" ? 2u : 0u;
+      ok = v == "ours" || v == "none" || v == "game";
+      if (ok) XenosAoDebugSetState(show, XenosAoDebugView(), XenosAoDebugQuality() & 3u, XenosAoDebugDenoisePasses());
+    } else if (k == "view") {   // the debug views (--gow2_ao_debug 0-5; 0 = the normal picture)
+      XenosAoDebugSetState(XenosAoDebugShow(), uint32_t(std::clamp(std::atoi(v.c_str()), 0, 5)), XenosAoDebugQuality() & 3u,
+                           XenosAoDebugDenoisePasses());
+    } else if (k == "half") {
+      const bool want = v == "1";
+      ok = !want || ao_half_can_;
+      if (ok && want != ao_half_) ao_half_ = want, ao_w_ = ao_h_ = 0;   // the working textures are made again at the new size
+    } else if (k == "single") {
+      const bool want = v == "1";
+      ok = !want || ao_prefilter5_built_;
+      if (ok) ao_prefilter5_pipe_ = want ? ao_prefilter5_built_ : 0;
+    } else if (k == "mip") {
+      ok = rex::cvar::SetFlagByName("gow2_ao_mip_offset", v);
+    } else {
+      ok = false;
+    }
+    REXLOG_INFO("gow2_ao_test: swap {}: {}={} {} | now quality {} | denoise {} | algo {} blur {} | show {} | half {} | "
+                "single {} | mip {:.2f} | view {}", frame_, k, v, ok ? "applied" : "REFUSED", kQ[XenosAoDebugQuality() & 3u],
+                XenosAoDebugDenoisePasses(), XenosAoDebugCacao() ? "cacao" : "gtao", XenosAoDebugCacaoBlur(),
+                XenosAoDebugShow() == 1 ? "none" : XenosAoDebugShow() == 2 ? "game" : "ours", ao_half_ ? 1 : 0,
+                ao_prefilter5_pipe_ ? 1 : 0, double(REXCVAR_GET(gow2_ao_mip_offset)), XenosAoDebugView());
+  }
   void AoEndFrame() {
     // --gow2_ao_gpu_log and --gow2_ao_pass_times read the same GPU timers: one take feeds both (two takes would leave the
     // second empty). Both are off while the draw report runs, which owns the timers.
@@ -9293,6 +9382,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ao_runs_ = ao_finals_ = ao_replaced_ = ao_binds_ = ao_skipped_draws_ = ao_skipped_resolves_ = ao_added_ = 0;
     }
     ao_constants_state_ = 0;
+    while (ao_test_next_ < ao_test_.size() && frame_ >= ao_test_[ao_test_next_].swap) ApplyAoTestStep(ao_test_[ao_test_next_++]);
     {  // notes/80 s.12: the live state (F9 / F10 / F11 / F8) for the next frame
       ao_show_ = XenosAoDebugShow();
       ao_debug_ = int32_t(XenosAoDebugView());
