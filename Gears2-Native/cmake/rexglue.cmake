@@ -127,10 +127,25 @@ endmacro()
 # codegen, including one a project assembles itself rather than taking the
 # library rexglue_setup_target() builds. The stamp comes first: the DEPFILE
 # names it.
+# Speed study (20 Nov, job 2172): with non_argument_as_local = true in the manifest the generated code needs
+# tools/localize_fix.py straight after EVERY codegen run, in the same build step. Run from tools/build.ps1 between the
+# codegen target and the compile it was undone: ninja ran codegen again (outputs codegen leaves untouched stay older than
+# the manifest, so the step counts as out of date), which rewrote the fixed files, and the game crashed at start
+# (sub_82CEFC78 reading its caller's r12).
+set(GN_LOCALIZE_FIX)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/${GN_MANIFEST}" GN_AS_LOCAL_LINES REGEX "^[ \t]*non_argument_as_local[ \t]*=[ \t]*true")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${GN_MANIFEST}")
+if(GN_AS_LOCAL_LINES)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(GN_LOCALIZE_FIX COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tools/localize_fix.py"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/${GN_GEN_DIR}/*.cpp")
+    message(STATUS "Gears2-Native: ${GN_MANIFEST} has non_argument_as_local - localize_fix.py runs after codegen")
+endif()
 add_custom_command(
     OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/${GN_GEN_DIR}/codegen.build.stamp"
            ${REXGLUE_ENTRYPOINT_GENERATED_SOURCES}
     COMMAND $<TARGET_FILE:rex::rexglue> codegen ${CMAKE_CURRENT_SOURCE_DIR}/${GN_MANIFEST}
+    ${GN_LOCALIZE_FIX}
     DEPFILE "${CMAKE_CURRENT_SOURCE_DIR}/${GN_GEN_DIR}/codegen.d"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Generating recompiled code for gow2"

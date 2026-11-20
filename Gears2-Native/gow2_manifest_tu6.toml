@@ -24,7 +24,7 @@ ctr_as_local = false
 xer_as_local = false
 reserved_as_local = false
 cr_as_local = true   # job 223: alone ch10 12.47 vs 13.82 ms (-10%); job 225 checks it (shots, 2x, capped)
-non_argument_as_local = false
+non_argument_as_local = false   # speed study 20 Nov (jobs 2175 / 2176): ctr, xer, reserved and this one = true, with tools/localize_fix.py after codegen (cmake/rexglue.cmake runs it), ran clean and measured 4.83 ms a frame against 4.92 (about 2%) in chapter 9 - left off until it has had longer play
 # 0.4.9 (cg049, plan-049-perf item 7): r14-r31 / f14-f31 / v in host locals. docs/scan-049-codegen-safety.md: statically safe,
 # exclusion list empty (no guest unwind/exception resume in this runtime; setjmp/longjmp already non-functional). Job 233: -4 to -5%.
 non_volatile_as_local = true

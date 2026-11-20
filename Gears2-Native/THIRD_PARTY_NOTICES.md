@@ -68,3 +68,22 @@ Oklab matrices and both games' smoothed-power HDR boost from the Dishonored
 sample, copyright (c) 2025 Carlos Lopez Jr. / ShortFuse. Its MIT notice
 is provided in `cogbox/licenses/RenoDX-Grading-LICENSE.txt` and distributed beside
 both game executables. See `../docs/ue3-hdr-grading.md` for upstream references.
+
+Intel(R) Xe Super Sampling (XeSS) SDK: Copyright (C) 2025 Intel Corporation
+
+Use and Redistribution. You may use and redistribute the software, which is provided in binary form only, (the
+"Software"), without modification, provided the following conditions are met:
+
+* Redistributions must reproduce the above copyright notice and these terms of use in the Software and in the
+  documentation and/or other materials provided with the distribution.
+* Neither the name of Intel nor the names of its suppliers may be used to endorse or promote products derived from
+  this Software without specific prior written permission.
+* No reverse engineering, decompilation, or disassembly of the Software is permitted, nor any modification or
+  alteration of the Software or its operation at any time, including during execution.
+
+## localize_fix.py (build-time tool, not shipped)
+
+`tools/localize_fix.py` is from the Gears of War 2 PC port by Santiago Quiroz Upegui and the gow2-recomp contributors
+(https://github.com/santiquiroz/gears-of-war-2-pc-port), BSD 3-Clause. Licence text: `tools/localize_fix.LICENSE.txt`.
+It rewrites the generated C++ after code generation so the `*_as_local` recompiler options are safe.
+
