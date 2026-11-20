@@ -822,6 +822,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_resolution_scale, 1, "Gears2",
                      "Stage 7: render at N x the console's resolution on each axis (1-4; 2 = 2560x1440 from 1280x720, "
                      "3 = 3840x2160). Render targets, viewports, scissors and EDRAM transfers are scaled (notes/53). "
                      "0 = auto (\"Match my monitor\"): the smallest N whose image covers the monitor the game is on");
+REXCVAR_DEFINE_BOOL(gow2_renderer_edram_extended, false, "Gears2",
+                    "Experiment (true 1080p, Shagg 20 Nov): model 40 MiB of EDRAM in 8192 tiles instead of the console's "
+                    "10 MiB in 2048, as Xenia Canary's edram_tile_count = extended - room for a game patched to draw "
+                    "above 1280x720 (1920x1080 colour + depth = 3264 tiles). Surface bases are read with 13 bits. Off: "
+                    "the console's size, as before");
 REXCVAR_DEFINE_BOOL(gow2_present_native_size, false, "Gears2",
                     "\"Match my monitor\" (Shagg 23 Oct): the presented image is resampled to the window's exact size "
                     "(box filter shrinking, bilinear enlarging), so it is shown 1:1 with no stretch by the presenter; "
@@ -1813,6 +1818,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
                   w.files, w.known, w.disk_hits, w.queued, w.failed, w.ms, w.list_ms, w.read_ms, w.translate_ms, w.make_ms, w.from_pack, w.packed_now);
     }
     StartPrebuild();  // patch 0068
+    ::xenos::edram::SetExtended(REXCVAR_GET(gow2_renderer_edram_extended));   // before any target or transfer shader
+    if (REXCVAR_GET(gow2_renderer_edram_extended))
+      REXLOG_INFO("gow2_renderer: extended EDRAM - {} tiles (40 MiB), 13-bit surface bases", ::xenos::edram::Tiles());
     res_scale_ = uint32_t(std::clamp(REXCVAR_GET(gow2_renderer_resolution_scale), 1, 4));
     if (REXCVAR_GET(gow2_renderer_resolution_scale) == 0) {
       // "Match my monitor": the smallest scale whose image covers the monitor - fitted by the 16:9 shape, or by width
@@ -2418,8 +2426,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint2 p = hp / rs, sub = hp % rs;
   uint rss = t3.y != 0u ? t3.y : rs;  // the source target's scale (per-target scale threshold)
   uint2 smp = p * 2u + uint2(s & 1u, s >> 1u);
-  uint tile = (t0.x + (smp.y / 16u) * t0.y + smp.x / 80u) % 2048u;
-  uint rel = (tile + 2048u - t0.z) % 2048u;
+  uint tile = (t0.x + (smp.y / 16u) * t0.y + smp.x / 80u) % XE_EDRAM_TILES;
+  uint rel = (tile + XE_EDRAM_TILES - t0.z) % XE_EDRAM_TILES;
   uint2 q = uint2((rel % t0.w) * 80u + smp.x % 80u, (rel / t0.w) * 16u + smp.y % 16u) * rss + (sub * rss) / rs;
   return xe_src.Load(int3(q, 0));
 }
@@ -9765,9 +9773,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         REXLOG_WARN("gow2_renderer: --gow2_renderer_tile_trace: can't read '{}'", part);
         continue;
       }
-      for (unsigned t = a; t <= b && t < ::xenos::edram::kTileCount; ++t) trace_tiles_.set(t);
+      for (unsigned t = a; t <= b && t < ::xenos::edram::Tiles(); ++t) trace_tiles_.set(t);
     }
-    for (uint32_t t = 0; t < ::xenos::edram::kTileCount; ++t)
+    for (uint32_t t = 0; t < ::xenos::edram::Tiles(); ++t)
       if (trace_tiles_.test(t)) trace_list_.push_back(t);
     unsigned px = 7, py = 0;
     if (std::sscanf(pixel.c_str(), "%u,%u", &px, &py) == 2) {
@@ -9822,8 +9830,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint32_t c0, c1, r0, r1;
     rr::RenderTargetCache::TileBounds(t, rect, c0, c1, r0, r1);
     for (uint32_t tile : trace_list_) {
-      for (uint32_t rel = (tile + ::xenos::edram::kTileCount - t.key.base_tiles) % ::xenos::edram::kTileCount;;
-           rel += ::xenos::edram::kTileCount) {
+      for (uint32_t rel = (tile + ::xenos::edram::Tiles() - t.key.base_tiles) % ::xenos::edram::Tiles();;
+           rel += ::xenos::edram::Tiles()) {
         const uint32_t row = rel / t.pitch_tiles, col = rel % t.pitch_tiles;
         if (row >= r1) break;
         if (row >= r0 && col >= c0 && col < c1) f(tile, rel);
@@ -10172,7 +10180,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   ds.single_write_mask, 0u};
     const uint32_t depth_info = r[rr::reg::RB_DEPTH_INFO];
     const uint32_t depth_format = Bits(depth_info, 16, 1);
-    const rr::RenderTargetKey key{Bits(depth_info, 0, 12) & 2047u, rr::DepthStorageClass(depth_format),
+    const rr::RenderTargetKey key{Bits(depth_info, 0, 13) & (::xenos::edram::Tiles() - 1u), rr::DepthStorageClass(depth_format),
                                   is_clear ? pitch * 2 : pitch, is_clear ? 0u : msaa};
     // Job 185: the rect-list fill/clear shader's exact rectangle (job 184: 7-float vertices, x y z first, in pixels).
     // Job 188: its bounds also limit the draw's ownership rectangle (the tiles it really writes), when switched on.
@@ -10268,7 +10276,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     for (uint32_t i = 0; i < 4; ++i) {
       if (!ps.blend.rt[i].write_mask || !((ps_colour >> i) & 1)) continue;
       const uint32_t ci = r[rr::reg::kColorInfo[i]];
-      const rr::RenderTargetKey ck{Bits(ci, 0, 12) & 2047u, rr::ColorStorageClass(Bits(ci, 16, 4)),
+      const rr::RenderTargetKey ck{Bits(ci, 0, 13) & (::xenos::edram::Tiles() - 1u), rr::ColorStorageClass(Bits(ci, 16, 4)),
                                    is_clear ? pitch * 2 : pitch, is_clear ? 0u : msaa};
       bool duplicate = false;
       for (uint32_t k = 0; k < colour_count; ++k) duplicate |= colour_keys[k].base_tiles == ck.base_tiles;
@@ -11172,7 +11180,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (uint32_t i = 0; i < 4; ++i) {
         if (!ps.blend.rt[i].write_mask || !((ps_colour >> i) & 1)) continue;
         const uint32_t ci = r[rr::reg::kColorInfo[i]];
-        const rr::RenderTargetKey k4{Bits(ci, 0, 12) & 2047u, rr::ColorStorageClass(Bits(ci, 16, 4)), pitch, msaa};
+        const rr::RenderTargetKey k4{Bits(ci, 0, 13) & (::xenos::edram::Tiles() - 1u), rr::ColorStorageClass(Bits(ci, 16, 4)), pitch, msaa};
         rr::RenderTarget* twin = rts_->FindAny(k4);  // patch 0141 review: either phase's twin
         if ((!twin || !twin->texture || !twin->key.msaa) && REXCVAR_GET(gow2_renderer_msaa2x_colour_draws)) {
           // the real twin can be the 2x target at the full pitch (the scene, base 1024 7e3).
@@ -11224,7 +11232,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++stats_.clears;
       uint32_t c0, c1, r0, r1;
       rr::RenderTargetCache::TileBounds(*target, own.drawn, c0, c1, r0, r1);
-      const uint32_t tiles = std::min<uint32_t>(r1 * target->pitch_tiles, ::xenos::edram::kTileCount);
+      const uint32_t tiles = std::min<uint32_t>(r1 * target->pitch_tiles, ::xenos::edram::Tiles());
       rts_->ForEachOverlap(target->key.base_tiles, tiles, target, [&](rr::RenderTarget& other) {
         if (other.key.storage_class != target->key.storage_class || other.pitch_tiles != target->pitch_tiles ||
             other.key.msaa != 0 || !other.texture || other.format != target->format ||
@@ -11277,7 +11285,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // (--gow2_renderer_ownership), book 1 the other one, kept only to label pixels where the two disagree.
   struct Ownership {
     rr::PixelRect rect[2];
-    uint32_t limit[2] = {::xenos::edram::kTileCount, ::xenos::edram::kTileCount};
+    uint32_t limit[2] = {::xenos::edram::Tiles(), ::xenos::edram::Tiles()};
     bool active[2] = {true, true};  // this book changes ownership for the access
     rr::PixelRect drawn;            // what the access can really write: scissor ∩ viewport
   };
@@ -11309,9 +11317,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // Canary clamps a bound target's range so that it ends at the next bound target's base (modulo 2048).
   static uint32_t CanaryLimit(uint32_t base, const uint32_t* bases, uint32_t n) {
-    uint32_t limit = ::xenos::edram::kTileCount;
+    uint32_t limit = ::xenos::edram::Tiles();
     for (uint32_t i = 0; i < n; ++i) {
-      const uint32_t d = (bases[i] + ::xenos::edram::kTileCount - base) % ::xenos::edram::kTileCount;
+      const uint32_t d = (bases[i] + ::xenos::edram::Tiles() - base) % ::xenos::edram::Tiles();
       if (d) limit = std::min(limit, d);
     }
     return limit;
@@ -13704,10 +13712,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     rg.copy_command = Bits(cc, 20, 2);
     rg.depth_clear_enable = Bits(cc, 9, 1) != 0;
     const uint32_t ci = r[rr::reg::kColorInfo[rg.copy_src_select & 3]];
-    rg.color_base = Bits(ci, 0, 12) & 2047u;
+    rg.color_base = Bits(ci, 0, 13) & (::xenos::edram::Tiles() - 1u);
     rg.color_format = Bits(ci, 16, 4);
     const uint32_t di = r[rr::reg::RB_DEPTH_INFO];
-    rg.depth_base = Bits(di, 0, 12) & 2047u;
+    rg.depth_base = Bits(di, 0, 13) & (::xenos::edram::Tiles() - 1u);
     rg.depth_format = Bits(di, 16, 1);
     rg.copy_dest_base = r[kRegCopyDestBase];
     const uint32_t dp = r[kRegCopyDestPitch], dinfo = r[kRegCopyDestInfo];
@@ -14955,7 +14963,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     std::vector<TraceEntry> lines;
     gpu::ReadbackHandle readback = 0;
   };
-  std::bitset<::xenos::edram::kTileCount> trace_tiles_;
+  std::bitset<::xenos::edram::kTileCountMax> trace_tiles_;
   uint64_t log_vs_hash_ = 0;                         // patch 0015 (set with the other switches)
   int32_t log_vs_max_ = 0, log_vs_logged_ = 0;
   bool trace_draw_ = false;                          // patch 0016: this draw is traced

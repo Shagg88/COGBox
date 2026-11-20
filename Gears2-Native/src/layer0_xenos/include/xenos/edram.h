@@ -23,9 +23,17 @@ constexpr uint32_t kTileWidthSamples = 80;
 constexpr uint32_t kTileHeightSamples = 16;
 constexpr uint32_t kTileDwords = kTileWidthSamples * kTileHeightSamples;  // 1280
 constexpr uint32_t kTileBytes = kTileDwords * 4;                           // 5120
-constexpr uint32_t kTileCount = 2048;
+constexpr uint32_t kTileCount = 2048;                     // the console: 10 MiB
 constexpr uint32_t kSizeBytes = kTileCount * kTileBytes;  // 10 MiB
 constexpr uint32_t kBaseTilesBits = 11;
+// Extended EDRAM (as Xenia Canary's edram_tile_count = "extended"): 40 MiB in 8192 tiles, for game patches that draw at
+// sizes 10 MiB cannot hold (1920x1080 colour + depth = 3264 tiles). The surface base registers are read with 13 bits and
+// wrapped to the tile count in use. Set once, before the renderer starts (--gow2_renderer_edram_extended).
+constexpr uint32_t kTileCountMax = 8192;
+constexpr uint32_t kBaseTilesBitsMax = 13;
+inline uint32_t g_tile_count = kTileCount;
+inline uint32_t Tiles() { return g_tile_count; }
+inline void SetExtended(bool on) { g_tile_count = on ? kTileCountMax : kTileCount; }
 constexpr uint32_t kResolveAlignmentPixels = 8;
 
 enum class Msaa : uint32_t { k1X = 0, k2X = 1, k4X = 2 };
@@ -125,7 +133,7 @@ constexpr uint32_t OffsetBytes(uint32_t px, uint32_t py, uint32_t sample, const 
     sx = sx >= half ? sx - half : sx + half;
   }
   uint32_t address = base * (tile32_w * tile32_h) + ((sy * tile_w + sx) << p.format_ints_log2);
-  if (p.wrap) address %= tile32_w * tile32_h * kTileCount;
+  if (p.wrap) address %= tile32_w * tile32_h * Tiles();
   return address << 2;
 }
 

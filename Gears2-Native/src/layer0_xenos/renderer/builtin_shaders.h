@@ -283,9 +283,9 @@ void main(float4 pos : SV_Position, out float o_depth : SV_Depth) {
   // Destination pixel -> EDRAM dword (1x, 32bpp, depth: halves swapped).
   uint sx = p.x % 80u, sy = p.y % 16u;
   sx = sx >= 40u ? sx - 40u : sx + 40u;
-  uint tile = (t0.x + (p.y / 16u) * t0.y + p.x / 80u) % 2048u;
+  uint tile = (t0.x + (p.y / 16u) * t0.y + p.x / 80u) % XE_EDRAM_TILES;
   // EDRAM dword -> source pixel.
-  uint rel = (tile + 2048u - t0.z) % 2048u;
+  uint rel = (tile + XE_EDRAM_TILES - t0.z) % XE_EDRAM_TILES;
   // Depth source: the sample at EDRAM column sx is its pixel with the halves swapped back; colour: no swap.
   uint qx = t2.x != 0u ? sx : (sx >= 40u ? sx - 40u : sx + 40u);
   bool src64 = t2.x != 0u && t2.w != 0u;
@@ -346,8 +346,8 @@ float4 main(float4 pos : SV_Position) : SV_Target0 {
   uint2 ssub = (sub * rss) / rs;
   uint tw = max(t1.x, 1u);
   uint sx = p.x % tw, sy = p.y % 16u;
-  uint tile = (t0.x + (p.y / 16u) * t0.y + p.x / tw) % 2048u;
-  uint rel = (tile + 2048u - t0.z) % 2048u;
+  uint tile = (t0.x + (p.y / 16u) * t0.y + p.x / tw) % XE_EDRAM_TILES;
+  uint rel = (tile + XE_EDRAM_TILES - t0.z) % XE_EDRAM_TILES;
   uint2 q = uint2((rel % t0.w) * tw + sx, (rel / t0.w) * 16u + sy) * rss + ssub;
   return xe_src.Load(int3(q, 0));
 }
@@ -580,8 +580,8 @@ float4 main(float4 pos : SV_Position) : SV_Target0 {
   uint2 ssub = (sub * rss) / rs;
   uint tw = max(t1.x, 1u);
   uint sx = p.x % tw, sy = p.y % 16u;
-  uint tile = (t0.x + (p.y / 16u) * t0.y + p.x / tw) % 2048u;
-  uint rel = (tile + 2048u - t0.z) % 2048u;
+  uint tile = (t0.x + (p.y / 16u) * t0.y + p.x / tw) % XE_EDRAM_TILES;
+  uint rel = (tile + XE_EDRAM_TILES - t0.z) % XE_EDRAM_TILES;
   bool dst64 = tw == 40u;
   bool src64 = t1.y == 0u && t2.y != 0u;
   uint src_tw = src64 ? 40u : 80u;

@@ -71,7 +71,7 @@ RenderTarget* RenderTargetCache::Get(const RenderTargetKey& key, bool create_sto
   t->id = next_id_++;
   t->key = key;
   t->pitch_tiles = edram::SurfacePitchTiles(key.pitch_pixels, msaa, is64);
-  const uint32_t tile_rows = (edram::kTileCount + t->pitch_tiles - 1) / t->pitch_tiles;
+  const uint32_t tile_rows = (edram::Tiles() + t->pitch_tiles - 1) / t->pitch_tiles;
   const uint32_t rows_per_tile = edram::kTileHeightSamples >> uint32_t(msaa >= edram::Msaa::k2X);
   const uint32_t scale = ScaleFor(key);
   const uint32_t cap = GuestDimensionCap(scale);
@@ -124,7 +124,7 @@ uint32_t RenderTargetCache::TileCount(const RenderTarget& target, uint32_t rows)
   const uint32_t s = std::max(target.scale, 1u);
   const uint32_t guest_rows = std::min(rows / s + (rows % s ? 1u : 0u), target.guest_height);
   const uint32_t tile_rows = (guest_rows + rows_per_tile - 1) / rows_per_tile;
-  return std::min<uint32_t>(tile_rows * target.pitch_tiles, edram::kTileCount);
+  return std::min<uint32_t>(tile_rows * target.pitch_tiles, edram::Tiles());
 }
 
 RenderTargetCache::FreeResult RenderTargetCache::FreeUnusedScales(const std::vector<uint32_t>& phases) {
@@ -147,7 +147,7 @@ RenderTargetCache::FreeResult RenderTargetCache::FreeUnusedScales(const std::vec
   }
   if (freed_ids.empty()) return r;
   for (uint32_t b = 0; b < 2; ++b) {
-    for (uint32_t tile = 0; tile < edram::kTileCount; ++tile) {
+    for (uint32_t tile = 0; tile < edram::Tiles(); ++tile) {
       uint32_t& o = owner_[b][tile];
       if (!o || std::find(freed_ids.begin(), freed_ids.end(), o) == freed_ids.end()) continue;
       o = 0;
@@ -224,7 +224,7 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
   const uint32_t bi = uint32_t(book) & 1u;
   uint32_t c0, c1, r0, r1;
   TileBounds(target, pixels, c0, c1, r0, r1);
-  tile_limit = std::min<uint32_t>(tile_limit, edram::kTileCount);  // beyond 2048 the range wraps onto itself
+  tile_limit = std::min<uint32_t>(tile_limit, edram::Tiles());  // beyond 2048 the range wraps onto itself
   // Fast path: the target already took a superset of these tiles and nothing in the book changed since - no tile
   // changes hands and none has a previous owner to report.
   RenderTarget::OwnedCache& oc = target.owned[bi];
@@ -267,7 +267,7 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
     for (uint32_t col = c0; col < c1; ++col) {
       const uint32_t rel = row_start + col;
       if (rel >= tile_limit) break;
-      const uint32_t tile = (target.key.base_tiles + rel) % edram::kTileCount;
+      const uint32_t tile = (target.key.base_tiles + rel) % edram::Tiles();
       uint32_t& o = owner_[bi][tile];
       if (trace_tiles_ && trace_fn_ && trace_tiles_->test(tile))
         trace_fn_(tile, rel, book, o ? FindById(o) : nullptr, target, take_ownership);
@@ -302,13 +302,13 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
 
 void RenderTargetCache::ForEachOverlap(uint32_t first_tile, uint32_t tile_count, const RenderTarget* except,
                                        const std::function<void(RenderTarget&)>& fn) {
-  tile_count = std::min<uint32_t>(tile_count, edram::kTileCount);
+  tile_count = std::min<uint32_t>(tile_count, edram::Tiles());
   for (auto& t : targets_) {
     if (t.get() == except) continue;
     const uint32_t t_count = TileCount(*t, t->height);
     // Two ranges on a circle of 2048 tiles overlap if either start lies inside the other range.
     auto inside = [](uint32_t x, uint32_t start, uint32_t len) {
-      return ((x + edram::kTileCount - start) % edram::kTileCount) < len;
+      return ((x + edram::Tiles() - start) % edram::Tiles()) < len;
     };
     if (inside(first_tile, t->key.base_tiles, t_count) || inside(t->key.base_tiles, first_tile, tile_count)) fn(*t);
   }

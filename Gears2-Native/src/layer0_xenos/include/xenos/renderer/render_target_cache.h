@@ -197,7 +197,7 @@ class RenderTargetCache {
   void MarkWritten(RenderTarget& target, const PixelRect& pixels, std::vector<AliasEvent>* aliases,
                    std::vector<TileSource>* sources = nullptr, bool clear_known = false, uint32_t clear_bits = 0,
                    OwnerBook book = OwnerBook::kPrimary, bool take_ownership = true,
-                   uint32_t tile_limit = edram::kTileCount);
+                   uint32_t tile_limit = edram::kTileCountMax);
   // Tile-space bounds of a pixel rectangle in a target: columns [c0, c1), rows [r0, r1) of tiles (MSAA and 64bpp
   // applied, columns clamped to the pitch).
   static void TileBounds(const RenderTarget& target, const PixelRect& pixels, uint32_t& c0, uint32_t& c1,
@@ -209,7 +209,7 @@ class RenderTargetCache {
   // (tile index, offset from the target's base, book, previous owner, the accessing target, whether it takes it).
   using TraceFn = std::function<void(uint32_t tile, uint32_t offset, OwnerBook book, const RenderTarget* previous,
                                      const RenderTarget& target, bool take_ownership)>;
-  void SetTrace(const std::bitset<edram::kTileCount>* tiles, TraceFn fn) {
+  void SetTrace(const std::bitset<edram::kTileCountMax>* tiles, TraceFn fn) {
     trace_tiles_ = tiles;
     trace_fn_ = std::move(fn);
   }
@@ -234,23 +234,23 @@ class RenderTargetCache {
   uint64_t host_bytes_ = 0;
   std::vector<std::unique_ptr<RenderTarget>> targets_;
   // Per book: RenderTarget::id that last wrote the tile (0 = none yet) and whether that write was a known clear.
-  uint32_t owner_[2][edram::kTileCount] = {};
-  bool clear_known_[2][edram::kTileCount] = {};
-  uint32_t clear_bits_[2][edram::kTileCount] = {};
+  uint32_t owner_[2][edram::kTileCountMax] = {};
+  bool clear_known_[2][edram::kTileCountMax] = {};
+  uint32_t clear_bits_[2][edram::kTileCountMax] = {};
   uint64_t book_epoch_[2] = {1, 1};  // bumped on every change of a book
-  uint8_t taint_[edram::kTileCount] = {};
+  uint8_t taint_[edram::kTileCountMax] = {};
  public:
   // Content taint of a tile (acting book; upl-n102): 0 = our data is what the EDRAM holds, 1 = part of it came
   // through transfers from a colour target we can't reinterpret yet (M2), 2 = from another unmodelled source. A new
   // owner starts at 0; the renderer sets it after deciding the transfer.
   void SetTaint(const RenderTarget& target, uint32_t offset, uint8_t taint) {
-    taint_[(target.key.base_tiles + offset) % edram::kTileCount] = taint;
+    taint_[(target.key.base_tiles + offset) % edram::Tiles()] = taint;
   }
   uint64_t FastHits() const { return fast_hits_; }
  private:
   uint64_t fast_hits_ = 0;
   uint32_t next_id_ = 1;
-  const std::bitset<edram::kTileCount>* trace_tiles_ = nullptr;
+  const std::bitset<edram::kTileCountMax>* trace_tiles_ = nullptr;
   TraceFn trace_fn_;
 };
 

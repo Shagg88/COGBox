@@ -15,6 +15,7 @@
 #include <xenos/renderer/shader_cache.h>
 
 #include <xenos/dev_tools.h>
+#include <xenos/edram.h>
 #include <xenos/dxbc_gen.h>
 #include <xenos/dxbc_spirv.h>
 #include <xenos/hlsl.h>
@@ -2296,9 +2297,14 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
   return ref;
 }
 
-gpu::ShaderHandle ShaderCache::GetBuiltin(const std::string& name, const std::string& hlsl, gpu::ShaderStage stage) {
+gpu::ShaderHandle ShaderCache::GetBuiltin(const std::string& name, const std::string& hlsl_in, gpu::ShaderStage stage) {
   auto it = builtins_.find(name);
   if (it != builtins_.end()) return it->second;
+  // The EDRAM transfer shaders wrap at the tile count in use (edram::Tiles(): 2048, or 8192 extended); the define is
+  // part of the source, so the cached file's name follows it.
+  const std::string hlsl = hlsl_in.find("XE_EDRAM_TILES") == std::string::npos
+                               ? hlsl_in
+                               : "#define XE_EDRAM_TILES " + std::to_string(::xenos::edram::Tiles()) + "u\n" + hlsl_in;
   const std::string file = FileName(std::string("builtin-") + StageProfile(stage) + "-" + name, hlsl);
   std::vector<uint8_t> bytecode;
   gpu::ShaderHandle h = 0;
