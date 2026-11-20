@@ -117,7 +117,7 @@ New in 0.6.2
 - DualSense adaptive triggers in all four games (Controls tab, experimental, off by default, #245).
   Not tried on a real DualSense yet - please tell us how it feels.
 - Indirect lighting (SSIL, experimental, by gmihaic): Graphics tab, below Ambient occlusion. Light
-  bounced from nearby lit surfaces. Needs Ambient occlusion: XeGTAO (high or ultra); off by default.
+  bounced from nearby lit surfaces. Needs Ambient occlusion: On; off by default.
 - Soft shadows (PCSS) in Judgment too, and PCSS fixes (by gmihaic).
 - Better HDR in Gears 2 and Gears 3 (by legoliamneeson), and an HDR highlights setting (Display
   tab).

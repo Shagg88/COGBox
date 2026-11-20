@@ -594,6 +594,7 @@ Action DrawSettings(const Look& L, SettingsPage& pg) {
         if (ImGui::BeginCombo("##v", (*r.choices)[size_t(cur)].c_str(), ImGuiComboFlags_HeightLarge)) {
           open_here = true;
           for (int c = 0; c < n; ++c) {
+            if ((*r.choices)[size_t(c)].empty()) continue;   // 0.6.6: no longer offered (the launcher sends it empty)
             ImGui::PushID(c);
             // menu3: only the picked (focused) entry is lit; the current value is plain text with a check mark
             if (ImGui::Selectable((*r.choices)[size_t(c)].c_str(), false, 0, ImVec2(0, L.px(kBody) + 12 * u))) *r.value = c;

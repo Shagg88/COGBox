@@ -410,13 +410,16 @@ std::vector<Option> make_options(Game g) {
     // be, since every flare would show through the scenery there.
     // Notes/80 (Gears2-Native): XeGTAO screen-space ambient occlusion in place of the game's own (Gears 2), or added
     // where a level has none (Gears 3 s.9: opt-in there, default "Game's own").
-    add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, highly experimental)", "XeGTAO (ultra, highly experimental)", "CACAO (experimental)" },
-                        1,   // Game's own: XeGTAO is opt-in in every game
-               "The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version "
-               "(Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, "
-               "characters included. Highly experimental (Shagg 3 Nov): in our tests it cost about 5 ms a frame, roughly halving a "
-               "high frame rate - being worked on. Ultra looks in more directions and catches more small details, for a "
-               "little more. Game's own: the original. Off: none.", 0), "ao");
+    // 0.6.6 (Shagg 20 Nov: "Off should be = Default and On should be = whatever looks the best but costs the least"):
+    // two choices are offered, Default (1) and On (2). The five keep their numbers so saved settings keep their meaning;
+    // Store::view turns a saved Off into Default and a saved Ultra / CACAO into On. Job 2169 (Gears 2, RTX 3080 Ti,
+    // 1440p): no AO 4.86 ms a frame, high 5.36-5.46, high at half resolution 5.11, ultra 5.90, CACAO high 6.08.
+    add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Default", "On", "XeGTAO (ultra)", "CACAO" },
+                        1,   // Default: the game as it shipped
+               "The soft shadowing in corners, creases and where things touch. Default: the game as it shipped. On: a "
+               "modern version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows "
+               "instead of blobs, characters included. It costs little: about a quarter to half a millisecond a frame "
+               "at 1440p on an RTX 3080 Ti in our tests.", 0), "ao");
     // Screen-space indirect lighting (--gow2_ssil, ssil_shaders.h): one bounce of light from nearby lit surfaces, opt-in;
     // it works on XeGTAO's depth pyramid, so it needs Ambient occlusion: XeGTAO.
     add(choice("Ssil", "Indirect lighting", Tab::Graphics, PG, { "Game's own", "SSIL (experimental)" }, 0,
@@ -1213,7 +1216,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "FsrVulkan") on = runs_vulkan(s, env) && fsr_vulkan(env);      // review: opt-in, Vulkan builds with AMD's VK DLLs
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
     else if (o.id == "Ssil" && s.i("AO") != 2 && s.i("AO") != 3) {                    // SSIL runs on XeGTAO's depth pyramid
-        a.ok = false; a.why = "Needs Ambient occlusion: XeGTAO (high or ultra)."; return a;
+        a.ok = false; a.why = "Needs Ambient occlusion: On."; return a;
     }
     else if (o.id == "SplitLayout") on = s.i("Players") == 1;                       // GitHub #136: 2 players only
     else if (o.id == "PeerIps") on = s.b("SystemLink");                              // GitHub #229
@@ -1244,14 +1247,12 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
                "On Vulkan, DLSS is not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
                "frame generation is AMD FSR only (experimental), "
                "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
-    if (o.id == "AO")   // notes/81
-        base += "\nCACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer.";
     if (o.id == "AO" && g == Game::Judgment)   // notes/81
-        base += "\nJudgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS.";
+        base += "\nJudgment: On replaces the game's own AO, which can flicker with DLSS.";
     if (o.id == "DoF" && g == Game::Gears1)   // GitHub #179
         base += "\nGears 1: off turns off the game's blur pass, which the bloom uses too - the glow is softer.";
     if (o.id == "AO" && g == Game::Gears1)   // notes/80 s.14
-        base += "\nGears 1: the game has no AO of its own - XeGTAO and CACAO add it under the level's lighting, so lit areas keep their light. Off and Game's own are the same here.";
+        base += "\nGears 1: the game has no AO of its own - On adds it under the level's lighting, so lit areas keep their light.";
     if (o.id == "Ssil") {
         base += "\nWith DLSS, FSR or SMAA T2x it is smoother: each frame's bounce is averaged with the frames before, and "
                 "light can bounce more than once.";
@@ -1262,7 +1263,7 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         base += "\nUltra's finer shadow maps follow the scene's render size: with DLSS Ultra Performance the scene is drawn at "
                 "720p and Ultra only adds samples; with DLAA or Quality it pays off.";
     if (o.id == "AO" && g == Game::Gears3)   // notes/80 s.9
-        base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it.";
+        base += "\nGears 3: most levels have their shading baked in and no real-time AO - On adds a gentle contact shading there and replaces the game's own where a level has it.";
     if (o.id == "AAMode") {   // PS1 345
         std::string gpu = gpu_main(env);
         base += "\nYour graphics card: " + (gpu.empty() ? std::string("not detected") : gpu);
@@ -1516,6 +1517,9 @@ Settings Store::view(Game g, const Environment& env) const {
     // game fell back to when Intel's could not run).
     if (s.i("AAMode") == 4) s.set("AAMode", 1);
     if (s.i("FrameGen") == k_fgXefg) s.set("FrameGen", 1);
+    // 0.6.6: Ambient occlusion is Default / On - a saved Off becomes Default, a saved Ultra or CACAO becomes On
+    if (s.i("AO") == 0) s.set("AO", 1);
+    if (s.i("AO") >= 3) s.set("AO", 2);
     if ((g == Game::Judgment || g == Game::Gears1) && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
     if (g == Game::Gears1 && !gears1_lang(s.i("Lang"))) s.set("Lang", 0);   // a language Gears 1 has no text for
     return s;
@@ -1948,7 +1952,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                 a.push_back(s.i("AO") == 3 ? "--gow2_ao_quality=ultra" : "--gow2_ao_quality=high");
                 // Shagg's to-do 1(d) (XeGTAO ~5 ms/frame): High denoises twice (medium); Ultra leaves it to the game's
                 // automatic choice (#204: 2 without DLSS / FSR / XeSS, by the scene scale with one)
-                if (s.i("AO") == 2) a.push_back("--gow2_ao_denoise=2");
+                // 0.6.6: On = high at half resolution where the build has it (job 2169: half the cost, the game picture
+                // 0.16 / 255 apart on average) - as measured there, with the build's own denoise; otherwise as before
+                if (s.i("AO") == 2 && cap_exe(env, "gow2_ao_half")) a.push_back("--gow2_ao_half=true");
+                else if (s.i("AO") == 2) a.push_back("--gow2_ao_denoise=2");
             }
         }
     }

@@ -274,7 +274,15 @@ static void write_menu_file(App &a, int g, gs::Version ver, const std::string &l
         t += "[option]\r\nid=" + o.id + "\r\ntab=" + gs::tab_name(o.tab) + "\r\nlabel=" + one_line(tr(o.label)) + "\r\nkind=" + kind + "\r\n" + nums;
         if (!choices.empty()) {
             t += "choices=";
-            for (size_t i = 0; i < choices.size(); i++) t += (i ? "|" : "") + one_line(o.id == "Monitor" ? choices[i] : tr(choices[i]));
+            // 0.6.6: a choice that is no longer offered keeps its place (the value is the index) but goes out empty -
+            // the in-game menu leaves empty choices out of its list (AO: Default / On; no XeSS; no Match my monitor)
+            auto offered = [&](size_t i) {
+                if (o.id == "AO") return i == 1 || i == 2;
+                if (o.id == "AAMode" || o.id == "Resolution") return i != 4;
+                return true;
+            };
+            for (size_t i = 0; i < choices.size(); i++)
+                t += (i ? "|" : "") + (!offered(i) ? std::string() : one_line(o.id == "Monitor" ? choices[i] : tr(choices[i])));
             t += "\r\n";
         }
         if (auto it = live.find(o.id); it != live.end())
@@ -810,7 +818,6 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
         if (cs.i("Api") == 1 && (g == G_GEARS3 || g == G_JUDGMENT) && !a.wine) exp += "Vulkan, ";   // (the Proton path is Vulkan)
         // DLSS experimental again (Shagg 3 Nov: flickering in Gears 1 #147 and Judgment, smearing in Gears 3 #150); SMAA T2x is not
         if (cs.i("AAMode") >= 2 && cs.i("AAMode") <= 4) exp += std::string(cs.i("AAMode") == 2 ? "FSR" : cs.i("AAMode") == 3 ? "DLSS" : "XeSS") + ", ";
-        if (cs.i("AO") >= 2) exp += "XeGTAO, ";   // experimental again (Shagg 3 Nov: about 5 ms a frame)
         if (cs.i("FrameGen") > 0) exp += "frame generation, ";
         if (cs.b("HDR")) exp += "HDR, ";   // 0.4.6: experimental in all four games
         sys += "Experimental settings on: " + (exp.empty() ? std::string("none") : exp.substr(0, exp.size() - 2)) + "\r\n\r\n";

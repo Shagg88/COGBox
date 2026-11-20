@@ -1102,6 +1102,7 @@ static void option_row(App &a, int g, const gs::Option &o)
             std::vector<int> ord;
             for (int i = 0; i < (int)items.size(); i++) ord.push_back(i);
             if (o.id == "Resolution" && items.size() == 6) ord = { 0, 5, 1, 2, 3 };   // 0.6.6: Match my monitor (4) no longer offered
+            if (o.id == "AO" && items.size() == 5) ord = { 1, 2 };   // 0.6.6: Default / On (Shagg 20 Nov)
             if (o.id == "AAMode" && items.size() == 6) ord = { 0, 1, 2, 3, 5 };       // 0.6.6: XeSS (4) dropped
             for (int i : ord) {
                 if (o.id == "FrameGen" && i != idx && gs::framegen_choice_hidden(i, a.env[g])) continue;   // NVIDIA DLSS FG: only with its DLLs
