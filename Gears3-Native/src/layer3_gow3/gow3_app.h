@@ -7,6 +7,7 @@
 #include <rex/audio/flags.h>
 #include <rex/cvar.h>
 #include <rex/rex_app.h>
+#include <xenos/utf8_paths.h>
 #include "mouse_look.h"
 #include "main_menu_exit.h"
 #include "unlocks.h"
@@ -59,6 +60,8 @@ class Gow3App : public rex::ReXApp {
   void OnPreSetup(rex::RuntimeConfig& config) override {
     if (auto ours = XenosCreateOurGpuSystemIfRequested()) config.graphics = std::move(ours);
   }
+  // GitHub #389: path switches with non-ASCII letters, read as UTF-8 (xenos/utf8_paths.h)
+  void OnConfigurePaths(rex::PathConfig& paths) override { xenos::Utf8PathArguments(paths); }
   void OnPostInitLogging() override {
     XenosInstallCrashHandler();
     XenosLogSystemReport("Gears of War 3");  // PC description for problem reports (Gears 2 launcher patch 0131)

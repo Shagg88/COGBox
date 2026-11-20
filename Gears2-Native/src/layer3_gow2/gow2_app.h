@@ -5,6 +5,7 @@
 #pragma once
 
 #include <rex/rex_app.h>
+#include <xenos/utf8_paths.h>
 #include "mouse_look.h"
 #include "main_menu_exit.h"
 
@@ -52,6 +53,8 @@ class Gow2App : public rex::ReXApp {
     if (auto ours = XenosCreateOurGpuSystemIfRequested()) config.graphics = std::move(ours);
   }
   // Logging and options are ready: install the crash report early.
+  // GitHub #389: path switches with non-ASCII letters, read as UTF-8 (xenos/utf8_paths.h)
+  void OnConfigurePaths(rex::PathConfig& paths) override { xenos::Utf8PathArguments(paths); }
   void OnPostInitLogging() override {
     XenosInstallCrashHandler();
     XenosLogSystemReport("Gears of War 2");  // patch 0131: the PC description at the top of the log
@@ -158,7 +161,6 @@ class Gow2App : public rex::ReXApp {
       we_muted_ = false;
     }
   }
-  // void OnConfigurePaths(rex::PathConfig& paths) override {}
 
  private:
   bool we_muted_ = false;  // patch 0130
