@@ -73,6 +73,8 @@ New in 0.6.6
   per-texture work, cheaper vertex and front-buffer copies) is now on for everyone. (Measured gains are listed in
   CHANGES.md once the 0.6.5 comparison has been run.)
 - Upscalers at 32:9 and wider: FSR / DLSS / SMAA T2x now start (they never started on a 32:9 screen with Ultrawide on).
+- TRUE 1080p: the 1080p render resolution now has the game draw 1920x1080 itself (it was 720p upscaled). With
+  Ultrawide on it is still the upscaled kind.
 - Ambient occlusion is one switch, Default or On. On is the modern version at half resolution: about half the cost
   it had, with a picture that is hard to tell apart.
 - DLSS: a lighter model on RTX 20 / 30 cards for Performance and Ultra Performance.

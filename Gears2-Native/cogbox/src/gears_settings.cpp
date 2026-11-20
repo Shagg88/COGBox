@@ -300,8 +300,8 @@ std::vector<Option> make_options(Game g) {
                { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p" }, 0,
                "How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), "
                "4x: 5120x2880. Real detail, not an upscale. A resolution above your screen's is shrunk to fit it "
-               "(supersampling): on a 1080p screen 2x draws four times the pixels of 720p (GitHub #388). 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for "
-               "weaker graphics cards; softer than real detail.", 340), "", "", true);
+               "(supersampling): on a 1080p screen 2x draws four times the pixels of 720p (GitHub #388). 1080p: the game itself draws 1920x1080 - real detail, between 1x and 2x in cost. (With Ultrawide on, or "
+               "a game build from before 0.6.6, 1080p is 720p upscaled with sharpening instead.)", 340), "", "", true);
     // GitHub #59: the 1080p mode's RCAS sharpen made text and some textures look wrong under Wine / Proton (Linux,
     // NVIDIA). Automatic = on in Windows, off under Wine; On / Off override it everywhere.
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
@@ -667,6 +667,9 @@ bool cap_exe(const Environment& e, const std::string& n) {
     // review 20 Nov: the native HDR switches of Judgment and Gears 1 are 15-letter names too
     if (n == "gowj_hdr_native" && e.cap.exe_has && e.cap.exe_has("Opt in to experimental native HDR grading and post-scene FXAA")) return true;
     if (n == "gow1_hdr_native" && e.cap.exe_has && e.cap.exe_has("Opt in to experimental native HDR grading and motion blur")) return true;
+    // 0.6.6: --gowN_native_lines (true 1080p) by the start of its description, the same in all four games
+    if (n.size() > 13 && n.compare(n.size() - 13, 13, "_native_lines") == 0 && e.cap.exe_has &&
+        e.cap.exe_has("Experiment (true 1080p): the game's own screen height in lines")) return true;
     return e.cap.exe_has && e.cap.exe_has(n);
 }
 bool cap_rt(const Environment& e, const std::string& n) { return e.cap.runtime_has && e.cap.runtime_has(n); }
@@ -1752,7 +1755,20 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // 0.3.0: "Start at" removed (see the option list) - the game always opens at its own main menu.
     // PS1 837-842: render resolution ("Match my monitor" = scale 0 + native size; counts as 2x below)
     int scale = s.i("Resolution") + 1;
-    if (scale == 6) {   // 0.2.0 "1080p": 720p drawn, upscaled to the window (Lanczos) and sharpened (RCAS)
+    // 0.6.6 (Shagg 20 Nov: "I want the 1080p replaced with the true 1080p"): the 1080p choice makes the GAME draw
+    // 1920x1080 (--gowN_native_lines=1080 into the extended EDRAM) instead of 720p upscaled. Not with Ultrawide (the
+    // native-lines hooks and the ultrawide hooks sit on the same instructions) and not on an exe without the switch:
+    // those keep the old upscaled 1080p below.
+    static const char* const k_nativeLines[kGameCount] = { "gow2_native_lines", "gow3_native_lines", "gowj_native_lines",
+                                                           "gow1_native_lines" };
+    const bool true1080 = scale == 6 && !(avail("Ultrawide") && on("Ultrawide")) && cap_exe(env, k_nativeLines[gi]) &&
+                          cap_exe(env, "gow2_renderer_edram_extended");
+    if (true1080) {
+        a.insert(a.end(), { "--gow2_renderer_resolution_scale=1", std::string("--") + k_nativeLines[gi] + "=1080",
+                            "--gow2_renderer_edram_extended=true", "--gow2_present_native_size=true" });
+        notes.push_back("launcher: 1080p - the game draws 1920x1080 itself");
+        scale = 1;
+    } else if (scale == 6) {   // 0.2.0 "1080p": 720p drawn, upscaled to the window (Lanczos) and sharpened (RCAS)
         a.insert(a.end(), { "--gow2_renderer_resolution_scale=1", "--gow2_present_native_size=true",
                             "--gow2_present_upscale_filter=lanczos" });
         // GitHub #59: Automatic sharpens except under Wine; On / Off are the player's
@@ -1782,7 +1798,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // GitHub #105: the depth-of-field chain's half-size targets (pitch 640) follow the scale despite the threshold
         if (scale > 1 && avail("DofScale") && on("DofScale")) a.push_back("--gow2_renderer_resolution_scale_pitches=640");
         a.push_back("--gow2_renderer_memexport=true");
-        if (s.i("Resolution") >= 4 && !s.b("Ultrawide")) {
+        if (s.i("Resolution") >= 4 && !s.b("Ultrawide") && !true1080) {   // (not with true 1080p: --gow3_native_lines excludes it)
             if (cap_exe(env, "gow3_aspect")) a.push_back("--gow3_aspect=auto");
             else notes.push_back("launcher: this Gears 3 build has no --gow3_aspect yet - the picture stays 16:9");
         }

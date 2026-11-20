@@ -38,9 +38,8 @@ games.
   - "Match my monitor" as a render resolution (a saved one becomes the whole-number scale it picked).
   - The "Game version" choice and the disc builds of Gears 2 / Gears 3: title updates have been required since 0.4.0,
     and Title Update 6 is now the only version built.
-- **Experimental, off by default:** true 1080p - the game itself draws 1920x1080 - in all four games
-  (`--gow2_native_lines=1080`, `--gow3_native_lines`, `--gowj_native_lines`, `--gow1_native_lines`, each with
-  `--gow2_renderer_edram_extended=true`). Run in Gears 2 only so far; not offered in the launcher.
+- **True 1080p.** The 1080p render resolution now makes the game itself draw 1920x1080 - real detail, where it used
+  to be 720p upscaled and sharpened. With Ultrawide on, 1080p is still the upscaled kind.
 - **Notices:** the XeGTAO, SMAA, stb_dxt and native mouse look licence texts are in `THIRD_PARTY_NOTICES.md`; Intel's
   terms are gone with XeSS.
 
