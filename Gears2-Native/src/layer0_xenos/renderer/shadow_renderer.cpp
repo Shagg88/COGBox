@@ -1070,6 +1070,11 @@ REXCVAR_DEFINE_INT32(gow2_ao_denoise, 0, "Gears2",
                      "XeGTAO denoise passes (notes/80 s.4): 1 = sharp, 2 = medium, 3 = soft; 0 = automatic: under DLSS / FSR "
                      "/ XeSS by the scene's scale (ultra: 3x or more 1, 2x 2, 1x 3), else 2 at ultra; below ultra one more, up "
                      "to 3. F8 changes it live");
+REXCVAR_DEFINE_BOOL(gow2_ao_half, false, "Gears2",
+                    "XeGTAO at half resolution (test, Shagg 20 Nov): the main and denoise passes run on a quarter of the "
+                    "pixels (the depth pyramid's level 1), then a depth-aware pass brings the result to the scene's size. "
+                    "Job 2137b: AO high cost 0.8 ms and ultra 1.5 ms of GPU time at 1440p. Softer; thin things may lose "
+                    "contact shadow - compare before using. Not CACAO");
 REXCVAR_DEFINE_BOOL(gow2_ao_prefilter_single, false, "Gears2",
                     "XeGTAO: build the depth pyramid's 5 levels in one dispatch (XeGTAO's PrefilterDepths16x16) instead of "
                     "five, each reading the whole scene depth again. Needs a backend that binds 5 UAVs (D3D12, Vulkan); "
@@ -5939,6 +5944,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::PipelineHandle ao_prefilter5_pipe_ = 0;  // --gow2_ao_prefilter_single (CreateComputePipelineMips)
   std::array<gpu::PipelineHandle, 4> ao_main_pipes_{};  // notes/80 s.12: every quality preset, so F11 needs no compile
   gpu::TextureHandle ao_depth_ = 0, ao_work_ = 0, ao_work2_ = 0, ao_edges_ = 0, ao_final_ = 0;
+  // --gow2_ao_half: the working textures and ao_half_final_ are half-size; ao_final_ stays the scene's size
+  bool ao_half_ = false;
+  uint32_t ao_q_ = 2;  // the quality preset in use (index into the main pipelines)
+  gpu::TextureHandle ao_half_final_ = 0;
+  gpu::PipelineHandle ao_upsample_pipe_ = 0;
+  std::array<gpu::PipelineHandle, 4> ao_main_half_pipes_{};
   uint32_t ao_denoise_passes_ = 3;
   uint32_t ao_w_ = 0, ao_h_ = 0;
   bool ao_ready_ = false, ao_failed_logged_ = false;
@@ -8289,6 +8300,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                std::string("#define XE_SLICES ") + kSlices[i] + "\n#define XE_STEPS " + kSteps[i] + "\n" +
                                    common + rr::builtin::kXeGtaoMainCs);
     ao_main_pipe_ = ao_main_pipes_[q];
+    ao_q_ = q;
+    if (REXCVAR_GET(gow2_ao_half)) {
+      bool ok = true;
+      for (uint32_t i = 0; i < 4; ++i) {
+        ao_main_half_pipes_[i] = make(std::string("xegtao_main_half_") + kQuality[i] + "_cs",
+                                      std::string("#define XE_MIP_BASE 1\n#define XE_SLICES ") + kSlices[i] +
+                                          "\n#define XE_STEPS " + kSteps[i] + "\n" + common + rr::builtin::kXeGtaoMainCs);
+        ok = ok && ao_main_half_pipes_[i];
+      }
+      ao_upsample_pipe_ = make("xegtao_upsample_cs", common + rr::builtin::kXeGtaoUpsampleCs);
+      ao_half_ = ok && ao_upsample_pipe_;
+      REXLOG_INFO("gow2_ao: XeGTAO at half resolution {}", ao_half_ ? "on (--gow2_ao_half)" : "NOT available (shaders failed) - full size");
+    }
     ao_denoise_pipe_ = make("xegtao_denoise_cs", common + rr::builtin::kXeGtaoDenoiseCs);
     ao_debug_pipe_ = make("xegtao_debug_cs", rr::builtin::kXeGtaoDebugCs);
     ao_pack_pipe_ = make("xegtao_pack_cs", rr::builtin::kXeGtaoPackCs);
@@ -8361,7 +8385,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     const uint32_t w = k->width, h = k->height;
     if (ao_w_ != w || ao_h_ != h) {
-      for (gpu::TextureHandle* t : {&ao_depth_, &ao_work_, &ao_work2_, &ao_edges_, &ao_final_})
+      for (gpu::TextureHandle* t : {&ao_depth_, &ao_work_, &ao_work2_, &ao_edges_, &ao_final_, &ao_half_final_})
         if (*t) backend_->DestroyTexture(*t), *t = 0;
       ao_w_ = ao_h_ = 0;
       gpu::TextureDesc td;
@@ -8374,14 +8398,22 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ao_depth_ = backend_->CreateTexture(td);
       td.mips = 1;
       td.format = gpu::Format::kR16Float;
+      if (ao_half_) {  // --gow2_ao_half: the working textures at the pyramid's level 1 size
+        td.width = std::max(1u, w >> 1);
+        td.height = std::max(1u, h >> 1);
+        td.debug_name = "xegtao half ao";
+        ao_half_final_ = backend_->CreateTexture(td);
+      }
       td.debug_name = "xegtao working ao";
       ao_work_ = backend_->CreateTexture(td);
       ao_work2_ = backend_->CreateTexture(td);  // the earlier denoise passes ping-pong through it
       td.debug_name = "xegtao edges";
       ao_edges_ = backend_->CreateTexture(td);
+      td.width = w;
+      td.height = h;
       td.debug_name = "xegtao ao";
       ao_final_ = backend_->CreateTexture(td);
-      if (!ao_depth_ || !ao_work_ || !ao_work2_ || !ao_edges_ || !ao_final_) {
+      if (!ao_depth_ || !ao_work_ || !ao_work2_ || !ao_edges_ || !ao_final_ || (ao_half_ && !ao_half_final_)) {
         if (!ao_failed_logged_) REXLOG_WARN("gow2_ao: XeGTAO textures ({}x{}) could not be made", w, h);
         ao_failed_logged_ = true;
         return false;
@@ -8453,7 +8485,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
 
   void AoMainPasses(gpu::ComputeBindings b) {
-    const uint32_t w = ao_w_, h = ao_h_;
+    // --gow2_ao_half: the main and denoise passes on the half-size grid (the pyramid's level 1)
+    const uint32_t w = ao_half_ ? std::max(1u, ao_w_ >> 1) : ao_w_, h = ao_half_ ? std::max(1u, ao_h_ >> 1) : ao_h_;
+    b.constants[0] = w;
+    b.constants[1] = h;
     const bool timed = AoGpuTimed();
     // 2. The main pass: working AO term + edges.
     AoPassTag(8);
@@ -8463,7 +8498,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.uav_mip = 0;
     b.uav2_texture = ao_edges_;
     if (timed) backend_->SetGpuTag(kAoTagBase + 5);
-    backend_->Dispatch(ao_main_pipe_, b, (w + 7) / 8, (h + 7) / 8, 1);
+    backend_->Dispatch(ao_half_ ? ao_main_half_pipes_[ao_q_ & 3u] : ao_main_pipe_, b, (w + 7) / 8, (h + 7) / 8, 1);
     // 3. Denoise: the earlier passes ping-pong between the working textures, the last one writes the final AO.
     AoPassTag(9);
     b.srv[1] = ao_edges_;
@@ -8473,10 +8508,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const bool last = pass + 1 == ao_denoise_passes_;
       b.constants[3] = last ? 1u : 0u;
       b.srv[0] = src;
-      b.uav_texture = last ? ao_final_ : other;
+      b.uav_texture = last ? (ao_half_ ? ao_half_final_ : ao_final_) : other;
       if (timed) backend_->SetGpuTag(kAoTagBase + 6 + pass);
       backend_->Dispatch(ao_denoise_pipe_, b, ((w + 1) / 2 + 7) / 8, (h + 7) / 8, 1);
       std::swap(src, other);
+    }
+    if (ao_half_) {  // 4. to the scene's size, depth-aware (the cost is counted with the last denoise pass's tag)
+      b.constants[0] = ao_w_;
+      b.constants[1] = ao_h_;
+      b.srv[0] = ao_half_final_;
+      b.srv[1] = ao_depth_;
+      b.uav_texture = ao_final_;
+      backend_->Dispatch(ao_upsample_pipe_, b, (ao_w_ + 7) / 8, (ao_h_ + 7) / 8, 1);
     }
     // Back to the tag in force before: timing runs only while the draw report is off (AoGpuTimed), and that report is
     // the only other user of GPU tags, so it was 0. (The backend has no getter to read it back.)
@@ -9238,7 +9281,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     {  // notes/80 s.12: the live state (F9 / F10 / F11 / F8) for the next frame
       ao_show_ = XenosAoDebugShow();
       ao_debug_ = int32_t(XenosAoDebugView());
-      if (const gpu::PipelineHandle p = ao_main_pipes_[XenosAoDebugQuality() & 3u]) ao_main_pipe_ = p;
+      if (const gpu::PipelineHandle p = ao_main_pipes_[XenosAoDebugQuality() & 3u]) ao_main_pipe_ = p, ao_q_ = XenosAoDebugQuality() & 3u;
       ao_denoise_passes_ = std::clamp(XenosAoDebugDenoisePasses(), 1u, 3u);
       ao_use_cacao_ = cc_ok_ && XenosAoDebugCacao();
       cc_blur_passes_ = std::min(XenosAoDebugCacaoBlur(), 8u);
