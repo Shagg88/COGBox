@@ -563,6 +563,12 @@ std::vector<Option> make_options(Game g) {
     add(make("SkipLogos", "Skip the intro logos", Tab::Gameplay, Kind::Bool, PG, 0,
              "Starts at the title screen without the publisher / studio logo films. The loading film and cutscenes still play.", 326),
         "skiplogos");
+    // --gow2_patch_skip_coalesced_check (game_patches.cpp): edited Coalesced (engine .ini) files load without the
+    // dirty-disc error. Gears 2 only (the patch is only ported there); for mods and testing.
+    add(make("SkipCoalescedCheck", "Skip Coalesced*.bin check", Tab::Gameplay, Kind::Bool, PG, 0,
+             "For mods and testing: the game's config bundle (Coalesced, its engine .ini files) is not hash-checked at "
+             "load, so edited copies load without the dirty-disc error. Leave it off unless a mod or a test needs it.", 0),
+        "skipcoalescedcheck");
     // insane050 (Shagg, 0.5.0): Insane is unlocked from the start in all four games; this setting (off) brings back the
     // original rule. GitHub #174 (Flippage's Gears 3 recomp, 26d6448): the menus see Insane unlocked; the profile is untouched
     add(make("OriginalUnlocks", "Original unlock rules", Tab::Gameplay, Kind::Bool, OWN, 0,
@@ -915,6 +921,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no mip-fade setting - its sharper textures already show at once.");
     } else if (f == "aniso") {
         if (g == Game::Gears1 && !cap_exe(env, "gow1_aniso16")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "skipcoalescedcheck") {   // --gow2_patch_skip_coalesced_check: the patch is only ported to Gears 2
+        if (g != Game::Gears2) return no("Gears 2 only.");
+        if (!cap_exe(env, "gow2_patch_skip_coalesced_check")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "texcache") {   // 0.6.4 (GitHub #341): layer 0's cvar, in every game's exe
         if (!cap_exe(env, "gow2_renderer_texture_cache_mb")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "pool") {
@@ -1935,6 +1944,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (avail("SoftShadows") && s.i("SoftShadows") >= 1) a.push_back(s.i("SoftShadows") == 2 ? "--gow2_pcss=ultra" : "--gow2_pcss=high");
     // PS1 858: 16x anisotropic
     if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : isG1 ? "--gow1_aniso16=true" : "--gowj_aniso16=true");
+    // --gow2_patch_skip_coalesced_check (game_patches.cpp): edited Coalesced files load without the dirty-disc error
+    if (on("SkipCoalescedCheck")) a.push_back("--gow2_patch_skip_coalesced_check=true");
     // PS1 860-864: texture pool (-1 = the port's own default; Judgment then 200)
     if (avail("Pool")) {
         int mb = k_poolMb[std::max(0, std::min(3, s.i("Pool")))];
