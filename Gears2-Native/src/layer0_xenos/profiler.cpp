@@ -371,7 +371,7 @@ void Run(int seconds, int start_swap) {
     for (const auto& [site, n] : g_site_samples) v.push_back({n, site});
     std::sort(v.rbegin(), v.rend());
     REXLOG_INFO("gow2_profile: renderer thread by site ({} samples while it was running; tag 1 shadow_renderer.cpp, 2 "
-                "texture_cache.cpp, 3 pm4_shadow.cpp; a site holds until the next one is passed):", g_site_total);
+                "texture_cache.cpp, 3 pm4_shadow.cpp, +8 = inside an occlusion query; a site holds until the next one is passed):", g_site_total);
     for (size_t i = 0; i < v.size() && i < 80; ++i)
       REXLOG_INFO("gow2_profile:   [site] {:5.1f}% {}:{}", 100.0 * double(v[i].first) / double(g_site_total), v[i].second >> 16,
                   v[i].second & 0xFFFFu);

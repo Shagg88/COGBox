@@ -2650,6 +2650,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
       occ_open_ = OpenOcclusion{zpd.report_address, backend_->BeginOcclusionQuery(), stats_.draws, stats_.drawn, true,
                                 rts_ ? rts_->PhaseScale() : res_scale_};  // patch 0141: the scale at its begin
+      g_xenos_site_flags = 8;  // site sampling: inside a query (its box draw)
       if (!occ_open_.handle) ++occ_stats_.refused;
       // Our answer is this query's own count, so the begin snapshot the game subtracts must be 0 (the SDK leaves the
       // begin report as it was: job 113 saw stale memory there).
@@ -2663,6 +2664,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const OpenOcclusion q = occ_open_;
     occ_open_ = OpenOcclusion{};
     XENOS_SITE(1);
+    g_xenos_site_flags = 0;
     // Complete = every draw inside the query was really drawn by us (a draw skipped for a pending shader/pipeline
     // would make our count too small: such a count is never learned, never written).
     const bool counted = q.open && stats_.draws >= q.draws && stats_.drawn >= q.drawn;
