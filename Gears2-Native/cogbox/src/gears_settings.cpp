@@ -542,8 +542,8 @@ std::vector<Option> make_options(Game g) {
                "the game's own split. Gears 2: side by side from the start.", 325), "splitlayout");
     // 0.3.5 (GitHub #72, SDK patch 49b): System Link over a LAN or a LAN VPN (Radmin VPN, ZeroTier, Hamachi). Off = the
     // runtime behaves exactly as before ("No Network Connection").
-    add(make("SystemLink", "System Link - LAN play (experimental)", Tab::Gameplay, Kind::Bool, PG, 0,
-             "Experimental - lets the game's System Link find and join games on other PCs on your network (or on a LAN VPN "
+    add(make("SystemLink", "System Link - LAN play", Tab::Gameplay, Kind::Bool, PG, 0,
+             "Lets the game's System Link find and join games on other PCs on your network (or on a LAN VPN "
              "such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. Gears of War "
              "and Gears 2 co-op worked in testing; other modes and the other games are less tested. Voice chat is not supported yet. Windows may ask about the firewall: "
              "allow Private networks.", 325), "syslink");

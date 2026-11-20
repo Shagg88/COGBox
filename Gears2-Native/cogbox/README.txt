@@ -388,8 +388,8 @@ Keyboard and mouse: every key can be changed on a game's Controls tab.
 DLC and mods: a game's About tab (Downloadable content, Mods).
 
 
-System Link - LAN play (experimental; Title Update versions of all four games)
--------------------------------------------------------------------------------
+System Link - LAN play (Title Update versions of all four games)
+-----------------------------------------------------------------
 Play the games' System Link modes (co-op and the other System Link modes) with other PCs - in the
 same house, or over the internet with a free "LAN VPN". Thanks to HubertFer, whose patch made this
 possible. Tested so far: Gears of War 2 campaign co-op, and Gears of War co-op (two PCs, about an

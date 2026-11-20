@@ -34,7 +34,6 @@ static const HelpTest k_helpTest[] = {
     // Shagg 6 Nov: never ask players to do extra work to find data for us - at most "press Report a problem".
     { 2,  "Sudden death / \"cursed\" save, or a teammate killing you (#55, #68, #79, #80): if it happens to you, press Report a problem afterwards - the report has what we need." },
     { 2,  "Raam's Shadow DLC not found (#79): if the game doesn't see your DLC, press Report a problem after that start." },
-    { 15, "System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitHub whether it worked." },
     { 15, "Other versions of the game (regional discs, other title updates): if yours isn't the one COGBox expects, tell us whether it works." },
 };
 
