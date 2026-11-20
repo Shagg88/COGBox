@@ -1108,6 +1108,9 @@ static void option_row(App &a, int g, const gs::Option &o)
                 gs::Availability ca = gs::choice_available(o, G, i);
                 if (ca.ok) ca = gs::wine_choice_available(o, i, a.env[g]);   // proton049: what can't work under Proton (ok on Windows)
                 if (ca.ok && o.id == "FrameGen") ca = gs::framegen_choice_available(i, a.env[g], gs::runs_vulkan(a.cur[g], a.env[g]));
+                // 0.6.6: a Scene resolution with no whole-number scene size here is greyed, with the reason (hover)
+                if (ca.ok && o.id == "SceneMode" && i != idx)
+                    ca = gs::scene_mode_choice_available(i, gs::expected_render_scale((gs::Game)g, a.cur[g], a.env[g]));
                 // 0.3.0 (Shagg 14:18): FSR / DLSS / XeSS are DirectX 12 only - greyed while Vulkan is the Graphics API
                 if (ca.ok && o.id == "AAMode" && i >= 2 && i <= 4 && gs::runs_vulkan(a.cur[g], a.env[g]) && !(i == 2 && gs::fsr_vulkan_on(a.cur[g], a.env[g]))) {   // 5 SMAA T2x: both APIs; fsr049: FSR on Vulkan (opt-in)
                     ca.ok = false;

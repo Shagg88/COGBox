@@ -181,6 +181,20 @@ int expected_render_scale(Game g, const Settings& s, const Environment& env);
 // #345 / GitHub #98: Scene resolution mode m (1 Quality, 2 Performance, 3 Ultra performance) has a whole-number scene size
 // at render scale `out` - otherwise the upscaler only anti-aliases (DLAA / native AA)
 inline bool scene_mode_fits(int m, int out) { return (m == 2 && (out == 2 || out == 4)) || ((m == 1 || m == 3) && out == 3); }
+// 0.6.6 (Shagg 20 Nov; job 2137b: DLSS "Quality" at 1440p cost 1.1 ms of GPU time and lowered nothing): a Scene
+// resolution that the render resolution can't divide is greyed in the list, with what would make it work.
+inline Availability scene_mode_choice_available(int m, int out) {
+    Availability a;
+    if (m < 1 || m > 3 || scene_mode_fits(m, out)) return a;
+    a.ok = false;
+    const std::string at = out == 1 ? "720p / 1080p (1x)" : out == 2 ? "1440p (2x)" : out == 3 ? "4K (3x)" : "5K (4x)";
+    a.why = m == 2 ? "Performance draws the scene at half size, which needs render resolution 2x (1440p) or 4x. At " + at +
+                         " it would only anti-alias and cost frames."
+                   : std::string(m == 1 ? "Quality draws the scene at 2/3 size" : "Ultra performance draws the scene at 1/3 size") +
+                         ", which needs render resolution 3x (4K). At " + at + " it would only anti-alias and cost frames." +
+                         (out == 2 || out == 4 ? " Performance works here." : "");
+    return a;
+}
 // proton049: under Proton / Wine, a single choice that can't work there, with its one-line reason (always ok on
 // Windows): exclusive fullscreen, NVIDIA DLSS without an NVIDIA RTX card, DLSS / XeSS frame generation.
 Availability wine_choice_available(const Option& o, int index, const Environment& env);

@@ -416,6 +416,14 @@ int summary() {
                     std::cout << "FAIL frame generation gate (vulkan " << vk << ", wine " << wine << ", vram " << vram
                               << "): ok " << av.ok << " '" << av.why << "'\n"; ++fails; }
             }
+    // 0.6.6: Scene resolution choices that the render resolution can't divide are greyed with a reason; Native never is
+    for (int out = 1; out <= 4; ++out)
+        for (int m = 0; m <= 3; ++m) {
+            const Availability av = scene_mode_choice_available(m, out);
+            const bool want = m == 0 || scene_mode_fits(m, out);
+            if (av.ok != want || (!want && av.why.find("render resolution") == std::string::npos)) {
+                std::cout << "FAIL scene mode gate (mode " << m << ", " << out << "x): ok " << av.ok << " '" << av.why << "'\n"; ++fails; }
+        }
     // 0.6.4 (GitHub #341): the texture cache - Auto sends nothing (512) without a texture pack and 2048 with one; a size
     // other than 512 is sent as picked; nothing for an exe without the cvar
     for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
