@@ -841,7 +841,10 @@ bool GowjGpuWaitStep() {  // jump_address_on_true: skip the empty delay loop to 
 //   0x82640588 `lfs f0,1628(r27)` (the field-of-view factor) -> f0 = 0.010975 (the patch's code cave)
 //   0x82992664 `li r11,720` (the scene buffer height, stored to the screen-height global) -> 550
 //   0x82369E30 `bne cr6,0x82369e3c` -> always taken (the vignette: its texture can't be rescaled)
-//   0x827F1DD4 `lwz r30,-10976(r9)` (SceneRenderTargets reads that global) -> 720, so the targets keep their size
+//   0x827F1DD4 `lwz r30,-10976(r9)` (SceneRenderTargets reads that global) -> left at the picture's height since
+//     0.6.6 (GitHub #396; the Canary patch and 0.6.5 forced 720 here, see GowjUltrawideTargetHeight);
+//   0x827F33AC `addi r3,r1,264` (scene shared memory block 2 created next) -> its size kept at the 16:9 size (0.6.6,
+//     GowjUltrawideSharedMemory; not in the Canary patch);
 //   0x82CBA684 `stw r4,136(r3)` (Scaleform's scale mode) -> replaced by `li r4,1` (the store is skipped)
 //   the .rdata floats 0x82082C30 / 0x82083350 (post-process scale, 16:9 = 1.7778) -> 2.3273, written at load.
 // The front buffer becomes 1280x550 (x the resolution scale) and is shown at its own shape (--gow2_present_frame_aspect).
@@ -889,12 +892,26 @@ inline double FovScale(uint32_t h) {
   return k(Widen(h)) / k(Widen(550));
 }
 }  // namespace uwshape
+// GitHub #396 (as Gears 3's #330, fixed there in 0.6.3): with the scene render targets kept at 1280x720 under a 1280xH
+// picture, the Stats & Awards pages (Achievements, Medals...) draw stacked cyan bands over the whole screen.
+REXCVAR_DEFINE_BOOL(gowj_aspect_targets_720, false, "Judgment",
+                    "With --gowj_ultrawide: keep the scene render targets at the 16:9 size 1280x720 as the Canary patch "
+                    "does (before 0.6.6). Off = sized for the picture, as the game sizes them at 16:9 (GitHub #396: on, "
+                    "the Stats & Awards pages draw stacked cyan bands)");
 REXCVAR_DEFINE_STRING(gowj_aspect, "", "Judgment",
                       "With --gowj_ultrawide: the shape. Empty = 21:9 (1280x550, the Canary patch); auto = the monitor's; "
                       "or e.g. '21:9', '32:9', '3440:1440'");
 namespace {
 uint32_t GowjWideHeight() {
-  static const uint32_t h = uwshape::Height(REXCVAR_GET(gowj_aspect), "gowj_ultrawide");
+  // GitHub #396: the game rounds its scene render targets up to 8 rows (sub_827F3088: (h + 7) & ~7), so with the
+  // targets following the picture every height is a multiple of 8 and both match exactly: Canary's 550 -> 552.
+  static const uint32_t h = [] {
+    const uint32_t raw = uwshape::Height(REXCVAR_GET(gowj_aspect), "gowj_ultrawide");
+    if (REXCVAR_GET(gowj_aspect_targets_720)) return raw;
+    const uint32_t h8 = std::clamp((raw + 4u) / 8u * 8u, 240u, 720u);
+    if (h8 != raw && REXCVAR_GET(gowj_ultrawide)) REXLOG_INFO("gowj_ultrawide: scene height {} -> {} (a multiple of 8, GitHub #396)", raw, h8);
+    return h8;
+  }();
   return h;
 }
 template <typename T> void LogOnce(bool& done, const char* what, T before, T after) {
@@ -925,11 +942,45 @@ void GowjUltrawideSceneHeight(PPCRegister& r11) {
   r11.u64 = GowjWideHeight();
 }
 bool GowjUltrawideNoVignette() { return REXCVAR_GET(gowj_ultrawide); }  // jump_address_on_true 0x82369E3C
+// After `lwz r30,-10976(r9)` at 0x827F1DD4 in sub_827F1DB0 (UE3 FSceneRenderTargets::Allocate on Xbox, as Gears 3's
+// sub_827D7AA8): r29 / r30 = the screen width / height globals, grown into BufferSizeX/Y (+276 / +280, rounded up to 8
+// by sub_827F3088) when larger, then the targets are made again. At 16:9 the targets are exactly the screen's size and
+// the Stats & Awards pages (a Scaleform movie) rely on it: they copy the screen into a scene target and draw it back
+// as if the texture were the screen's size. The Canary patch kept r30 = 720 here, so under a 1280x536 picture each
+// copy came back squeezed: the stacked cyan bands of GitHub #396 (3440x1440; Gears 3's #330 was the same). The game's
+// own value (the picture's height) keeps targets and picture the same size, as at 16:9.
 void GowjUltrawideTargetHeight(PPCRegister& r30) {
   if (!REXCVAR_GET(gowj_ultrawide)) return;
+  if (REXCVAR_GET(gowj_aspect_targets_720)) {
+    static bool l = false;
+    LogOnce(l, "render target height (--gowj_aspect_targets_720)", uint32_t(r30.u32), 720u);
+    r30.u64 = 720;
+    return;
+  }
+  static std::atomic<uint32_t> last{0};
+  if (last.exchange(r30.u32) != r30.u32) {
+    static std::atomic<int> n{0};
+    if (n.fetch_add(1) < 8)
+      REXLOG_INFO("gowj_ultrawide: scene render targets sized from screen height {} (picture 1280x{}; 720 before 0.6.6, "
+                  "GitHub #396){}", r30.u32, GowjWideHeight(), r30.u32 == GowjWideHeight() ? "" : " - NOT the picture height");
+  }
+}
+// After `addi r3,r1,264` at 0x827F33AC, just before the `bl` to sub_82998D30 (RHICreateSharedMemory) for the scene's
+// shared memory block 2 (GSceneRenderTargets+388) in sub_827F3100 (InitDynamicRHI): r5 = its size, max(BufferSize
+// format 2, BufferSize format 19). The game also creates a format-12 depth texture of a fixed size in that block (the
+// call before 0x827F33AC's block is used again near the function's end: `lwz r7,0(r14)`, `li r6,12`), which no longer
+// fits when the targets follow a much smaller picture - Gears 3 trapped there (its #330, job 1907). Keep the 16:9
+// capacity (1280 x 736 x 4, the size 0.6.5 allocated) so the targets can follow the picture's height.
+void GowjUltrawideSharedMemory(PPCRegister& r5) {
+  if (!REXCVAR_GET(gowj_ultrawide) || REXCVAR_GET(gowj_aspect_targets_720)) return;
+  constexpr uint32_t kStock720 = 1280u * 736u * 4u;  // 0x398000
   static bool l = false;
-  LogOnce(l, "render target height", uint32_t(r30.u32), 720u);
-  r30.u64 = 720;
+  if (r5.u32 >= kStock720) {
+    if (!l) { l = true; REXLOG_INFO("gowj_ultrawide: scene shared memory block 2 is 0x{:X} (not below the 16:9 size 0x{:X})", r5.u32, kStock720); }
+    return;
+  }
+  if (!l) { l = true; REXLOG_INFO("gowj_ultrawide: scene shared memory block 2 0x{:X} -> 0x{:X} (GitHub #396)", r5.u32, kStock720); }
+  r5.u64 = kStock720;
 }
 bool GowjUltrawideUiScale(PPCRegister& r4) {  // jump_address_on_true 0x82CBA688: the store is skipped, r4 = 1
   if (!REXCVAR_GET(gowj_ultrawide)) return false;

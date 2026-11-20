@@ -316,6 +316,13 @@ name = "GowjUltrawideTargetHeight"
 registers = ["r30"]
 after_instruction = true
 
+# GitHub #396: scene shared memory block 2 keeps its 16:9 size when the targets follow a wider picture's height
+[[entrypoint.midasm_hook]]
+address = 0x827F33AC  # `addi r3,r1,264`: just before RHICreateSharedMemory (sub_82998D30), r5 = the block's size
+name = "GowjUltrawideSharedMemory"
+registers = ["r5"]
+after_instruction = true
+
 [[entrypoint.midasm_hook]]
 address = 0x82CBA684  # `stw r4,136(r3)`: Scaleform's scale mode (the patch: `li r4,1` in its place)
 name = "GowjUltrawideUiScale"
