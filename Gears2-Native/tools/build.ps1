@@ -43,33 +43,27 @@ $t = Get-Date
   Select-Object -Last 6 | ForEach-Object { Write-Host "  cfg: $_" }
 $tc = [int]((Get-Date)-$t).TotalSeconds
 
-$t = Get-Date
-$gen = & $cmake --build $bd --target gow2_codegen 2>&1
-$genOk = $LASTEXITCODE -eq 0
-$gen | Out-File -LiteralPath (Join-Path $root "out\codegen$logSfx.log") -Encoding utf8
-$gen | Select-String 'Unresolved|error|Error|warn' | Select-Object -First 15 | ForEach-Object { Write-Host "  gen: $($_.Line)" }
-$gen | Select-Object -Last 3 | ForEach-Object { Write-Host "  gen: $_" }
-$tg = [int]((Get-Date)-$t).TotalSeconds
-
 # Speed study (20 Nov): with non_argument_as_local = true in the manifest the generated code needs tools\localize_fix.py
-# (santiquiroz's port, BSD-3): registers a function reads from its caller go back through the context. Job 223: without
-# it the game crashes at boot. Runs on every build of such a manifest (codegen rewrote the files it changed).
+# (santiquiroz's port, BSD-3): registers a function reads from its caller go back through the context. CMake runs it in
+# the codegen step itself (cmake\rexglue.cmake) - run from here, between codegen and the compile, it was undone: the
+# compile ran codegen again and rewrote the fixed files (job 2172: crash at start). It takes about 7 minutes, so for such
+# a manifest the separate codegen run below is skipped when the tree was generated before (sources.cmake exists) and
+# codegen + the fix run once, inside the build.
 $mfName = if ($Tu6) { 'gow2_manifest_tu6.toml' } else { 'gow2_manifest.toml' }
-if ($genOk -and (Select-String -LiteralPath (Join-Path $root $mfName) -Pattern '^\s*non_argument_as_local\s*=\s*true' -Quiet)) {
-  $t = Get-Date
-  $pyExe = $null; $pyArgs = @()
-  if (Get-Command py -ErrorAction SilentlyContinue) { $pyExe = 'py'; $pyArgs = @('-3') }
-  elseif (Get-Command python -ErrorAction SilentlyContinue) { $pyExe = 'python' }
-  if (-not $pyExe) { Write-Host '  localize_fix: no Python (py / python) on PATH - the build stops here'; $genOk = $false }
-  else {
-    $lf = & $pyExe @pyArgs (Join-Path $root 'tools\localize_fix.py') "$genDir\*.cpp" 2>&1
-    $lfOk = $LASTEXITCODE -eq 0
-    $lf | Out-File -LiteralPath (Join-Path $root "out\localize_fix$logSfx.log") -Encoding utf8
-    $lf | Select-Object -Last 8 | ForEach-Object { Write-Host "  localize_fix: $_" }
-    Write-Host ("  localize_fix: {0} in {1} s" -f $(if ($lfOk) { 'done' } else { 'FAILED' }), [int]((Get-Date)-$t).TotalSeconds)
-    if (-not $lfOk) { $genOk = $false }
-  }
+$asLocal = [bool](Select-String -LiteralPath (Join-Path $root $mfName) -Pattern '^\s*non_argument_as_local\s*=\s*true' -Quiet)
+$t = Get-Date
+$genOk = $true
+if ($asLocal -and (Test-Path -LiteralPath (Join-Path $genDir 'sources.cmake'))) {
+  Write-Host '  gen: as_local manifest - codegen and localize_fix run inside the build'
+} else {
+  $gen = & $cmake --build $bd --target gow2_codegen 2>&1
+  $genOk = $LASTEXITCODE -eq 0
+  $gen | Out-File -LiteralPath (Join-Path $root "out\codegen$logSfx.log") -Encoding utf8
+  $gen | Select-String 'Unresolved|error|Error|warn' | Select-Object -First 15 | ForEach-Object { Write-Host "  gen: $($_.Line)" }
+  $gen | Select-String 'register locals|demoted registers' | Select-Object -Last 4 | ForEach-Object { Write-Host "  localize_fix: $($_.Line)" }
+  $gen | Select-Object -Last 3 | ForEach-Object { Write-Host "  gen: $_" }
 }
+$tg = [int]((Get-Date)-$t).TotalSeconds
 
 $tb = 0; $ok = $false
 if ($genOk) {
@@ -85,6 +79,12 @@ if ($genOk) {
   $out | Select-String 'error:|FAILED:|undefined symbol|unresolved external' | Select-Object -First 20 | ForEach-Object { Write-Host "  ERR $($_.Line)" }
   if (-not $ok) { $out | Select-Object -Last 15 | ForEach-Object { Write-Host "  | $_" } }
   Write-Host "  warnings: $warn"
+  $out | Select-String 'register locals|demoted registers' | Select-Object -Last 4 | ForEach-Object { Write-Host "  localize_fix: $($_.Line)" }
+  if ($asLocal) {   # the compiled code must be the fixed code
+    $marks = (Get-ChildItem $genDir -Filter '*.cpp' | Select-String -Pattern 'LOCALIZE_FIX' -SimpleMatch | Measure-Object).Count
+    Write-Host "  localize_fix marks in the generated code: $marks"
+    if ($ok -and $marks -lt 100) { $ok = $false; Write-Host '  ERR the generated code has no LOCALIZE_FIX marks - the compiled code is not the fixed code' }
+  }
   # Freshness check (D27 lesson 3, from gears-judgement-recomp): a generated source newer than its object means ninja
   # linked a stale object (the patch or hook in that file would silently be missing). Fail loudly.
   if ($ok) {
