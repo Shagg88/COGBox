@@ -7,10 +7,12 @@ Gears2-Native's own code is MIT-licensed (`LICENSE`). It contains or builds agai
 | rexglue SDK (Tom Clay; portions from the Xenia project, Ben Vanik and contributors) | `third_party/rexglue-sdk` (downloaded, not committed); `cmake/rexglue.cmake`, `src/main.cpp`, parts of `src/gow2_app.h` come from its project template | BSD-3-Clause |
 | Xenia Canary (e6cd2e4) and Xenia Edge (5045c19) (Ben Vanik and the Xenia project contributors) | ported or adapted pieces of `src/layer0_xenos` (texture loading and formats, tiling and mip layout, resolve and gamma rules, the rectangle-list geometry shader, PM4 and shader-translation rules); each such file carries the notice | BSD-3-Clause |
 | XeGTAO (Intel Corporation) | `src/layer0_xenos/renderer/xegtao_shaders.h` (ported shaders, notes/80) | MIT (notice below) |
+| SMAA (Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro, Diego Gutierrez) | `src/layer0_xenos/renderer/smaa/` (SMAA.hlsl and its area / search tables) | MIT (notice below) |
+| stb_dxt (Fabian Giesen, Sean Barrett) | `src/layer0_xenos/renderer/stb_dxt.h` | Public domain (note below) |
 | PsychoV35 (Carlos Lopez / ShortFuse / clshortfuse; self-contained edition modifications by Musa Haji / mqhaji) | Gears 2 and Gears 3 native HDR scene mapping, `src/layer0_xenos/include/xenos/renderer/psychov35_source.h` | MIT ([full notice](cogbox/licenses/PsychoV35-LICENSE.txt); also copied beside each game EXE under `licenses/`) |
 | Libraries bundled by the SDK (SDL3, Dear ImGui, Tracy, fmt, spdlog, FFmpeg, ...) | inside the SDK | their own licences, listed in the SDK's `licenses/` folder |
 | gow3-recomp (Flippage and the gow3-recomp contributors) and gears-of-war-2-pc-port / gow2-recomp (Santiago Quiroz Upegui and the gow2-recomp contributors) | the native mouse look method and the Gears 3 / Gears 2 base-disc addresses in `ue3_mouse_look.h` and `mouse_look.cpp` (layer 3 of all three ports, COGBox 0.2.1), plus the multi-controller 4x prompt overlay catalog and live device monitor (`prompt_atlas_catalog.*`, `prompt_overlay_compositor.*`, `prompt_device_monitor.*`) | BSD-3-Clause (notices below) |
-| Kenney Input Prompts (`assets/glyphs/`) | Controller and keyboard/mouse prompt glyph icons for Xbox, PlayStation, Nintendo Switch, Steam Deck, and Steam Controller | CC0 1.0 Universal (Public Domain, notice below) |
+| Kenney Input Prompts (`assets/glyphs/`) | Controller and keyboard/mouse prompt glyph icons for Xbox, PlayStation, Nintendo Switch, Steam Deck, and Steam Controller | CC0 1.0 Universal (public domain dedication; `assets/glyphs/LICENSE.txt`) |
 | Inter 4.1 (The Inter Project Authors, `assets/fonts/`) | Inter-Regular.ttf and Inter-SemiBold.ttf, the achievement popups' and the in-game Achievements page's font | SIL Open Font License 1.1 (`assets/fonts/Inter-LICENSE.txt`) |
 | LZMA SDK 23.01 7z decoder (Igor Pavlov, `cogbox/third_party/lzma`, unchanged) | CogBox.exe unpacking .7z updates (0.4.9) | Public domain (`cogbox/licenses/LZMA-SDK-public-domain.txt`) |
 | miniupnpc 2.3.3 (Thomas Bernard; release tarball fetched by SDK patch 77, pinned by SHA-256, built into `rexruntime.dll`) | UPnP port mapping for online play (0.6.0) | BSD-3-Clause (`cogbox/licenses/miniupnpc-LICENSE.txt`) |
@@ -68,6 +70,98 @@ Oklab matrices and both games' smoothed-power HDR boost from the Dishonored
 sample, copyright (c) 2025 Carlos Lopez Jr. / ShortFuse. Its MIT notice
 is provided in `cogbox/licenses/RenoDX-Grading-LICENSE.txt` and distributed beside
 both game executables. See `../docs/ue3-hdr-grading.md` for upstream references.
+
+## XeGTAO (src/layer0_xenos/renderer/xegtao_shaders.h)
+
+https://github.com/GameTechDev/XeGTAO - XeGTAO.hlsli, XeGTAO.h and vaGTAO.hlsl, ported to this renderer's compute
+shaders (the changes are listed at the top of the file).
+
+Copyright (C) 2016-2021, Intel Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## SMAA (src/layer0_xenos/renderer/smaa/)
+
+https://github.com/iryoku/smaa - SMAA.hlsl and its area / search tables, unmodified apart from two non-ASCII comment characters.
+
+
+Copyright (C) 2013 Jorge Jimenez (jorge@iryoku.com)
+Copyright (C) 2013 Jose I. Echevarria (joseignacioechevarria@gmail.com)
+Copyright (C) 2013 Belen Masia (bmasia@unizar.es)
+Copyright (C) 2013 Fernando Navarro (fernandn@microsoft.com)
+Copyright (C) 2013 Diego Gutierrez (diegog@unizar.es)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software. As clarification, there is no
+requirement that the copyright notice and permission be included in binary
+distributions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## stb_dxt (src/layer0_xenos/renderer/stb_dxt.h)
+
+https://github.com/nothings/stb - DXT1/DXT5 compressor by Fabian "ryg" Giesen, ported to C by Sean Barrett. Public
+domain (or MIT, at your choice); COGBox uses it under the public-domain option (Unlicense), unmodified. Used to re-encode a button-prompt sheet after COGBox's keyboard key caps
+are drawn over it (GitHub #41).
+
+## Native mouse look (ue3_mouse_look.h, mouse_look.cpp)
+
+Copyright (c) 2026, Flippage and the gow3-recomp contributors
+Copyright (c) 2026, Santiago Quiroz Upegui and the gow2-recomp contributors
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## localize_fix.py (build-time tool, not shipped)
 
