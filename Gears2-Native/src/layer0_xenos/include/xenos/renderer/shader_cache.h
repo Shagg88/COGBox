@@ -24,6 +24,7 @@
 //    compiled on the caller's thread, one already on a worker is waited for.
 #pragma once
 
+#include <unordered_set>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -128,6 +129,8 @@ class ShaderCache {
   // `dwords` in host byte order (rex::graphics::Shader::ucode_dwords()). Returns a stable reference; its state moves
   // from kPending to kReady/kFailed in a later Poll().
   // tess_quad_segments > 0 (vertex shaders): the quad-patch tessellation variant with N segments per patch edge.
+  // Pixel shaders: tess_quad_segments = 1 is the variant without the alpha test (speed study: no discard, so the GPU
+  // keeps early depth rejection) - for draws whose alpha test is off.
   const GuestShader& Get(uint64_t ucode_hash, const uint32_t* dwords, size_t dword_count, bool is_vertex,
                          uint32_t tess_quad_segments = 0) {
     return GetImpl(ucode_hash, dwords, dword_count, is_vertex, tess_quad_segments, false);
@@ -144,6 +147,7 @@ class ShaderCache {
     const auto& map = shaders_[is_vertex ? 1 : 0];
     const uint64_t key = (is_vertex && tess_quad_segments)
                              ? ucode_hash ^ (0x7E55ull << 48) ^ (uint64_t(tess_quad_segments) << 40)
+                             : (!is_vertex && tess_quad_segments) ? ucode_hash ^ (0xA17Full << 48)  // no alpha test
                              : ucode_hash;  // the same key as GetImpl
     const auto it = map.find(key);
     return it == map.end() ? nullptr : it->second.get();
@@ -208,6 +212,7 @@ class ShaderCache {
   void SetCompactFloatConstants(bool on) { compact_float_constants_ = on; }
   void SetTexSignBySwizzle(bool on) { tex_sign_by_swizzle_ = on; }  // patch 0024
   void SetCanaryR21(bool on) { canary_r21_ = on; }  // patch 0041
+  void SetPsR21(bool on) { ps_r21_ = on; }          // speed study: false = vertex shaders only (Edge b13a0478d)
   void SetCanaryDecode(bool on) { canary_decode_ = on; }  // patch 0041
   void SetMulscTowardZero(bool on) { mulsc_toward_zero_ = on; }   // patch 0087
   void SetMemexportF16NanZero(bool on) { f16_nan_zero_ = on; }    // patch 0087
@@ -232,6 +237,10 @@ class ShaderCache {
   void SetTexNumFormat(bool on) { tex_num_format_ = on; }  // patch 0040
   void SetTexPostConstants(bool on) { tex_post_constants_ = on; }  // patch 0105
   void SetTexPostAffine(bool on) { tex_post_affine_ = on; }        // job 634
+  void SetTexPostSkip(bool on) { tex_post_skip_ = on; }            // speed study
+  // Review 19 Nov #11: the warm-up also makes the no-alpha-test variant of each pixel shader an earlier session drew
+  // that way (ucode/noat.list), so recorded pipelines with that variant are found at the start.
+  void SetPsNoAlphaWarm(bool on) { ps_noat_warm_ = on; }
   void SetMulMinAbs(bool on) { mul_min_abs_ = on; }                // job 634
   // Job 636: the leaner DXBC forms (xenos::hlsl::HlslOptions dxbc_structured_jumps ... dxbc_coalesce_moves).
   struct Lean {
@@ -315,6 +324,11 @@ class ShaderCache {
   bool compact_float_constants_ = false;
   bool tex_sign_by_swizzle_ = false;  // patch 0024
   bool canary_r21_ = false;  // patch 0041
+  bool ps_r21_ = true;       // speed study
+  bool ps_noat_warm_ = false;                 // review 19 Nov #11
+  std::unordered_set<uint64_t> noat_;         // pixel shaders drawn as the no-alpha-test variant (ucode/noat.list)
+  std::ofstream noat_file_;
+  void NoteNoAlpha(uint64_t ucode_hash);
   bool canary_decode_ = false;  // patch 0041
   bool mulsc_toward_zero_ = false, f16_nan_zero_ = false;  // patch 0087
   bool spirv_precise_ = true;  // patch 0088
@@ -322,6 +336,7 @@ class ShaderCache {
   bool tex_num_format_ = false;  // patch 0040
   bool tex_post_constants_ = false;  // patch 0105
   bool tex_post_affine_ = false, mul_min_abs_ = false;  // job 634
+  bool tex_post_skip_ = false;                           // speed study
   Lean lean_;                                            // job 636
   bool vertex_index_clamp_ = false;   // patch 0028
   bool dxbc_ = false;

@@ -1328,10 +1328,10 @@ uint64_t ShaderCache::DxbcStoreKey(const uint32_t* dwords, size_t dword_count, b
   // every HlslOptions field (hlsl.h: a new field must be added here too)
   k.u32(uint32_t(sizeof(hlsl::HlslOptions)));
   k.b(o.dxbc_loop_only_if_needed); k.b(o.dxbc_canary_minmax); k.u32(o.dxbc_salt); k.b(o.dxbc_direct_operands);
-  k.b(o.dxbc_slim_prologue); k.b(o.kill_as_demote); k.str(o.entry); k.u32(o.tess_quad_segments);
+  k.b(o.dxbc_slim_prologue); k.b(o.kill_as_demote); k.str(o.entry); k.u32(o.tess_quad_segments); k.b(o.no_alpha_test); k.b(o.no_color_outputs);
   k.b(o.compact_float_constants); k.b(o.tex_sign_by_swizzle); k.b(o.canary_r21); k.b(o.tex_num_format);
   k.b(o.vertex_index_clamp); k.b(o.canary_tfetch1d_xy); k.b(o.mulsc_round_toward_zero); k.b(o.memexport_f16_nan_zero);
-  k.b(o.spirv_precise); k.b(o.ps_refactoring_allowed); k.b(o.tex_post_constants); k.b(o.tex_post_affine);
+  k.b(o.spirv_precise); k.b(o.ps_refactoring_allowed); k.b(o.tex_post_constants); k.b(o.tex_post_affine); k.b(o.tex_post_skip_identity);
   k.b(o.dxbc_mul_min_abs); k.b(o.dxbc_structured_jumps); k.b(o.dxbc_mul_movc); k.b(o.dxbc_short_r21);
   k.b(o.dxbc_short_swap); k.b(o.dxbc_short_degamma); k.b(o.dxbc_coalesce_moves); k.b(o.dxbc_dead_stores);
   k.b(o.dxbc_vertex_words_vector); k.b(o.dxbc_fold_modifiers); k.b(o.dxbc_merge_movs); k.b(o.clamp_ui_output);
@@ -1872,6 +1872,16 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
                 g_warm_split.dxbc_hits.load(), ms(g_warm_split.dxbc_put_ns));
   }
   r.translate_ms = MsSince(t2);
+  uint64_t noat_warmed = 0;
+  {   // review 19 Nov #11: ucode/noat.list - u64 hashes, appended as variants are first drawn
+    std::vector<char> b;
+    if (ReadWholeFile(dir / "noat.list", b))
+      for (size_t at = 0; at + 8 <= b.size(); at += 8) {
+        uint64_t h;
+        std::memcpy(&h, b.data() + at, 8);
+        noat_.insert(h);
+      }
+  }
   const auto t3 = std::chrono::steady_clock::now();
   for (size_t i = 0; i < items.size(); ++i) {
     Item& it = items[i];
@@ -1913,8 +1923,16 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       else if (stats_.queued != queued) ++r.queued;
       if (s.state == ShaderState::kFailed) ++r.failed;
     }
+    // Review 19 Nov #11: the variant without the alpha test, for shaders an earlier session drew that way
+    if (ps_noat_warm_ && !it.is_vertex && noat_.count(it.hash)) {
+      GetImpl(it.hash, it.dwords.data(), it.dwords.size(), false, 1, true);
+      ++noat_warmed;
+    }
     std::vector<uint32_t>().swap(it.dwords);
   }
+  if (ps_noat_warm_)
+    REXLOG_INFO("gow2_renderer: shader warm-up: {} pixel-shader variants without the alpha test ({} listed)", noat_warmed,
+                noat_.size());
   r.make_ms = MsSince(t3);  // (the streaming adoption is inside translate_ms; its own time is logged above)
   r.ms = MsSince(t0);
   return r;
@@ -1965,9 +1983,13 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
   // selected by GetNativeHdr only while replaying the identified post-tonemap
   // Canvas draws; never clamp all uses of a shader by its hash alone.
   if (is_vertex) options.tess_quad_segments = tess_quad_segments;
+  else {  // speed study: pixel-shader variants - bit 0 without the alpha test, bit 1 without the colour outputs
+    options.no_alpha_test = (tess_quad_segments & 1u) != 0;
+    options.no_color_outputs = (tess_quad_segments & 2u) != 0;
+  }
   options.compact_float_constants = compact_float_constants_;
   options.tex_sign_by_swizzle = tex_sign_by_swizzle_;  // patch 0024
-  options.canary_r21 = canary_r21_;  // patch 0041
+  options.canary_r21 = canary_r21_ && (is_vertex || ps_r21_);  // patch 0041; speed study: pixel shaders optional
   options.canary_tfetch1d_xy = canary_decode_;          // patch 0087: the decode's two tfetch1D coordinates, used
   options.mulsc_round_toward_zero = mulsc_toward_zero_;  // patch 0087
   options.memexport_f16_nan_zero = f16_nan_zero_;        // patch 0087
@@ -1976,6 +1998,7 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
   options.tex_num_format = tex_num_format_;  // patch 0040
   options.tex_post_constants = tex_post_constants_;  // patch 0105
   options.tex_post_affine = tex_post_affine_;        // job 634
+  options.tex_post_skip_identity = tex_post_affine_ && tex_post_skip_;  // speed study
   options.dxbc_mul_min_abs = mul_min_abs_;           // job 634
   options.dxbc_structured_jumps = lean_.structured_jumps;  // job 636
   options.dxbc_mul_movc = lean_.mul_movc;
@@ -2133,17 +2156,33 @@ gpu::ShaderHandle ShaderCache::GetNativeSceneUi(const uint32_t* dwords, size_t c
   return shader;
 }
 
+void ShaderCache::NoteNoAlpha(uint64_t ucode_hash) {
+  if (!noat_.insert(ucode_hash).second || !record_ucode_ || !dir_ok_) return;
+  if (!noat_file_.is_open()) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir_ / "ucode", ec);
+    noat_file_.open(dir_ / "ucode" / "noat.list", std::ios::binary | std::ios::app);
+  }
+  if (noat_file_) {
+    noat_file_.write(reinterpret_cast<const char*>(&ucode_hash), sizeof(ucode_hash));
+    noat_file_.flush();
+  }
+}
+
 const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwords, size_t dword_count,
                                         bool is_vertex, uint32_t tess_quad_segments, bool warm, bool hlsl_path) {
   ++stats_.lookups;
   auto& map = shaders_[is_vertex ? 1 : 0];
   // Quad-patch tessellation variants (notes/51 section 10) live under their own key.
   uint64_t key = (is_vertex && tess_quad_segments) ? ucode_hash ^ (0x7E55ull << 48) ^ (uint64_t(tess_quad_segments) << 40)
+                 : (!is_vertex && tess_quad_segments == 1) ? ucode_hash ^ (0xA17Full << 48)  // speed study: no alpha test
+                 : (!is_vertex && tess_quad_segments) ? ucode_hash ^ (0xA17Full << 48) ^ (uint64_t(tess_quad_segments) << 40)
                                                     : ucode_hash;
   if (hlsl_path) key ^= 0xD1D1ull << 32;  // GetDxilTwin: the HLSL-path twin under its own key
   auto it = map.find(key);
   if (it != map.end()) return *it->second;
-  if (!warm && !hlsl_path && !(is_vertex && tess_quad_segments)) SaveUcode(ucode_hash, is_vertex, dwords, dword_count);
+  if (!warm && !hlsl_path && !tess_quad_segments) SaveUcode(ucode_hash, is_vertex, dwords, dword_count);
+  if (!warm && !is_vertex && tess_quad_segments == 1) NoteNoAlpha(ucode_hash);
   auto s = std::make_unique<GuestShader>();
   s->ucode_hash = ucode_hash;
   s->is_vertex = is_vertex;
@@ -2256,6 +2295,8 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
   char stem[48];
   if (is_vertex && tess_quad_segments)
     std::snprintf(stem, sizeof(stem), "vs-tess%u-%016llX", tess_quad_segments, static_cast<unsigned long long>(ucode_hash));
+  else if (tess_quad_segments)
+    std::snprintf(stem, sizeof(stem), "ps-noat-%016llX", static_cast<unsigned long long>(ucode_hash));
   else
     std::snprintf(stem, sizeof(stem), "%s-%016llX", is_vertex ? "vs" : "ps", static_cast<unsigned long long>(ucode_hash));
   const gpu::ShaderStage stage = is_vertex ? gpu::ShaderStage::kVertex : gpu::ShaderStage::kPixel;

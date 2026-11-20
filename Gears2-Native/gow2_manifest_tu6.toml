@@ -354,6 +354,15 @@ address = 0x82817124  # TU6: base 0x828075BC
 name = "Gow2QueryWaitStep"
 registers = []
 
+# Speed study 19 Nov (--gow2_patch_query_buffered, game_patches.cpp): 0x8273116C `addi r4,r29,4` in sub_82730F70, before
+# the occlusion query's release. A query whose answer was not back (sub_828170F0 overridden) stays pending: jump past
+# the release and the re-issue to 0x82731408 with this frame's decision in r25 / r28. TU6 only.
+[[entrypoint.midasm_hook]]
+address = 0x8273116C
+name = "Gow2QueryKeepLate"
+registers = ["r25", "r28", "r29"]
+jump_address_on_true = 0x82731408
+
 # Job 225 (notes/60): the cctpl at 0x829776A0 in sub_82977688 (one step of the XDK's GPU wait). On: skip the (empty)
 # delay loop to the cctpm at 0x829776CC after sleeping until our GPU side writes a fence / the read pointer.
 [[entrypoint.midasm_hook]]

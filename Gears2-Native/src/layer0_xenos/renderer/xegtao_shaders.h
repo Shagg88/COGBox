@@ -197,10 +197,15 @@ Texture2D<float> xe_vdepth : register(t0);
 RWTexture2D<float> xe_ao : register(u0);
 RWTexture2D<float> xe_edges : register(u1);
 
-float XeLoadZ(int2 p) { return xe_vdepth.Load(int3(clamp(p, int2(0, 0), int2(XE_SIZE) - 1), 0)); }
+// --gow2_ao_half: XE_MIP_BASE 1 - the pass runs on a half-size grid (XE_SIZE = the pyramid's level 1), every level one
+// lower; its distances are in half-size pixels, so the MIP choice follows by itself.
+#ifndef XE_MIP_BASE
+#define XE_MIP_BASE 0
+#endif
+float XeLoadZ(int2 p) { return xe_vdepth.Load(int3(clamp(p, int2(0, 0), int2(XE_SIZE) - 1), XE_MIP_BASE)); }
 // SampleLevel(point clamp, uv, mip): the nearest level, the texel under uv, clamped to the edge.
 float XeSampleZ(float2 uv, float mip) {
-  const uint m = uint(mip + 0.5);
+  const uint m = min(uint(mip + 0.5) + uint(XE_MIP_BASE), 4u);
   uint w, h, levels;
   xe_vdepth.GetDimensions(m, w, h, levels);
   const int2 p = clamp(int2(floor(uv * float2(w, h))), int2(0, 0), int2(w, h) - 1);
@@ -425,6 +430,42 @@ void main(uint3 id : SV_DispatchThreadID) {
     XeAddSample(v_br, weight_br, sum, sum_weight);
     xe_ao_out[pix] = saturate(sum / sum_weight * (final_apply ? XE_OCCLUSION_TERM_SCALE : 1.0));
   }
+}
+)";
+
+// --gow2_ao_half: the half-size AO (t0, visibility 0..1) to the scene's size (u0), each pixel from the four half-size
+// texels around it, weighted by how close their view depth (the pyramid's level 1) is to the pixel's own (level 0) - a
+// texel across a depth edge counts for nothing, so the shading does not bleed over silhouettes; when all four are
+// across an edge, the one nearest in depth. XE_SIZE = the scene's size. Dispatch (width + 7) / 8 x (height + 7) / 8.
+constexpr const char* kXeGtaoUpsampleCs = R"(
+Texture2D<float> xe_ao_half : register(t0);
+Texture2D<float> xe_vdepth : register(t1);
+RWTexture2D<float> xe_out : register(u0);
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+  if (any(id.xy >= XE_SIZE)) return;
+  const int2 p = int2(id.xy);
+  uint hw, hh;
+  xe_ao_half.GetDimensions(hw, hh);
+  const float z = xe_vdepth.Load(int3(p, 0));
+  const float2 f = (float2(p) + 0.5) * 0.5 - 0.5;   // in half-size texels, centres at whole numbers
+  const int2 b = int2(floor(f));
+  const float2 t = f - float2(b);
+  float sum = 0.0, wsum = 0.0, nearest = 1.0, best = 1.0e30;
+  for (int j = 0; j < 2; ++j) {
+    for (int i = 0; i < 2; ++i) {
+      const int2 q = clamp(b + int2(i, j), int2(0, 0), int2(hw, hh) - 1);
+      const float zq = xe_vdepth.Load(int3(q, 1));
+      const float a = xe_ao_half.Load(int3(q, 0));
+      const float dz = abs(zq - z) / max(z, 1.0e-3);
+      const float w = (i ? t.x : 1.0 - t.x) * (j ? t.y : 1.0 - t.y) * saturate(1.0 - dz * 40.0);
+      sum += w * a;
+      wsum += w;
+      if (dz < best) { best = dz; nearest = a; }
+    }
+  }
+  xe_out[p] = wsum > 1.0e-3 ? sum / wsum : nearest;
 }
 )";
 

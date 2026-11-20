@@ -1600,6 +1600,16 @@ struct Gen {
     const uint32_t base = kTexAffineBase + slot * kTexAffineVec;
     const uint32_t f = Push(), c = Push(), g = Push(), t = Push(), q = Push(), y = Push();
     a.OpMov(R(f), Cb(kCbFetch, base));                     // the step masks of the four components
+    if (opt.tex_post_skip_identity) {
+      // Speed study: identity slots (no step, exponent adjust 1 - most of a frame's fetches) skip the ~45 instructions.
+      // The test reads constants only, so every pixel of the draw takes the same side (no divergence).
+      a.OpOr(R(c, kXY), S(f, Sw(0, 1, 0, 0)), S(f, Sw(2, 3, 0, 0)));
+      a.OpNE(R(q), Cb(kCbFetch, base + 7), LF(1.0f));
+      a.OpOr(R(q, kXY), S(q, Sw(0, 1, 0, 0)), S(q, Sw(2, 3, 0, 0)));
+      a.OpOr(R(c, kXY), S(c), S(q));
+      a.OpOr(R(c, kX), S1(c, 0), S1(c, 1));
+      a.OpIf(true, S1(c, 0));
+    }
     // Gamma (s == 3).
     Degamma(g, S(v), kXYZW);
     a.OpAnd(R(c), S(f), LU(1));
@@ -1639,6 +1649,7 @@ struct Gen {
     a.OpMovC(R(v), S(c), S(t), S(v));
     // Exponent adjust: 2^((int(dw3 << 13)) >> 26).
     a.OpMul(R(v), S(v), Cb(kCbFetch, base + 7));
+    if (opt.tex_post_skip_identity) a.OpEndIf();
   }
 
   // xe_tex_post(v, slot) in place on temp v.
@@ -2828,6 +2839,7 @@ struct Gen {
       // Alpha test (xe_alpha_test(xe_oc[0].w)).
       const Src al = S1(Oc(0), 3), ref = Sys(4).Select(1);
       const uint32_t r = Push(), f = Push();
+      if (!opt.no_alpha_test) {
       a.OpAnd(R(f, kX), Sys(4).Select(0), LU(7));
       a.OpMov(R(r, kX), LU(0));                                   // 0: never
       a.OpLT(R(t, kX), al, ref);                                  // 1: a < ref
@@ -2845,9 +2857,11 @@ struct Gen {
       a.OpNot(R(r, kX), S1(r, 0));
       a.OpAnd(R(r, kX), S1(r, 0), S1(f, 2));
       a.OpDiscard(true, S1(r, 0));
+      }  // speed study: the no-alpha-test variant has no discard here
+      if (!opt.no_color_outputs)  // speed study: the variant for draws with no colour target has no colour outputs
       for (uint32_t i = 0; i < 4; ++i)
         a.OpMul(Dest::O(i), S(Oc(i)), Sys(3).Select(i), opt.clamp_ui_output);
-      if (opt.native_hdr_linear && !opt.native_hdr_filter) {
+      if (!opt.no_color_outputs && opt.native_hdr_linear && !opt.native_hdr_filter) {
         // Same operations as the readable HLSL epilogue: bounded, linear UI;
         // original scene grading extended above white, with a hue-preserving
         // shoulder before the UI blend. No expansion of finished SDR pixels.
@@ -3963,7 +3977,7 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
     for (uint32_t i = 0; i < 16; ++i) d.OpDclInputPS(dx::InterpolationMode::kLinear, Dest::V1D(i));
     d.OpDclInputPSSIV(dx::InterpolationMode::kLinearNoPerspective, Dest::V1D(16), dx::Name::kPosition);
     d.OpDclInputPSSGV(Dest::V1D(17, kX), dx::Name::kIsFrontFace);
-    for (uint32_t i = 0; i < 4; ++i) d.OpDclOutput(Dest::O(i));
+    if (!options.no_color_outputs) for (uint32_t i = 0; i < 4; ++i) d.OpDclOutput(Dest::O(i));
     if (out.writes_depth) d.OpDclOutput(Dest::ODepth());
   }
   d.OpDclTemps(g.max_temp);
@@ -3984,7 +3998,8 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
     for (uint32_t i = 0; i < 16; ++i) isgn.push_back({"TEXCOORD", i, dx::Name::kUndefined, CT::kFloat32, i, kXYZW, kXYZW});
     isgn.push_back({"SV_Position", 0, dx::Name::kPosition, CT::kFloat32, 16, kXYZW, kXYZW});
     isgn.push_back({"SV_IsFrontFace", 0, dx::Name::kIsFrontFace, CT::kUInt32, 17, kX, kX});
-    for (uint32_t i = 0; i < 4; ++i) osgn.push_back({"SV_Target", i, dx::Name::kUndefined, CT::kFloat32, i, kXYZW, 0});
+    if (!options.no_color_outputs)
+      for (uint32_t i = 0; i < 4; ++i) osgn.push_back({"SV_Target", i, dx::Name::kUndefined, CT::kFloat32, i, kXYZW, 0});
     if (out.writes_depth) osgn.push_back({"SV_Depth", 0, dx::Name::kUndefined, CT::kFloat32, UINT32_MAX, kX, 0b1110});
   }
 

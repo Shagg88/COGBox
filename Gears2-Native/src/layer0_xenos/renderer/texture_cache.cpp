@@ -4,6 +4,7 @@
 // Ben Vanik and Xenia project contributors. All rights reserved. Redistribution and use in source and binary forms,
 // with or without modification, are permitted under the BSD 3-Clause licence (THIRD_PARTY_NOTICES.md). The rest is our
 // code (MIT).
+#include <xenos/site.h>
 #include <xenos/renderer/texture_cache.h>
 
 #include <xenos/formats.h>
@@ -291,15 +292,20 @@ struct TexturePhases {
 double PhaseMs(std::chrono::steady_clock::time_point t0) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
+// Review 19 Nov #6: these scopes took two clock reads each, several per textured draw, whatever the diagnostics were
+// set to - now only while the renderer's CPU split is on (TextureCache::SetPhaseTiming); the sums stay 0 otherwise.
+bool g_phase_timing = false;
 struct PhaseScope {
   double& acc;
-  std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+  const bool on = g_phase_timing;
+  std::chrono::steady_clock::time_point t0 = on ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   explicit PhaseScope(double& a) : acc(a) {}
-  ~PhaseScope() { acc += PhaseMs(t0); }
+  ~PhaseScope() { if (on) acc += PhaseMs(t0); }
 };
 }  // namespace
 
 namespace xenos::renderer {
+void TextureCache::SetPhaseTiming(bool on) { g_phase_timing = on; }
 namespace {
 
 namespace tx = ::xenos::texture;
@@ -756,6 +762,7 @@ uint32_t TextureCache::IndependentUiMask(uint32_t slots) {
 
 uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t slots_cube, uint32_t slots_3d,
                             uint64_t frame, gpu::TextureView views[96], gpu::SamplerDesc samplers[32]) {
+  XENOS_SITE(2);
   PhaseScope bind_time(stats_.bind_ms);  // 0.4.5 texture-time research
   uint32_t stand_ins = 0;
   last_scaled_mask_ = 0;
@@ -780,6 +787,38 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
     if (sc.valid)
       for (const Entry* se : sc.entries)
         if (se && se->load_failed) slot_load_failed = true;
+    // 19 Nov (review of 12 Nov, P5; job 2106: ~700 slot lookups a frame after ~17 watch-epoch changes a frame): the
+    // slot's result was made at an older epoch - a write or resolve SOMEWHERE since. If its own textures' pages were
+    // not written (the same version test Lookup makes) the result still holds: no map lookups, no sampler and view
+    // rebuild. Anything else (a scaled binding, a stand-in, a failed load, an overlay generation behind, the verify
+    // option, a probed texture, a base whose first page now holds scaled data) takes the full path as before.
+    if (sc.valid && !slot_load_failed && sc.kinds == kinds && sc.epoch != epoch && !sc.scaled && !sc.stand_ins &&
+        probe_bases_.empty() && std::memcmp(sc.tf, tf, sizeof(sc.tf)) == 0 &&
+        REXCVAR_GET(gow2_renderer_texture_verify_frames) <= 0) {
+      bool same = Bits(tf[0], 0, 2) == 2;
+      for (uint32_t kind = 0; kind < 3 && same; ++kind) {
+        if (!((kinds >> kind) & 1)) continue;
+        Entry* e = sc.entries[kind];
+        if (!e || !e->texture || !e->failure.empty() || e->load_failed || e->overlay_gen != ov_gen) {
+          same = false;
+        } else if (kind == 0 && scale_ > 1 && scaled_lookup_ && scaled_load_ &&
+                   watch_.ScaledCurrent(((Bits(tf[1], 12, 20) << 12) & 0x1FFFFFFFu) >> GuestWatch::kPageShift)) {
+          same = false;  // a resolve wrote scaled data at its base: LookupScaled decides
+        } else if (e->callbacks_at_check != epoch) {
+          if (watch_.Version(e->base_start, e->base_length) + watch_.Version(e->mip_start, e->mip_length) != e->version) {
+            same = false;
+          } else {
+            e->callbacks_at_check = epoch;
+            e->checked_frame = frame;
+            ++stats_.lookup_version_hits;
+          }
+        }
+      }
+      if (same) {
+        sc.epoch = epoch;
+        ++stats_.slot_revalidated;
+      }
+    }
     if (sc.valid && !slot_load_failed && sc.kinds == kinds && sc.epoch == epoch && std::memcmp(sc.tf, tf, sizeof(sc.tf)) == 0) {
       samplers[k] = sc.sampler;
       for (uint32_t kind = 0; kind < 3; ++kind)
@@ -926,6 +965,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
     if (probe) Probe(r, tf, frame, what);
     return r;
   };
+  XENOS_SITE(2);
   PhaseScope lookup_time(stats_.lookup_ms);  // 0.4.5 texture-time research
   ++stats_.lookups;  // patch 0137
   auto it = entries_.find(key);
@@ -1125,6 +1165,7 @@ void TextureCache::Probe(const Entry& e, const uint32_t* tf, uint64_t frame, con
 }
 
 TextureCache::Entry* TextureCache::LookupScaled(const uint32_t* tf) {
+  XENOS_SITE(2);
   const uint32_t format = Bits(tf[1], 0, 6), endian = Bits(tf[1], 6, 2);
   const uint32_t dim = Bits(tf[5], 9, 2);
   const bool tiled = Bits(tf[0], 31, 1), stacked = Bits(tf[1], 10, 1), packed = Bits(tf[5], 11, 1);
@@ -1517,6 +1558,7 @@ void TextureCache::FailLoad(Entry& e, gpu::TextureHandle tex, bool created, cons
 }
 
 void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
+  XENOS_SITE(2);
   PhaseScope phase_load(g_phase.load);  // job 299
   PhaseScope load_time(stats_.load_ms);  // 0.4.5 texture-time research
   ++g_phase.loads;
@@ -1601,7 +1643,20 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   const std::filesystem::path* pack_file = nullptr;  // texture packs
   std::shared_ptr<const std::vector<uint8_t>> swap_overlay_holder;
   const std::vector<uint8_t>* swap_overlay = nullptr;  // job 629
-  if ((g_swap.On() || e.has_overlay || e.ov_scale > 1 || !e.overlay_variants.empty()) &&
+  // 19 Nov (speed study, job 2108: Load was 6.5% of the renderer thread for ~4 reloads a frame): a texture whose
+  // pages ALL hold what our GPU wrote last (a resolve the game samples) is no replacement / overlay / pack / dump
+  // candidate - its CPU bytes are not its content (r95 M2 below already says so for packs) - so its megabytes are not
+  // hashed on every reload (1280x720x4 = 3.7 MB each time).
+  bool all_gpu_written = false;
+  if (g_swap.On() && !e.has_overlay && e.ov_scale <= 1 && e.overlay_variants.empty()) {
+    const uint32_t len = std::max(layout.base.level_data_extent_bytes, 1u);
+    all_gpu_written = true;
+    for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + len - 1) >> GuestWatch::kPageShift && all_gpu_written; ++p)
+      all_gpu_written = watch_.GpuCurrent(p);
+    if (all_gpu_written) ++stats_.swap_hash_skipped_gpu;
+  }
+  XENOS_SITE(2);
+  if (!all_gpu_written && (g_swap.On() || e.has_overlay || e.ov_scale > 1 || !e.overlay_variants.empty()) &&
       gd == tx::Dimension::k2DOrStacked && layers == 1 && host_kind == 0) {
     swap_hash = XXH3_64bits(guest_ + base, std::max(layout.base.level_data_extent_bytes, 1u));
     rex_hash = ComputeRexTextureHash(swap_hash, w, h, layers, pitch_div_32, format, endian, dim, tiled, packed,
@@ -1656,6 +1711,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       if (!resolved) pack_dump = g_swap.pack_dumped.insert(rex_hash).second;
     }
   }
+  XENOS_SITE(2);
   if (swap_hash) {  // PR117 fix: remember what this content is, so a generation bump needs no rehash to skip it
     e.swap_checked = true;
     e.prompt_known = swap_overlay != nullptr || prompt::IsPromptAtlasOrAlias(swap_hash) || prompt::IsPromptAtlasOrAlias(rex_hash);

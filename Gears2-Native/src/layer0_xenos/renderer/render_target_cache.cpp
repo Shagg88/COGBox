@@ -34,8 +34,9 @@ std::string RenderTarget::Describe() const {
 }
 
 RenderTarget* RenderTargetCache::Find(const RenderTargetKey& key) {
+  const uint32_t scale = ScaleFor(key);  // review 19 Nov #5: once, not per target
   for (auto& t : targets_)
-    if (t->key == key && t->scale == ScaleFor(key)) return t.get();  // patch 0141: the twin at the phase scale
+    if (t->scale == scale && t->key == key) return t.get();  // patch 0141: the twin at the phase scale
   return nullptr;
 }
 
@@ -234,6 +235,13 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
     ++fast_hits_;
     return;
   }
+  RenderTarget::OwnedCache& cc = target.clean[bi];
+  if (!traced && !take_ownership && cc.valid && cc.epoch == book_epoch_[bi] && c0 >= cc.c0 && c1 <= cc.c1 &&
+      r0 >= cc.r0 && r1 <= cc.r1 && tile_limit <= cc.limit) {
+    ++fast_hits_;
+    return;
+  }
+  bool foreign = false;
   ++slow_claims_;
   bool changed = false;
   const uint32_t tile_mask = edram::TileMask();   // read once: the stores below could alias the global
@@ -275,6 +283,7 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
       if (traced && trace_tiles_->test(tile))
         trace_fn_(tile, rel, book, o ? FindById(o) : nullptr, target, take_ownership);
       if (o && o != target.id) {
+        foreign = true;
         if (o != run_owner) {
           flush();
           run_owner = o;
@@ -316,13 +325,16 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
       span(target, c0, c1, r0, r1, tile_limit, &first, &len);
       for (auto& other : targets_) {
         if (other.get() == &target) continue;
-        RenderTarget::OwnedCache& o2 = other->owned[bi];
-        if (!o2.valid) continue;
-        uint32_t f2 = 0, l2 = 0;
-        span(*other, o2.c0, o2.c1, o2.r0, o2.r1, o2.limit, &f2, &l2);
-        if (len && l2 && (inside(first, f2, l2) || inside(f2, first, len))) {
-          o2.valid = false;
-          ++targeted_invalidations_;
+        // both fast-path caches of the other target: the tiles it owns, and (speed study) the rectangle it found free
+        // of other owners
+        for (RenderTarget::OwnedCache* o2 : {&other->owned[bi], &other->clean[bi]}) {
+          if (!o2->valid) continue;
+          uint32_t f2 = 0, l2 = 0;
+          span(*other, o2->c0, o2->c1, o2->r0, o2->r1, o2->limit, &f2, &l2);
+          if (len && l2 && (inside(first, f2, l2) || inside(f2, first, len))) {
+            o2->valid = false;
+            ++targeted_invalidations_;
+          }
         }
       }
     }
@@ -333,6 +345,8 @@ void RenderTargetCache::MarkWritten(RenderTarget& target, const PixelRect& pixel
   } else if (take_ownership) {
     oc.valid = false;  // a clear-known write: a later plain write must reset those tiles' clear state
   }
+  // A look that found no other owner: true for every range inside this one until a book changes (the epoch).
+  if (!take_ownership && !foreign && !traced) cc = {true, book_epoch_[bi], c0, c1, r0, r1, tile_limit};
 }
 
 void RenderTargetCache::ForEachOverlap(uint32_t first_tile, uint32_t tile_count, const RenderTarget* except,

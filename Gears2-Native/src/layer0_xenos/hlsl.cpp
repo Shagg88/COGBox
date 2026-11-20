@@ -1520,7 +1520,7 @@ Translation TranslateToHlsl(const Program& program, const HlslOptions& options) 
     s += "  xe_opos.xyz = xe_opos.xyz * xe_ndc_scale.xyz + xe_ndc_offset.xyz * xe_opos.w;\n";
     s += "  XeVsOut o;\n  [unroll] for (uint k = 0; k < 16u; ++k) o.interp[k] = xe_o[k];\n  o.position = xe_opos;\n  return o;\n";
   } else {
-    s += "  if (!xe_alpha_test(xe_oc[0].w)) discard;\n";
+    if (!options.no_alpha_test) s += "  if (!xe_alpha_test(xe_oc[0].w)) discard;\n";  // review 19 Nov #12
     s += "  XePsOut o;\n";
     s += "  o.color0 = xe_oc[0] * xe_color_exp_scale.x;\n  o.color1 = xe_oc[1] * xe_color_exp_scale.y;\n";
     s += "  o.color2 = xe_oc[2] * xe_color_exp_scale.z;\n  o.color3 = xe_oc[3] * xe_color_exp_scale.w;\n";

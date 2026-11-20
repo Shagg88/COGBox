@@ -5,13 +5,17 @@
 // At the end: per-thread CPU time over the window (GetThreadTimes) and, per busy thread, the top functions by own
 // samples and by inclusive samples, names from the PDB (DbgHelp). Logged as "gow2_profile:" lines.
 #include <xenos/dev_tools.h>
+#include <xenos/site.h>
 
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
+#include <rex/runtime.h>
+#include <rex/system/function_dispatcher.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -62,6 +66,8 @@ struct Tracked {
 };
 
 std::vector<Range> g_modules;
+std::unordered_map<uint32_t, uint64_t> g_site_samples;  // renderer thread: samples per XENOS_SITE
+uint64_t g_site_total = 0;
 
 bool InModule(uint64_t pc) {
   for (const Range& r : g_modules)
@@ -134,18 +140,49 @@ std::string ThreadName(HANDLE h) {
 
 uint64_t FileTime100ns(const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; }
 
+// 19 Nov (speed study): the game's own code has no PDB names in a packaged build ("gow2.exe!?" for a whole thread).
+// The recompiled functions are named by their guest address instead: host function start (the unwind table) ->
+// "guest sub_XXXXXXXX"; other code of the exe is named by the start of its function ("gow2.exe+RVA").
+std::unordered_map<uint64_t, uint32_t> g_guest_by_host;
+void LoadGuestFunctions() {
+  if (!g_guest_by_host.empty()) return;
+  rex::Runtime* rt = rex::Runtime::instance();
+  auto* d = rt ? rt->function_dispatcher() : nullptr;
+  if (!d) return;
+  for (uint32_t a = 0x82000000u; a < 0x84000000u; a += 4)
+    if (auto* f = d->GetFunction(a)) g_guest_by_host.emplace(uint64_t(reinterpret_cast<uintptr_t>(f)), a);
+  REXLOG_INFO("gow2_profile: {} recompiled functions named by guest address", g_guest_by_host.size());
+}
+std::string ExeSymbol(uint64_t addr, const char* module) {
+  DWORD64 base = 0;
+  const RUNTIME_FUNCTION* rf = RtlLookupFunctionEntry(DWORD64(addr), &base, nullptr);
+  char b[64];
+  if (!rf) return std::string(module) + "!?";
+  const uint64_t begin = base + rf->BeginAddress;
+  if (const auto it = g_guest_by_host.find(begin); it != g_guest_by_host.end()) {
+    std::snprintf(b, sizeof(b), "guest sub_%08X", it->second);
+    return b;
+  }
+  std::snprintf(b, sizeof(b), "%s+%llX", module, static_cast<unsigned long long>(begin - base));
+  return b;
+}
+
 std::string Symbol(uint64_t addr) {
   alignas(SYMBOL_INFO) char storage[sizeof(SYMBOL_INFO) + 256] = {};
   auto* sym = reinterpret_cast<SYMBOL_INFO*>(storage);
   sym->SizeOfStruct = sizeof(SYMBOL_INFO);
   sym->MaxNameLen = 255;
   DWORD64 disp = 0;
+  static const uint64_t exe_lo = uint64_t(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)));
+  for (const Range& r : g_modules)
+    if (r.lo == exe_lo && addr >= r.lo && addr < r.hi) return ExeSymbol(addr, "gow2.exe");  // never the PDB (job 2106: a stale one misnamed everything)
   if (SymFromAddr(GetCurrentProcess(), DWORD64(addr), &disp, sym)) return std::string(sym->Name, sym->NameLen);
   for (const Range& r : g_modules) {
     if (addr >= r.lo && addr < r.hi) {
       char path[MAX_PATH] = {};
       GetModuleFileNameA(reinterpret_cast<HMODULE>(uintptr_t(r.lo)), path, MAX_PATH);
       const char* slash = strrchr(path, '\\');
+      if (r.lo == uint64_t(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)))) return ExeSymbol(addr, slash ? slash + 1 : path);
       return std::string(slash ? slash + 1 : path) + "!?";
     }
   }
@@ -274,6 +311,7 @@ void Report(std::vector<Tracked>& threads, double wall_s) {
 void Run(int seconds, int start_swap) {
   while (XenosSwapCount() < uint64_t(start_swap)) Sleep(50);
   LoadModuleRanges();
+  LoadGuestFunctions();
   timeBeginPeriod(1);
   const DWORD self = GetCurrentThreadId();
   std::vector<Tracked> threads;
@@ -303,6 +341,10 @@ void Run(int seconds, int start_swap) {
       uint64_t pc[kFrames];
       int n = 0;
       if (GetThreadContext(t.handle, &ctx)) n = Unwind(ctx, pc);
+      if (t.name.find("GPU Render (ours)") != std::string::npos) {
+        ++g_site_samples[uint32_t(g_xenos_site)];
+        ++g_site_total;
+      }
       ResumeThread(t.handle);
       if (!n) continue;
       uint64_t h = 1469598103934665603ull;
@@ -324,6 +366,16 @@ void Run(int seconds, int start_swap) {
   REXLOG_INFO("gow2_profile: done at swap {} - {} sweeps in {:.1f} s ({:.2f} ms apart)", XenosSwapCount(), sweeps, wall,
               sweeps ? 1000.0 * wall / double(sweeps) : 0.0);
   Report(threads, wall);
+  if (g_site_total) {
+    std::vector<std::pair<uint64_t, uint32_t>> v;
+    for (const auto& [site, n] : g_site_samples) v.push_back({n, site});
+    std::sort(v.rbegin(), v.rend());
+    REXLOG_INFO("gow2_profile: renderer thread by site ({} samples while it was running; tag 1 shadow_renderer.cpp, 2 "
+                "texture_cache.cpp, 3 pm4_shadow.cpp, +8 = inside an occlusion query; a site holds until the next one is passed):", g_site_total);
+    for (size_t i = 0; i < v.size() && i < 80; ++i)
+      REXLOG_INFO("gow2_profile:   [site] {:5.1f}% {}:{}", 100.0 * double(v[i].first) / double(g_site_total), v[i].second >> 16,
+                  v[i].second & 0xFFFFu);
+  }
 }
 
 }  // namespace

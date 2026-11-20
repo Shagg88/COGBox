@@ -4,6 +4,7 @@
 // loop constants), the draw initiator and the active shaders' ucode. Behind --gow2_pm4_shadow=N (summary every N
 // frames, 0 = off). Our code (MIT).
 #include <xenos/dev_tools.h>
+#include <xenos/site.h>
 #include <xenos/display_gamma.h>
 #include <xenos/gpu_system.h>
 #include <xenos/pm4.h>
@@ -414,6 +415,7 @@ class RenderPipe {
     for (;;) {
       std::unique_ptr<Block> b;
       {
+        XENOS_SITE(3);  // waiting for the game's next block
         for (int i = 0; i < kSpin && !queued_.load(std::memory_order_acquire); ++i) _mm_pause();
         std::unique_lock<std::mutex> lock(mutex_);
         if (queue_.empty()) {
@@ -463,7 +465,9 @@ class RenderPipe {
         queued_.store(uint32_t(queue_.size()), std::memory_order_release);
         if (producer_waiting_ && queue_.size() < kMaxQueued / 2) done_cv_.notify_all();
       }
+      XENOS_SITE(3);  // running a block
       RunBlock(*b);
+      XENOS_SITE(3);  // block done (freeing)
       b->items.clear();
       b->changes.clear();
       std::lock_guard<std::mutex> lock(mutex_);
@@ -504,6 +508,7 @@ class RenderPipe {
     for (size_t index = 0; index < b.items.size(); ++index) {
       const Item& it = b.items[index];
       running_item_ = index;
+      XENOS_SITE(3);  // register changes of an item
       for (; c < it.changes_end; ++c) {
         regs.values[b.changes[c].first] = b.changes[c].second;
         BumpConstGen(b.changes[c].first);
@@ -527,7 +532,9 @@ class RenderPipe {
                              uint32_t(it.vs->dwords.size())};
           const XenosUcode p{it.ps->hash, it.ps->dwords.empty() ? nullptr : it.ps->dwords.data(),
                              uint32_t(it.ps->dwords.size())};
+          XENOS_SITE(3);  // dispatch (hub, other observers) until the renderer's first site
           XenosDispatchOurDraw(regs, prim, num_indices, it.d ? &ib : nullptr, major != 0 || prim >= 0x10, v, p);
+          XENOS_SITE(3);  // after the draw returned
           break;
         }
         case kZpd:
@@ -543,7 +550,10 @@ class RenderPipe {
             std::memcpy(regs.values, live_->values, sizeof(regs.values));  // the producer waits right after this
           }
           BumpAllConstGens();
+          XenosTimelineMark(2, kTlRenSwapBegin, false);
           XenosDispatchOurSwap(regs, it.a, it.b, it.c);
+          XenosTimelineMark(2, kTlRenSwapEnd, false);
+          XenosTimelineAdvance(2);
           if (it.snap) {
             XenosRendererRelease();  // as the synced swap's drain did: our deferred guest-memory copies land first
             // The title sees this swap complete now, as with the synced swap. Known differences (review of 0148): an
@@ -743,6 +753,10 @@ class Pm4Execute final : public DrawObserver {
             }
             if (g_pipe) {  // job 173: in order with the draws, on the renderer thread
               PipeChanges();
+              if (is_end && XenosTimelineOn()) {  // speed study: when the GPU thread parses the queries
+                XenosTimelineMark(1, kTlPm4ZpdFirst, true);
+                XenosTimelineMark(1, kTlPm4ZpdLast, false);
+              }
               RenderPipe::Item& it = g_pipe->Add(RenderPipe::kZpd);
               it.a = report;
               it.b = is_end ? 1u : 0u;
@@ -776,6 +790,10 @@ class Pm4Execute final : public DrawObserver {
           }
           env.own_swap = [this, rf, done = s->swap_done, ahead](uint32_t fb, uint32_t w, uint32_t h) {
             FrameLogSwap();  // the frame log's game frame ends here (its GPU-thread waits first)
+            if (XenosTimelineOn()) {  // speed study: the next frame's zero, before this thread waits for the renderer
+              XenosTimelineMark(1, kTlPm4Swap, false);
+              XenosTimelineAdvance(1);
+            }
             if (g_pipe) {  // job 173: the renderer thread presents; we wait for it (a swap is a frame boundary)
               PipeChanges();
               if (ahead) {  // patch 0148: the renderer calls done() itself once it presented
