@@ -5,6 +5,7 @@
 # -Tu6: the Title Update 6 build (build\<Config>-tu6, notes/24) with the extracted update mounted as update:
 #   (--update_data_root=game\tu6\package; the SDK applies its default.xexp to the disc's default.xex at load).
 param([int]$Seconds = 90, [string]$Config = 'RelWithDebInfo', [string]$Gpu = 'xenos', [int]$ShotEvery = 0, [string[]]$Extra = @(), [scriptblock]$Yield = $null, [switch]$Tu6)
+$Tu6 = $true   # 0.6.6: Title Update 6 is the only version built (the disc version is gone)
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 

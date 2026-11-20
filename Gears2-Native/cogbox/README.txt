@@ -2,7 +2,7 @@ COGBox - Gears of War native PC ports
 =====================================
 
 COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
-Judgment. This README is for COGBox 0.6.5.
+Judgment. This README is for COGBox 0.6.6.
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project. COGBox isn't affiliated with Microsoft, Epic Games or The
 Coalition.
@@ -34,7 +34,7 @@ What you need
 
 Getting started
 ---------------
-1. Right-click COGBox-0.6.5.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
+1. Right-click COGBox-0.6.6.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
    7-zip.org) to a folder of its own that you can write to, for example C:\Games\COGBox. Don't start
    COGBox from inside the archive, and don't use Program Files (Windows protects it) - COGBox tells
    you on start-up if it's in such a place.
@@ -65,6 +65,28 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 Alt+Enter in the game window switches between windowed and borderless full screen (all four games; another key:
 --bind_cogbox_fullscreen=<key> in extra-args.txt, None = off).
+
+
+New in 0.6.6
+------------
+- FASTER DRAWING IN ALL FOUR GAMES: the renderer's speed work (pixel shaders without an unused alpha test, less
+  per-texture work, cheaper vertex and front-buffer copies) is now on for everyone. (Measured gains are listed in
+  CHANGES.md once the 0.6.5 comparison has been run.)
+- Upscalers at 32:9 and wider: FSR / DLSS / SMAA T2x now start (they never started on a 32:9 screen with Ultrawide on).
+- Ambient occlusion is one switch, Default or On. On is the modern version at half resolution: about half the cost
+  it had, with a picture that is hard to tell apart.
+- DLSS: a lighter model on RTX 20 / 30 cards for Performance and Ultra Performance.
+- Gears 1: "Skip the intro logos" now skips the Epic logo too.
+- Gears 2: pre-rendered films follow the Voice language.
+- Judgment: ultrawide menus and pages are sized to the picture.
+- Frame generation is not offered on graphics with under 3.5 GB of their own memory (it could not keep up there).
+- Screenshots work when the Pictures folder has letters outside your Windows language.
+- System Link is no longer labelled experimental.
+- Removed: Intel XeSS and XeSS frame generation (a saved XeSS choice becomes SMAA, a saved XeSS frame generation
+  becomes AMD FSR frame generation), the second ambient-occlusion method (CACAO), the "Match my monitor" render
+  resolution (a saved one becomes the nearest whole-number scale) and the "Game version" choice (title updates
+  have been required since 0.4.0).
+- Hungarian translation update (thanks hevesij).
 
 
 New in 0.6.5

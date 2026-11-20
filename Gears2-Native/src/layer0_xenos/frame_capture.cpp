@@ -33,6 +33,12 @@
 #include <vector>
 #include <memory>
 
+// 0.6.6 (review 20 Nov): a path for the log as UTF-8. path.string() converts through the ANSI code page on Windows and
+// THROWS for a letter outside it - on the worker thread that ended the game right after the picture was saved.
+static std::string PathUtf8(const std::filesystem::path& path) {
+  const auto u8 = path.u8string();
+  return std::string(u8.begin(), u8.end());
+}
 // 0.6.6: PNG through a wide-path FILE (stb's own writer opens a narrow path, which fails for names outside the code page).
 static bool WritePngWide(const std::filesystem::path& path, int w, int h, const uint8_t* rgb) {
 #ifdef _WIN32
@@ -92,7 +98,7 @@ class FrameCapture final : public DrawObserver {
     ++*in_flight_;
     std::thread([count = in_flight_, rgb = std::move(rgb), width, height, path]() {
       if (!WritePngWide(path, int(width), int(height), rgb.data()))
-        REXLOG_WARN("gow2_frame_shots: could not write {}", path.string());
+        REXLOG_WARN("gow2_frame_shots: could not write {}", PathUtf8(path));
       --*count;
     }).detach();
   }
@@ -148,7 +154,7 @@ class Screenshot final : public DrawObserver {
       path = dir / (game_ + "-" + stamp + "-" + std::to_string(i) + ".png");
     std::thread([rgb = std::move(rgb), width, height, path]() {
       const bool ok = WritePngWide(path, int(width), int(height), rgb.data());
-      REXLOG_INFO("cogbox_screenshot: {} {} ({}x{})", ok ? "saved" : "could not save", path.string(), width, height);
+      REXLOG_INFO("cogbox_screenshot: {} {} ({}x{})", ok ? "saved" : "could not save", PathUtf8(path), width, height);
     }).detach();
   }
   std::string game_ = "game";
@@ -209,6 +215,6 @@ void XenosInstallFrameCaptureIfRequested() {
   const uint64_t last = uint64_t(std::max(REXCVAR_GET(gow2_frame_shots_last), 0));
   static FrameCapture capture(every, dir, first, last);  // lives until exit, as the observer contract requires
   XenosRegisterDrawObserver(&capture);
-  REXLOG_INFO("gow2_frame_shots: every {} frames into {}{}", every, dir.string(),
+  REXLOG_INFO("gow2_frame_shots: every {} frames into {}{}", every, PathUtf8(dir),
               last ? " (frames " + std::to_string(first) + "-" + std::to_string(last) + ")" : std::string());
 }

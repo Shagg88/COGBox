@@ -128,7 +128,7 @@ Plans, not promises:
   with NVIDIA FLIP, and unit tests.
 - Credits: the [Xenia](https://xenia.jp) project and its Canary / Edge forks, whose open code and research made the
   renderer's exact rules possible; the community Gears patches (ultrawide by boma and TudorHorse) ported as switches;
-  Xenia Manager's x360db for artwork; AMD, NVIDIA and Intel for their upscalers.
+  Xenia Manager's x360db for artwork; AMD and NVIDIA for their upscalers.
 
 Repository layout: `src/` the port and shared renderer (layer 0-3), `cogbox/` the launcher, `tools/` build and test
 scripts. Building it yourself needs your own game copy, the toolchain in `docs/building.md` (repository root) and

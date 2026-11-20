@@ -566,12 +566,6 @@ std::vector<Option> make_options(Game g) {
     add(make("SkipLogos", "Skip the intro logos", Tab::Gameplay, Kind::Bool, PG, 0,
              "Starts at the title screen without the publisher / studio logo films. The loading film and cutscenes still play.", 326),
         "skiplogos");
-    // --gow2_patch_skip_coalesced_check (game_patches.cpp): edited Coalesced (engine .ini) files load without the
-    // dirty-disc error. Gears 2 only (the patch is only ported there); for mods and testing.
-    add(make("SkipCoalescedCheck", "Skip Coalesced*.bin check", Tab::Gameplay, Kind::Bool, PG, 0,
-             "For mods and testing: the game's config bundle (Coalesced, its engine .ini files) is not hash-checked at "
-             "load, so edited copies load without the dirty-disc error. Leave it off unless a mod or a test needs it.", 0),
-        "skipcoalescedcheck");
     // insane050 (Shagg, 0.5.0): Insane is unlocked from the start in all four games; this setting (off) brings back the
     // original rule. GitHub #174 (Flippage's Gears 3 recomp, 26d6448): the menus see Insane unlocked; the profile is untouched
     add(make("OriginalUnlocks", "Original unlock rules", Tab::Gameplay, Kind::Bool, OWN, 0,
@@ -670,6 +664,9 @@ bool cap_exe(const Environment& e, const std::string& n) {
     if (n == "gow2_horde_bots" && e.cap.exe_has && e.cap.exe_has("GitHub #237 (francoissubke-blip's tip")) return true;
     // review 20 Nov: "gow2_ao_half" is as short as those - the start of its description is searched as well
     if (n == "gow2_ao_half" && e.cap.exe_has && e.cap.exe_has("XeGTAO at half resolution (test, Shagg 20 Nov)")) return true;
+    // review 20 Nov: the native HDR switches of Judgment and Gears 1 are 15-letter names too
+    if (n == "gowj_hdr_native" && e.cap.exe_has && e.cap.exe_has("Opt in to experimental native HDR grading and post-scene FXAA")) return true;
+    if (n == "gow1_hdr_native" && e.cap.exe_has && e.cap.exe_has("Opt in to experimental native HDR grading and motion blur")) return true;
     return e.cap.exe_has && e.cap.exe_has(n);
 }
 bool cap_rt(const Environment& e, const std::string& n) { return e.cap.runtime_has && e.cap.runtime_has(n); }
@@ -924,9 +921,6 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no mip-fade setting - its sharper textures already show at once.");
     } else if (f == "aniso") {
         if (g == Game::Gears1 && !cap_exe(env, "gow1_aniso16")) return no(not_yet(gi, "needs its next build"));
-    } else if (f == "skipcoalescedcheck") {   // --gow2_patch_skip_coalesced_check: the patch is only ported to Gears 2
-        if (g != Game::Gears2) return no("Gears 2 only.");
-        if (!cap_exe(env, "gow2_patch_skip_coalesced_check")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "texcache") {   // 0.6.4 (GitHub #341): layer 0's cvar, in every game's exe
         if (!cap_exe(env, "gow2_renderer_texture_cache_mb")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "pool") {
@@ -1308,6 +1302,9 @@ Availability wine_choice_available(const Option& o, int index, const Environment
     if (o.id == "Fullscreen" && index == 2) {
         a.ok = false;
         a.why = "Not under Proton / Wine: the Linux desktop or the Steam Deck's Game Mode owns the screen, so borderless fullscreen is used.";
+    } else if (o.id == "FrameGen" && index == k_fgDropped) {   // review 20 Nov: a dropped choice is never available
+        a.ok = false;
+        a.why = "No longer offered.";
     } else if (o.id == "AAMode" && index == 3 && !icase_search(gpu_main(env), "RTX")) {
         a.ok = false;
         a.why = "Needs an NVIDIA RTX graphics card with NVIDIA's own driver.";
@@ -1797,6 +1794,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         bool hasRtx = false;
         for (const std::string& n : gpus) if (icase_search(n, "RTX")) hasRtx = true;
         if (aa == 3 && !hasRtx && !gpus.empty()) { notes.push_back("launcher: DLSS needs an NVIDIA RTX card (" + gpu_main(env) + ") - FSR instead"); aa = 2; }
+        if (aa == 4) aa = 1;   // review 20 Nov: the dropped upscaler (a raw 4 from the in-game menu) is SMAA
         static const char* const need[5] = { "", "", "amd_fidelityfx_loader_dx12.dll", "nvngx_dlss.dll", "" };
         if (aa == 5 && ((g != Game::Gears2 && g != Game::Gears3) || !cap_exe(env, "smaa_t2x"))) {   // notes/80 s.7: ours, in the Gears 2 exe from 0.3.x
             notes.push_back("launcher: SMAA T2x is not in this game / build - SMAA instead"); aa = 1;
@@ -1932,8 +1930,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (realOcclusion) a.push_back("--gow2_renderer_queries=strict");
     // 0.6.6 speed set (Shagg 20 Nov: "all four gears games need to have the same speed up gears 2 has"): the speed
     // study's renderer switches, which took Gears 2 chapter 9 at 1440p from about 8 ms a frame to about 5 (jobs 2146 /
-    // 2161: 5.04 / 4.96 ms). They are opt-in in the shared renderer, so without these arguments no player gets them.
-    // Each is passed only when the exe has it. Pictures were checked in Gears 2 (pause menu and gameplay); Gears 1,
+    // 2161: 5.04 / 4.96 ms). Since 0.6.6 they are also the renderer's own defaults; passing them keeps an exe built
+    // before that fast too. Each is passed only when the exe has it. (Not the fused scaled resolve: Shagg, 14 Nov.) Pictures were checked in Gears 2 (pause menu and gameplay); Gears 1,
     // Gears 3 and Judgment still need their picture check in a gameplay run before a release.
     {
         const bool vk = runs_vulkan(s, env);
@@ -1942,7 +1940,6 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             { "gow2_renderer_tex_post_skip", "--gow2_renderer_tex_post_skip=true" },
             { "gow2_renderer_tex_frac16", "--gow2_renderer_tex_frac16=false" },
             { "gow2_renderer_ps_r21", "--gow2_renderer_ps_r21=false" },
-            { "gow2_renderer_fused_scaled_resolve", "--gow2_renderer_fused_scaled_resolve=true" },
             { "gow2_renderer_vertex_watch_min_bytes", "--gow2_renderer_vertex_watch_min_bytes=256" },
             { "gow2_renderer_front_copy_lean", "--gow2_renderer_front_copy_lean=true" },
         };
@@ -1972,8 +1969,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (avail("SoftShadows") && s.i("SoftShadows") >= 1) a.push_back(s.i("SoftShadows") == 2 ? "--gow2_pcss=ultra" : "--gow2_pcss=high");
     // PS1 858: 16x anisotropic
     if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : isG1 ? "--gow1_aniso16=true" : "--gowj_aniso16=true");
-    // --gow2_patch_skip_coalesced_check (game_patches.cpp): edited Coalesced files load without the dirty-disc error
-    if (on("SkipCoalescedCheck")) a.push_back("--gow2_patch_skip_coalesced_check=true");
+    // (0.6.6: no "Skip Coalesced*.bin check" box - --gow2_patch_skip_coalesced_check is on by default in the game, so
+    // the box changed nothing whether ticked or not; edited Coalesced files load in Gears 2 either way.)
     // PS1 860-864: texture pool (-1 = the port's own default; Judgment then 200)
     if (avail("Pool")) {
         int mb = k_poolMb[std::max(0, std::min(3, s.i("Pool")))];

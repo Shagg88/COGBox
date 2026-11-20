@@ -1,5 +1,49 @@
 # COGBox changes
 
+## 0.6.6
+
+Everything worked on since 0.6.5. **Speed first:** the renderer's speed work is now on for every player, in all four
+games.
+
+> Performance table: to be filled in from the 0.6.5 comparison run (one job per game, the same route, 0.6.5 against
+> 0.6.6 back to back). No numbers are quoted here until that run has been made.
+
+- **Faster drawing, all four games.** Pixel shaders without the alpha test when a draw does not use it (the graphics
+  card keeps its early depth rejection), texture fetches that skip post-processing they do not need, no 16-bit filter
+  rounding, 21-bit maths rounding in vertex shaders only, small vertex ranges copied only when they change, a leaner
+  front-buffer copy, and on DirectX 12 the gamma pass feeding SMAA directly. These were test switches until now; they
+  are the defaults in 0.6.6, each with a switch to turn it back off.
+- **Upscalers at 32:9 and wider** (#399): FSR, DLSS and SMAA T2x never started when the picture was lower than 512
+  rows (32:9 draws 1280x360). The limit now follows the picture.
+- **Ambient occlusion: Default or On.** One switch replaces the list. On is XeGTAO (high) at half resolution - about
+  half the cost of full resolution, with a picture that is hard to tell apart. A saved Off becomes Default; a saved
+  Ultra or CACAO becomes On.
+- **DLSS:** model K for Performance and Ultra Performance on RTX 20 / 30 cards (lighter than NVIDIA's newest models
+  there).
+- **Gears 1:** "Skip the intro logos" also ends the Epic logo (#400).
+- **Gears 2:** pre-rendered films follow the Voice language (#375); edited Coalesced files load without the
+  dirty-disc error (#392, #393 - always on, no launcher box).
+- **Gears 3:** DLSS / FSR upscale the finished scene, and object motion is matched by object rows (PR #379, gmihaic).
+- **Judgment:** ultrawide scene targets follow the picture's height (#396).
+- **HDR:** more SDR fallbacks (PR #380, legoliamneeson).
+- **Frame generation** is not offered on graphics with under 3.5 GB of their own video memory (#397).
+- **Screenshots and frame shots** are written by their full Unicode path (a Pictures folder with letters outside the
+  Windows code page).
+- **Launcher:** System Link is no longer labelled experimental; long labels wrap beside their control (PR #381,
+  Flippage); Hungarian translation update (#390, hevesij); the in-game menu no longer lists choices that were dropped.
+- **Removed:**
+  - Intel XeSS and XeSS frame generation. A saved XeSS choice becomes SMAA; a saved XeSS frame generation becomes AMD
+    FSR frame generation. Their DLLs are no longer shipped, and the launcher removes them from an older install.
+  - FidelityFX CACAO (the second ambient-occlusion method).
+  - "Match my monitor" as a render resolution (a saved one becomes the whole-number scale it picked).
+  - The "Game version" choice and the disc builds of Gears 2 / Gears 3: title updates have been required since 0.4.0,
+    and Title Update 6 is now the only version built.
+- **Experimental, off by default:** true 1080p - the game itself draws 1920x1080 - in all four games
+  (`--gow2_native_lines=1080`, `--gow3_native_lines`, `--gowj_native_lines`, `--gow1_native_lines`, each with
+  `--gow2_renderer_edram_extended=true`). Run in Gears 2 only so far; not offered in the launcher.
+- **Notices:** the XeGTAO, SMAA, stb_dxt and native mouse look licence texts are in `THIRD_PARTY_NOTICES.md`; Intel's
+  terms are gone with XeSS.
+
 ## 0.6.5
 
 **The big one: shaders.** COGBox 0.6.5 rebuilds how the games' shaders are translated, kept and built, and you feel it

@@ -37,7 +37,7 @@ def in_code(v):
 starts = set()
 for f in glob.glob(os.path.join(root, 'generated', 'default', 'gow3_recomp.*.cpp')):
     starts.update(int(m, 16) for m in re.findall(r'^DEFINE_REX_FUNC\(sub_([0-9A-F]{8})\)', open(f, encoding='utf-8', errors='replace').read(), re.M))
-manifest_hints = {int(m, 16) for m in re.findall(r'^0x([0-9A-Fa-f]{8})\s*=', open(os.path.join(root, 'gow3_manifest.toml')).read(), re.M)}
+manifest_hints = {int(m, 16) for m in re.findall(r'^0x([0-9A-Fa-f]{8})\s*=', open(os.path.join(root, 'gow3_manifest_tu6.toml')).read(), re.M)}
 if ignore_manifest:
     starts -= manifest_hints   # hinted functions also appear as DEFINE_REX_FUNC; drop them to test the scan blind
 else:

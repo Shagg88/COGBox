@@ -355,3 +355,9 @@ if(GN_BUILD_TESTS)
 endif()
 
 # (Gears 3 also builds gn_census / gn_hlsl_check from its tools folder; not copied yet.)
+
+# 0.6.6: Intel's upscaler DLLs are no longer built in or shipped. A build folder made before that still holds the
+# copies an older build put there; the packager refuses a folder that has them, so every build removes them.
+add_custom_command(TARGET gowj POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -f $<TARGET_FILE_DIR:gowj>/libxess.dll $<TARGET_FILE_DIR:gowj>/libxess_fg.dll $<TARGET_FILE_DIR:gowj>/libxell.dll
+    COMMENT "Removing leftover Intel upscaler DLLs from the build folder")

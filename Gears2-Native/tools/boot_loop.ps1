@@ -4,7 +4,7 @@
 param([int]$MaxRounds = 10, [int]$Seconds = 120)
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
-$manifest = Join-Path $root 'gow2_manifest.toml'
+$manifest = Join-Path $root 'gow2_manifest_tu6.toml'   # 0.6.6: Title Update 6 is the only version
 for ($i = 1; $i -le $MaxRounds; $i++) {
   Write-Host "=== round $i  $(Get-Date -Format s)"
   $run = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tools\run.ps1') -Seconds $Seconds 2>&1

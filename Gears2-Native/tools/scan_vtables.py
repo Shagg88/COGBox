@@ -39,9 +39,9 @@ starts = set()
 init = next((a.split('=', 1)[1] for a in sys.argv[3:] if a.startswith('--init=')), None)   # a gow2_init.cpp: its function table
 if init:
     starts.update(int(m, 16) for m in re.findall(r'\{ 0x([0-9A-F]{8}), sub_', open(init, encoding='utf-8', errors='replace').read()))
-for f in ([] if init else glob.glob(os.path.join(root, 'generated', 'tu6' if tu6 else 'default', 'gow2_recomp.*.cpp'))):
+for f in ([] if init else glob.glob(os.path.join(root, 'generated', 'tu6', 'gow2_recomp.*.cpp'))):
     starts.update(int(m, 16) for m in re.findall(r'^DEFINE_REX_FUNC\(sub_([0-9A-F]{8})\)', open(f, encoding='utf-8', errors='replace').read(), re.M))
-manifest_hints = {int(m, 16) for m in re.findall(r'^0x([0-9A-Fa-f]{8})\s*=', open(os.path.join(root, 'gow2_manifest_tu6.toml' if tu6 else 'gow2_manifest.toml')).read(), re.M)}
+manifest_hints = {int(m, 16) for m in re.findall(r'^0x([0-9A-Fa-f]{8})\s*=', open(os.path.join(root, 'gow2_manifest_tu6.toml')).read(), re.M)}
 if ignore_manifest:
     starts -= manifest_hints   # hinted functions also appear as DEFINE_REX_FUNC; drop them to test the scan blind
 else:

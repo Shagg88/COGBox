@@ -1,6 +1,7 @@
 # Gears2-Native chapter sweep: boot each campaign map straight in (--gow2_launch), run it, screenshot, and record whether
 # it stopped (unregistered function, crash) or survived. Writes out\sweeps\<stamp>\summary.md. One game at a time (D4).
 param([int]$Seconds = 75, [string[]]$Maps = @(), [string[]]$Extra = @(), [switch]$Cpu, [switch]$Tu6)   # -Tu6: the Title Update 6 build with the update mounted (notes/63)
+$Tu6 = $true   # 0.6.6: Title Update 6 is the only version built (the disc version is gone)
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 if ($Cpu) { . (Join-Path $PSScriptRoot 'cpu-report.ps1') }   # every run is also a CPU sample (notes/60)

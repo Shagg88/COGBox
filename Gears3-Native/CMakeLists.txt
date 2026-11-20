@@ -372,3 +372,9 @@ add_executable(gn_census tools/gn_census.cpp ${GN_LAYER0_DIR}/ucode.cpp)
 target_include_directories(gn_census PRIVATE ${GN_LAYER0_DIR}/include)
 add_executable(gn_hlsl_check tools/gn_hlsl_check.cpp ${GN_LAYER0_DIR}/ucode.cpp ${GN_LAYER0_DIR}/hlsl.cpp)
 target_include_directories(gn_hlsl_check PRIVATE ${GN_LAYER0_DIR}/include)
+
+# 0.6.6: Intel's upscaler DLLs are no longer built in or shipped. A build folder made before that still holds the
+# copies an older build put there; the packager refuses a folder that has them, so every build removes them.
+add_custom_command(TARGET gow3 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -f $<TARGET_FILE_DIR:gow3>/libxess.dll $<TARGET_FILE_DIR:gow3>/libxess_fg.dll $<TARGET_FILE_DIR:gow3>/libxell.dll
+    COMMENT "Removing leftover Intel upscaler DLLs from the build folder")

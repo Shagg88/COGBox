@@ -222,7 +222,7 @@ SDK patch `sdk-patch86-vulkan-hdr.diff`, applied after 85, requests `VK_EXT_swap
 
 ## AA and Vulkan
 
-The PsychoV35 scene uses HLSL-generated DXIL with its matching vertex twin on D3D12, and SPIR-V on Vulkan. Existing bounded Canvas variants retain their DXBC/SPIR-V path. D3D12 GPU range checks cover AA off, SMAA, SMAA T2x, DLSS/DLAA, FSR and including native-size and quality-size vendor upscaling. Vulkan range checks cover AA off, SMAA, SMAA T2x and FSR native/quality. DLSS remains D3D12-only in the existing project.
+The PsychoV35 scene uses HLSL-generated DXIL with its matching vertex twin on D3D12, and SPIR-V on Vulkan. Existing bounded Canvas variants retain their DXBC/SPIR-V path. D3D12 GPU range checks cover AA off, SMAA, SMAA T2x, DLSS/DLAA and FSR, including native-size and quality-size vendor upscaling. Vulkan range checks cover AA off, SMAA, SMAA T2x and FSR native/quality. DLSS remains D3D12-only in the existing project.
 
 `gn_hdrtest d3d12 gears2` and its Vulkan counterpart exercise 36 authored scene inputs, four curve parameters, four peak ranges and four fades. They test original diffuse/shadows, Oklab hue, continuous highlight transitions, HDR headroom without forced early peak, negative/FP16 inputs, black grading and exact fades. Empty-blur cases require the valid central scene to match its control pixel, including HDR colors. Real 3D LUT fixtures cover all six tetrahedra, centres/corners/edge clamps, nonlinear interpolation and analytic tangent identity/continuity. The captured scene profiles also create FP16 pipelines on both APIs. These checks do not establish full-game coverage or motion quality.
 

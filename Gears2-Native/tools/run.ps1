@@ -2,6 +2,7 @@
 # Gears2-Native unattended run: start gow2.exe at high priority, let it run for -Seconds, close it, and collect
 # the log into out\runs\<stamp>\. Unattended only when the user is away or says so (D4); one game at a time; high priority (R13).
 param([int]$Seconds = 90, [string]$Config = 'RelWithDebInfo', [string]$Gpu = 'xenos', [int]$ShotEvery = 0, [string[]]$Extra = @(), [switch]$Tu6, [string]$LogLevel = 'info')
+$Tu6 = $true   # 0.6.6: Title Update 6 is the only version built (the disc version is gone)
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 

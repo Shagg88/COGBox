@@ -184,8 +184,10 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_canary_maths, true, "Gears2",  // job 634
                     "of all 3,423 shaders of a Judgment run on the same inputs: the same values everywhere but a "
                     "denormal passed through instead of flushed (0x00000001 for 0) in 7 vertex shaders");
 // 0.6.6 (Shagg 20 Nov: "Why would we turn speed up switches off? Ever?"): the speed study's switches are ON by default -
-// tex_post_skip, ps_no_alpha_variant, tex_frac16 = false, ps_r21 = false here; fused_scaled_resolve, front_copy_lean,
-// present_gamma_to_smaa and vertex_watch_min_bytes = 256 further down. Together: Gears 2 chapter 9 at 1440p about
+// tex_post_skip, ps_no_alpha_variant, tex_frac16 = false, ps_r21 = false here; front_copy_lean, present_gamma_to_smaa
+// and vertex_watch_min_bytes = 256 further down. NOT gow2_renderer_fused_scaled_resolve: Shagg's decision of 14 Nov
+// ("Do not change gow2_renderer_fused_scaled_resolve's default") stands - it measured no real gain (5.84 -> 5.79 ms)
+// and its depth copies differed slightly at 4K (job 238); Gears 1 keeps its own setting (gow1_app.h). Together: Gears 2 chapter 9 at 1440p about
 // 8 ms -> 5 ms a frame (jobs 2146 / 2161). Each keeps its switch only as a way back if one breaks a picture in one
 // game. Pictures checked in Gears 2; Gears 1, Gears 3 and Judgment still to be checked in a gameplay run.
 REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_skip, true, "Gears2",
@@ -916,7 +918,7 @@ REXCVAR_DEFINE_INT32(gow2_renderer_texture_stale_log, 0, "Gears2",
                      "Job 150 diagnostic: log textures that stayed unchanged for N frames and then got new bytes, with "
                      "our recent resolves that overlap them (0 = off; first 400 events)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_front_copy_lean, true, "Gears2",
-                    "Speed study (opt-in, to be picture-checked): the front buffer's resolve skips its copy into the "
+                    "Speed study (on by default since 0.6.6; picture-checked in Gears 2): the front buffer's resolve skips its copy into the "
                     "scaled-memory window and into guest memory when our presenter shows the frame (it reads the scaled "
                     "destination). Wrong if the game samples its own front buffer as a texture");
 REXCVAR_DEFINE_BOOL(gow2_present_gamma_to_smaa, true, "Gears2",
@@ -971,7 +973,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_float_constants_trim, true, "Gears2",
                     "Upload only the float constants each shader can read (false: all 256 per stage, as before)");
 REXCVAR_DEFINE_STRING(gow2_upscaler, "off", "Gears2",
                       "Temporal anti-aliasing / upscaling of the 3D scene (notes/64): off, dlss (NVIDIA DLSS / DLAA, RTX "
-                      "GPUs), or fsr (AMD FSR, any GPU). Runs on the "
+                      "GPUs) or fsr (AMD FSR, any GPU). Runs on the "
                       "lit scene before the game's post-processing, with "
                       "camera jitter and motion vectors from depth; native-resolution AA at the render scale for now");
 REXCVAR_DEFINE_DOUBLE(gow2_upscale_sharpness, 0.0, "Gears2", "FSR's own sharpening, 0..1 (DLSS ignores it)");
@@ -1270,7 +1272,7 @@ REXCVAR_DEFINE_INT32(gow2_renderer_fused_scaled_kinds, 3, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_const_gen_skip, true, "Gears2",
                     "Job 240 (default on since job 249; shots identical in ch10 / ch02): skip the float-constant compare and copy for a draw when no register write reached the "
                     "VS / PS float constants since that slot's last upload (render-pipe generation counters)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_fused_scaled_resolve, true, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_fused_scaled_resolve, false, "Gears2",
                     "Job 238: the resolve shaders' scaled pass writes straight into the scaled-memory windows (one pass "
                     "per window), skipping the scaled destination texture and the copy from it. Front-buffer copies keep "
                     "the old path (the presenter reads the scaled destination)");

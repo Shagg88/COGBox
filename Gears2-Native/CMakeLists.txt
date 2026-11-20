@@ -514,3 +514,9 @@ if(WIN32)
     target_link_libraries(gn_pipebench PRIVATE gn_layer0_xenos)
     rexglue_apply_target_settings(gn_pipebench)
 endif()
+
+# 0.6.6: Intel's upscaler DLLs are no longer built in or shipped. A build folder made before that still holds the
+# copies an older build put there; the packager refuses a folder that has them, so every build removes them.
+add_custom_command(TARGET gow2 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -f $<TARGET_FILE_DIR:gow2>/libxess.dll $<TARGET_FILE_DIR:gow2>/libxess_fg.dll $<TARGET_FILE_DIR:gow2>/libxell.dll
+    COMMENT "Removing leftover Intel upscaler DLLs from the build folder")
