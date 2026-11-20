@@ -369,6 +369,18 @@ name = "Gow2UltrawideNoConstrain"
 registers = []
 jump_address_on_true = 0x82532414  # TU6: base 0x8252D69C
 
+# Experiment --gow2_native_lines (game_patches.cpp): the screen width in sub_82816638, at its two stores.
+[[entrypoint.midasm_hook]]
+address = 0x828166F8  # `stw r11,-19644(r10)`: the width when below 1280 (before the store)
+name = "Gow2NativeSceneWidth"
+registers = ["r11"]
+
+[[entrypoint.midasm_hook]]
+address = 0x82816A20  # `li r11,1280`: the width's upper clamp (after it, before its store)
+name = "Gow2NativeSceneWidthMax"
+registers = ["r11"]
+after_instruction = true
+
 # 0x82806B10 `li r11,720`: the scene buffer height (sub_82806A80); f13 holds the aspect factor there.
 [[entrypoint.midasm_hook]]
 address = 0x828166C8  # TU6: base 0x82806B10

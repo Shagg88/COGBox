@@ -397,7 +397,48 @@ void Gow2UltrawideFov(PPCRegister& f0, PPCRegister& f30) {
 
 bool Gow2UltrawideNoConstrain() { return REXCVAR_GET(gow2_ultrawide); }  // jump_address_on_true: the beq is taken
 
+// ---- Experiment (Shagg, 20 Nov): the game draws above 1280x720 itself ------------------------------------------------
+// sub_82816638 (TU6; disc sub_82806A80) sets the screen size the whole renderer follows: it asks the console for the
+// video mode and, whatever that says, makes the height 720 (`li r11,720` at 0x828166C8, stored to 0x830EB348) and the
+// width aspect x 720 clamped to 900..1280 (stored to 0x830EB344 at 0x828166F8, or 1280 at 0x82816A24). A mode above
+// 720 lines is ignored (it falls back to 16:9), so reporting 1080p to the game changes nothing - the two numbers have
+// to be given here. --gow2_native_lines=1080 makes them 1920x1080 (16:9; ultrawide is left alone for now). The
+// console's 10 MiB of EDRAM cannot hold that (colour + depth = 3264 tiles of 2048): it needs
+// --gow2_renderer_edram_extended=true, as Xenia Canary's edram_tile_count = extended. Targets the game's pools cannot
+// hold get their own memory (gow2_rt_pool_grow, GitHub #94). TU6 only so far.
+REXCVAR_DEFINE_INT32(gow2_native_lines, 0, "Gears2",
+                     "Experiment (true 1080p): the game's own screen height in lines, 0 = 720 as on the console. 1080 "
+                     "makes the game draw 1920x1080 itself (width = lines x 16 / 9, a multiple of 8). Needs "
+                     "--gow2_renderer_edram_extended=true. Gears 2 TU6 only; not with --gow2_ultrawide")
+    .range(0, 1440);
+namespace {
+uint32_t Gow2NativeLines() {
+  static const uint32_t lines = [] {
+    const int v = REXCVAR_GET(gow2_native_lines);
+    if (v <= 720 || REXCVAR_GET(gow2_ultrawide)) return 0u;
+    return uint32_t(v + 7) / 8u * 8u;
+  }();
+  return lines;
+}
+uint32_t Gow2NativeWidth() { return (Gow2NativeLines() * 16u / 9u + 7u) / 8u * 8u; }
+}  // namespace
+// 0x828166F8 `stw r11,-19644(r10)` (before it) and 0x82816A20 `li r11,1280` (after it): the screen width.
+void Gow2NativeSceneWidth(PPCRegister& r11) {
+  if (!Gow2NativeLines()) return;
+  static bool logged = false;
+  if (!logged) { logged = true; REXLOG_INFO("gow2_native_lines: screen width {} -> {}", r11.u32, Gow2NativeWidth()); }
+  r11.u64 = Gow2NativeWidth();
+}
+
+void Gow2NativeSceneWidthMax(PPCRegister& r11) { Gow2NativeSceneWidth(r11); }   // the second site (one name per hook)
+
 void Gow2UltrawideSceneHeight(PPCRegister& r11, PPCRegister& f13) {
+  if (Gow2NativeLines()) {
+    static bool logged = false;
+    if (!logged) { logged = true; REXLOG_INFO("gow2_native_lines: screen height {} -> {} (aspect factor {})", r11.u32, Gow2NativeLines(), f13.f64); }
+    r11.u64 = Gow2NativeLines();
+    return;
+  }
   if (!REXCVAR_GET(gow2_ultrawide)) return;
   static bool logged = false;
   if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: scene buffer height {} -> {} (aspect factor {})", r11.u32, Gow2WideHeight(), f13.f64); }
