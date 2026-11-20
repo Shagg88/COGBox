@@ -24,6 +24,10 @@ Gears 2 (and Gears 3 / Judgment) started straight into a chapter with no control
   screenshots show gameplay.
 - Gears 2 `SP_Assault_P` / `SP_Hospital_P` with no pad: pause menu over the level - used ON PURPOSE as a still scene
   for like-for-like cost and picture comparisons; always label those numbers "paused scene".
+- Gears 3 and Judgment TITLE SCREEN: a scripted START (`--gow2_input_script="25:START:0.3, 30:A:0.3, 36:A:0.3"`) does NOTHING - job 2145: the title
+  is up from ~20 s and still there at 100 s, although the log shows the presses sent (the same pad's BACK works in
+  Judgment gameplay). Cause unknown; do not queue another menu run on this until it is understood (try the UE3-layer
+  pad `--cogbox_input_script`, a longer hold, or a later press - in ONE mapping run, with Shagg's OK).
 - Gears 2 title screen: attract mode starts about 2 min 15 s after launch.
 - Loading a given checkpoint slot needs the front end (Campaign > Continue / Load), not `?loadcheckpoint=1`.
 
