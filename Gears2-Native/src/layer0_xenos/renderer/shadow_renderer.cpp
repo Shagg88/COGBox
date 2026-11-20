@@ -191,6 +191,10 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_skip, false, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_ps_no_alpha_from_swap, 0, "Gears2",
                      "Speed study (picture check): with --gow2_renderer_ps_no_alpha_variant, the variant is used only from "
                      "this swap on - a still scene's screenshots before and after it compare the two paths in one run");
+REXCVAR_DEFINE_INT32(gow2_renderer_query_chunk, 0, "Gears2",
+                     "Speed study (opt-in, strict queries): submit the closed occlusion queries to the GPU every N "
+                     "queries (between two queries) instead of once after the whole query section, so the game's first "
+                     "answers land sooner (job 2132: the game waited from before our single submit). 0 = off");
 REXCVAR_DEFINE_BOOL(gow2_renderer_ps_no_colour_variant, false, "Gears2",
                     "Speed study (opt-in, job 2127: 43 such draws a frame cost 0.38 ms of GPU at 2x): a draw that needs its "
                     "pixel shader only for the alpha test, kills or depth (no colour target written) uses a variant "
@@ -1810,6 +1814,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     tex_frac16_ = REXCVAR_GET(gow2_renderer_tex_frac16);
     ps_no_alpha_variant_ = REXCVAR_GET(gow2_renderer_ps_no_alpha_variant);
     ps_no_colour_variant_ = REXCVAR_GET(gow2_renderer_ps_no_colour_variant);
+    query_chunk_ = uint32_t(std::clamp(REXCVAR_GET(gow2_renderer_query_chunk), 0, 4096));
     front_copy_lean_ = REXCVAR_GET(gow2_renderer_front_copy_lean);
     vertex_watch_min_ = uint64_t(std::clamp(REXCVAR_GET(gow2_renderer_vertex_watch_min_bytes), 64, int32_t(kWatchMinBytes)));
     ps_noat_from_swap_ = uint64_t(std::max(REXCVAR_GET(gow2_renderer_ps_no_alpha_from_swap), 0));
@@ -2627,6 +2632,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     uint8_t* report = zpd.report_address ? memory_->TranslatePhysical<uint8_t*>(zpd.report_address) : nullptr;
     if (!zpd.is_end) {
+      // Speed study 19 Nov (--gow2_renderer_query_chunk; job 2132 timeline): the game starts waiting for its answers
+      // ~0.35 ms BEFORE we submit the query batch - the whole query section (550 queries, ~1 ms of our time) went out as
+      // one list at its end (a query's box draw is always inside an open query, so the draw-path submit never ran).
+      // With N > 0, between two queries (none open) the closed ones go to the GPU every N, so the first answers land
+      // while we record the rest. Up to 32 such submits a frame.
+      if (strict && query_chunk_ && !occ_open_.open && occ_closed_in_batch_ >= query_chunk_ && occ_chunk_submits_ < 32) {
+        CountedSubmitEarly(kSubmitQueryDraw);
+        occ_need_submit_ = false;
+        occ_closed_in_batch_ = 0;
+        ++occ_chunk_submits_;
+        ++occ_chunk_submits_total_;
+      }
       if (occ_open_.open) {  // the previous query never got its end
         ++occ_stats_.unended;
         if (occ_open_.handle) backend_->ReleaseOcclusionQuery(occ_open_.handle);
@@ -2927,6 +2944,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     occ_need_submit_ = false;  // PR #43 strict queries: the frame's submit carried any batch still open
     occ_closed_in_batch_ = 0;
     occ_batches_this_frame_ = 0;
+    occ_chunk_submits_ = 0;
     occ_idle_submits_this_frame_ = 0;
     XenosLatencyFrameSubmitted();  // patch 0135: Reflex RENDERSUBMIT_END
     FrameStep("next frame", [&] { backend_->NextFrame(); });
@@ -15128,6 +15146,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       occ_backend_refused_base_ = b.occlusion_refused;
       occ_stats_ = OcclusionStats{};
     }
+    if (query_chunk_)
+      REXLOG_INFO("gow2_renderer: query chunk submits (every {} queries) so far: {}", query_chunk_, occ_chunk_submits_total_);
     if (ps_no_colour_variant_)
       REXLOG_INFO("gow2_renderer: draws with the pixel shader's variant without colour outputs so far: {}", ps_no_colour_draws_);
     if (front_copy_lean_)
@@ -15594,6 +15614,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   rr::queries::DeferredReports occ_deferred_;  // PR #43 strict queries
   bool occ_need_submit_ = false;
   uint32_t occ_closed_in_batch_ = 0, occ_batches_this_frame_ = 0;
+  uint32_t query_chunk_ = 0, occ_chunk_submits_ = 0;  // --gow2_renderer_query_chunk
+  uint64_t occ_chunk_submits_total_ = 0;
   uint32_t occ_idle_submits_this_frame_ = 0;  // 0.6.1 (review P1)
   enum { kSubmitQueryIdle, kSubmitQueryDraw, kSubmitEveryNDraws, kSubmitSiteCount };
   uint64_t submit_sites_[kSubmitSiteCount] = {};  // since the last summary

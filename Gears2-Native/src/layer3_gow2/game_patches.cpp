@@ -245,8 +245,11 @@ extern "C" void sub_828170F0(PPCContext& ctx, uint8_t* base) {
     __imp__sub_828170F0(ctx, base);
     return;
   }
-  ctx.r5.u64 = 4;  // GetData(query, out, sizeof(DWORD), no flush) - as the original's first ask
-  ctx.r6.u64 = 0;
+  // GetData(query, out, sizeof(DWORD), D3DGETDATA_FLUSH): job 2134 asked without the flush and 99.6% of the answers
+  // were never back, even a frame later - on the 360 the flush is what sends the pending commands (the query's end
+  // included) to the GPU, so an unflushed query never completes. The original's loop asks with the flush.
+  ctx.r5.u64 = 4;
+  ctx.r6.u64 = 1;
   sub_82992348(ctx, base);
   const uint64_t asked = g_query_asked.fetch_add(1, std::memory_order_relaxed) + 1;
   if (ctx.r3.u32 == 0) {  // S_OK: the answer is in *out
