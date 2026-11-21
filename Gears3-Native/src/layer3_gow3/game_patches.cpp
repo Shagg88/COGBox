@@ -24,6 +24,7 @@
 #include <ue3/script_input.h>
 #include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
 #include <ue3/name_tags.h>
+#include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <iterator>   // std::size  // GitHub #353
 #include "mouse_look.h"
 #include "main_menu_exit.h"
@@ -256,6 +257,38 @@ void Gow3UltrawideSceneHeight(PPCRegister& r11) {  // after `li r11,720` at 0x82
   if (!Wide()) return;
   GOW3_LOG_ONCE("gow3_aspect: scene buffer height {} -> {}", r11.u32, WideHeight());
   r11.u64 = WideHeight();
+}
+// 0.6.6 (job 2189: at true 1080p the menus sat in the top-left 1280x720 of the 1920x1080 picture): the game's FViewport
+// still reports the console's 1280x720 (ue3/native_viewport.h has the why and the checks). Gears 3's menus are Scaleform
+// movies whose viewport the GFx engine takes from that FViewport: TU6 sub_829343E0 (one movie) and sub_82934188 (every
+// movie) start from `li r30,1280` / `li r9,720`, then `lwz r11,72(r3)` (the engine's Viewport), `lwz r10,8(r11)` /
+// `bctrl` (GetSizeX) and `lwz r7,12(r8)` / `bctrl` (GetSizeY), and hand the size to the movie (vtable +100,
+// SetViewport; sub_82931728 does the same). UGameViewportClient::GetViewportSize (TU6 sub_826266B8: `lwz r11,68(r3)`,
+// the same two slots) and its script native (sub_8252C2A0) ask the same object. The object: GEngine -> GameViewport
+// (+1196: `lwz r3,1196(r11)` after GEngine in sub_828F4B98 and seven more callers of sub_826266B8) -> Viewport (+68).
+// Once per engine tick until on (checked every 30 ticks); then the object is followed in case it is made again.
+void Gow3NativeUiViewportTick() {
+  namespace nv = ue3::native_viewport;
+  if (!Gow3NativeLines()) return;
+  static uint32_t ticks = 0;
+  static int fails = 0;
+  if (++ticks % 30 || fails > 20) return;
+  const uint32_t engine = ue3::obj::Read32(gow3::addr::kGEngine);
+  const uint32_t client = engine ? ue3::obj::Read32(engine + 1196u) : 0;
+  const uint32_t viewport = client ? ue3::obj::Read32(client + 68u) : 0;
+  if (!viewport) return;
+  if (nv::g_installed.load(std::memory_order_relaxed)) {
+    nv::NoteViewport(viewport);
+    return;
+  }
+  const nv::Result r = nv::Install(viewport, Gow3NativeLines());
+  if (r.ok) {
+    REXLOG_INFO("gow3_native_lines: UI scene viewport {}x{} -> {}x{} (the game's FViewport 0x{:08X}: GetSizeX / GetSizeY "
+                "0x{:08X} / 0x{:08X}, vtable slots {} / {}) - menus and Scaleform movies lay out in the larger screen",
+                r.w0, r.h0, r.w1, r.h1, viewport, r.fn_x, r.fn_y, r.slot, r.slot + 1);
+  } else if (++fails > 20) {
+    REXLOG_WARN("gow3_native_lines: the menus stay laid out in 1280x720 - {}", r.why);
+  }
 }
 // After `lwz r30,0x242c(r9)` at 0x827C583C (TU6 `lwz r30,0x2bd8(r9)` at 0x827D7ACC), in the scene render targets'
 // sizing (TU6 sub_827D7AA8, UE3 FSceneRenderTargets::Allocate on Xbox): r29 / r30 = the screen width / height globals,
@@ -814,6 +847,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
     Gow3ModChaptersTick();
     Gow3PathChoiceTick();
     Gow3SplitLayoutTick();       // GitHub #269
+    Gow3NativeUiViewportTick();  // 0.6.6 true 1080p: menus in the larger screen (off: one test)
     Gow3CheckpointStreamTick();  // GitHub #226
     Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
     Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
