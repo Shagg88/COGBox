@@ -559,6 +559,67 @@ inline void StoreF(uint8_t* base, uint32_t a, float f) {
 #define GOW2_UI_JOIN(a, b) GOW2_UI_JOIN2(a, b)
 extern "C" void GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_SIZE)(PPCContext& __restrict ctx, uint8_t* base);
 extern "C" void GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_ORIGIN)(PPCContext& __restrict ctx, uint8_t* base);
+// 0.6.7 true 1080p menus. UUISceneClient's CanvasToScreen (UT3 script: "Stores the 3D projection matrix being used
+// to render the UI"; UpdateCanvasToScreen "should be called anytime the viewport size or origin changes" -
+// wiki.beyondunreal.com/UE3:UISceneClient_(UT3)). At client +112 (16 floats, row vectors: m00 +112, m11 +132, the
+// translation row +160..+172) per santiquiroz's port (disc build; TU6 assumed the same - checked here, not trusted).
+// A canvas point (x, y, 0, 1) times the matrix, divided by w, is the screen position in -1..1. Wanted: the layout
+// corners (0,0) / (W,H) at (-1,1) / (1,-1). If instead (W*k, H*k) lands there (the matrix was built for the 1920x1080
+// FViewport), rows 0 and 1 are multiplied by k (layout pixel -> screen pixel first), and the inverse (+176, used only
+// if matrix x inverse is the identity) gets its columns 0 and 1 divided by k. Anything else: logged, left alone.
+REXCVAR_DEFINE_BOOL(gow2_native_ui_layout720, true, "Gears2",
+                    "With --gow2_native_lines: menus and other UI scenes lay out in the console's 1280x720 and are "
+                    "scaled to the whole screen (false = the 0.6.6 behaviour, laid out in screen pixels)");
+namespace {
+struct UiCorner { float x, y; bool ok; };
+UiCorner Gow2UiProject(const uint8_t* base, uint32_t m, float x, float y) {
+  auto e = [&](int r, int c) { return uicentre::LoadF(base, m + uint32_t(r * 4 + c) * 4u); };
+  const float X = x * e(0, 0) + y * e(1, 0) + e(3, 0), Y = x * e(0, 1) + y * e(1, 1) + e(3, 1);
+  const float W = x * e(0, 3) + y * e(1, 3) + e(3, 3);
+  if (!(std::fabs(W) > 1e-6f) || !std::isfinite(X) || !std::isfinite(Y)) return {0, 0, false};
+  return {X / W, Y / W, true};
+}
+bool Gow2UiCornersFit(const uint8_t* base, uint32_t m, float w, float h) {
+  const UiCorner a = Gow2UiProject(base, m, 0, 0), b = Gow2UiProject(base, m, w, h);
+  constexpr float t = 0.02f;
+  return a.ok && b.ok && std::fabs(a.x + 1) < t && std::fabs(a.y - 1) < t && std::fabs(b.x - 1) < t && std::fabs(b.y + 1) < t;
+}
+void Gow2NativeUiMatrix(uint32_t client, float w, float h, float k, uint8_t* base) {
+  const uint32_t m = client + 112u, inv = client + 176u;
+  if (!(w > 0) || !(h > 0) || Gow2UiCornersFit(base, m, w, h)) return;  // already right (or fixed before)
+  static std::atomic<int> fixes{0}, misses{0};
+  auto dump = [&](const char* what) {
+    std::string t;
+    for (int i = 0; i < 32; ++i) t += fmt::format("{}{:.4f}", i ? (i == 16 ? " | inv " : " ") : "", uicentre::LoadF(base, m + uint32_t(i) * 4u));
+    const UiCorner a = Gow2UiProject(base, m, 0, 0), b = Gow2UiProject(base, m, w, h);
+    REXLOG_INFO("gow2_native_lines: UI matrix {} (client 0x{:08X}, layout {}x{}, corners ({:.3f},{:.3f}) ({:.3f},{:.3f})): {}", what,
+                client, w, h, a.x, a.y, b.x, b.y, t);
+  };
+  if (!Gow2UiCornersFit(base, m, w * k, h * k)) {
+    if (misses.fetch_add(1) < 3) dump("NOT changed - neither the layout nor the screen size fits");
+    return;
+  }
+  // inverse check (before changing m): (m x inv)[i][j] == identity
+  bool inv_ok = true;
+  for (int i = 0; i < 4 && inv_ok; ++i)
+    for (int j = 0; j < 4; ++j) {
+      float sum = 0;
+      for (int n = 0; n < 4; ++n) sum += uicentre::LoadF(base, m + uint32_t(i * 4 + n) * 4u) * uicentre::LoadF(base, inv + uint32_t(n * 4 + j) * 4u);
+      if (std::fabs(sum - (i == j ? 1.0f : 0.0f)) > 0.01f) { inv_ok = false; break; }
+    }
+  const bool first = fixes.fetch_add(1) < 3;
+  if (first) dump("before");
+  for (int c = 0; c < 4; ++c)
+    for (int r = 0; r < 2; ++r) uicentre::StoreF(base, m + uint32_t(r * 4 + c) * 4u, uicentre::LoadF(base, m + uint32_t(r * 4 + c) * 4u) * k);
+  if (inv_ok)
+    for (int r = 0; r < 4; ++r)
+      for (int c = 0; c < 2; ++c) uicentre::StoreF(base, inv + uint32_t(r * 4 + c) * 4u, uicentre::LoadF(base, inv + uint32_t(r * 4 + c) * 4u) / k);
+  if (first) {
+    dump(inv_ok ? "after (x scale, inverse too)" : "after (x scale; +176 is not its inverse - left alone)");
+    REXLOG_INFO("gow2_native_lines: UI matrix fixed: corners now fit the layout: {}", Gow2UiCornersFit(base, m, w, h));
+  }
+}
+}  // namespace
 // UBOOL GetViewportSize(const UUIScene*, FVector2D& out): r5 = out
 extern "C" void GOW2_UI_VIEWPORT_SIZE(PPCContext& __restrict ctx, uint8_t* base) {
   const uint32_t out = ctx.r5.u32;
@@ -580,19 +641,22 @@ extern "C" void GOW2_UI_VIEWPORT_SIZE(PPCContext& __restrict ctx, uint8_t* base)
     }
   }
   GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_SIZE)(ctx, base);
-  // 0.6.6 (job 2189: at true 1080p the pause menu sat in the top-left 1280x720 of the 1920x1080 picture): the scene
-  // client reported the console's 1280x720 here while everything is drawn 1.5 times larger. The UI scenes lay
-  // themselves out from this size (GitHub #278), so it is scaled with the screen: 1280x720 -> 1920x1080. With the
-  // FViewport hook above on, the size already is the larger one and only a smaller value is scaled: the ultrawide UI
-  // height (Gow2UltrawideUiHeight replaces GetSizeY's answer with 564 after the bctrl) -> 564 x lines / 720.
-  if (Gow2NativeLines() && ctx.r3.u32 != 0 && out) {
+  // 0.6.7 (job 2200: the 0.6.6 scale-up changed nothing - the FViewport already is 1920x1080, so this size already
+  // was): the UI scenes are authored in pixels of the console's 1280x720 - full-width images are 0..1280 pixels
+  // (Position.Value[2] = 1280; santiquiroz's gow2_widescreen.cpp, disc build), text has no auto-scale - so with a
+  // 1920x1080 layout space the percent-placed parts fill the screen and the pixel-placed ones stay 720p-sized at the
+  // top-left (the pause backdrop x 0..1280, y 70..950). So the scenes lay out in the console's size again (a value
+  // above 1280 / 720 is divided by lines / 720) and the scene client's canvas-to-screen matrix is made to map that
+  // 1280x720 onto the whole screen (Gow2NativeUiMatrix, checked by projecting the corners).
+  if (Gow2NativeLines() && ctx.r3.u32 != 0 && out && REXCVAR_GET(gow2_native_ui_layout720)) {
     const float w0 = uicentre::LoadF(base, out), h0 = uicentre::LoadF(base, out + 4);
     const float k = float(Gow2NativeLines()) / 720.0f;
-    const float w1 = w0 <= 1280.5f ? std::round(w0 * k) : w0, h1 = h0 <= 720.5f ? std::round(h0 * k) : h0;
+    const float w1 = w0 > 1280.5f ? std::round(w0 / k) : w0, h1 = h0 > 720.5f ? std::round(h0 / k) : h0;
     uicentre::StoreF(base, out, w1);
     uicentre::StoreF(base, out + 4, h1);
     static std::atomic<bool> told{false};
-    if (!told.exchange(true)) REXLOG_INFO("gow2_native_lines: UI scene viewport {}x{} -> {}x{}", w0, h0, w1, h1);
+    if (!told.exchange(true)) REXLOG_INFO("gow2_native_lines: UI scene layout size {}x{} -> {}x{} (console pixels)", w0, h0, w1, h1);
+    Gow2NativeUiMatrix(ctx.r3.u32, w1, h1, k, base);
   }
   if (!uicentre::On() || ctx.r3.u32 == 0 || !out) return;
   const float w = uicentre::LoadF(base, out), h = uicentre::LoadF(base, out + 4);
