@@ -1750,14 +1750,28 @@ class D3D12Backend final : public Backend {
             view_heap_.Handle(t.uav));
       }
     }
-    for (size_t i = 1; i < textures_.size(); ++i) {
+    TextureHandle handle = 0;
+    for (size_t i = 1; i < textures_.size() && !handle; ++i)
       if (!textures_[i].resource) {
         textures_[i] = t;
-        return TextureHandle(i);
+        handle = TextureHandle(i);
       }
+    if (!handle) {
+      textures_.push_back(t);
+      handle = TextureHandle(textures_.size() - 1);
     }
-    textures_.push_back(t);
-    return TextureHandle(textures_.size() - 1);
+    // #365 (AMD, purple / green texture levels): a placed texture made over memory with undefined contents is only
+    // defined again after a Clear or a copy to each entire subresource (Microsoft, "Memory aliasing and data
+    // inheritance": writes to invalidated resources are undefined unless the resource has no RT/DS flag AND the write is
+    // a copy or clear of an entire subresource). A UAV write (our typed-UAV untile) is neither, and AMD can keep DCC
+    // metadata for UAV textures, so stale metadata decompresses the new texels into wrong colours. A whole-subresource
+    // zero copy first is the spec's initialisation; not budgeted (a skipped one would leave the texture broken for good).
+    if (t.heap >= 0 && (rd.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) && !ZeroTexture(handle, true)) {
+      static std::atomic<int> logged{0};
+      if (logged.fetch_add(1) < 4)
+        REXLOG_WARN("gow2_renderer: placed UAV texture {}x{} could not be initialised (#365)", desc.width, desc.height);
+    }
+    return handle;
   }
 
   bool VideoMemory(uint64_t* used, uint64_t* budget) override {
