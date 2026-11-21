@@ -459,7 +459,13 @@ std::vector<uint32_t> FindInstancesOfRange(uint32_t cls, uint32_t first, uint32_
   count = std::min(count, g_objectCount - first);
   std::vector<uint32_t> table(count);
   if (!count || !Copy(g_objects + 4 * first, table.data(), table.size() * 4)) return out;
-  static std::unordered_map<uint64_t, bool> isSub;  // (cls, class) -> derives (game thread; classes are not freed)
+  // 0.6.7 (Shagg's crash 21 Nov, Gears 3 entering the campaign while online): this cache is shared by every caller,
+  // and the name-tags worker and the squad-slots thread both call in here off the game thread. Unlocked, one
+  // thread's insert (a rehash) freed the buckets another was reading: access violation in the lookup. Gears 2's copy
+  // of this function has had the lock since #245.
+  static std::mutex isSubMutex;
+  static std::unordered_map<uint64_t, bool> isSub;  // (cls, class) -> derives (classes are not freed while in use)
+  std::lock_guard isSubLock(isSubMutex);
   if (isSub.size() > 65536) isSub.clear();
   for (uint32_t raw : table) {
     const uint32_t o = Swap(raw);
