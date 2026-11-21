@@ -354,6 +354,54 @@ extern "C" void sub_82306D00(PPCContext& __restrict ctx, uint8_t* base) {
   }
 }
 
+// GitHub #407 (Gears 1 at 16:10, 2560x1600): the logo films and the loading screen fill the width but only 62 % of the
+// height. Read in the TU5 generated code (job af01): the Bink player's start-up (sub_82C35C10) asks XGetVideoMode and
+// the device's display size (W x H -> player +132 / +136) and stores at +140 a PIXEL shape: C / (W / H), where C is one
+// of two constants picked by the video mode's widescreen flag - the shape of the TV the console drives, whose pixels
+// are not square when the frame's shape differs from the TV's. sub_82C36058 then places the film (its size at +124 /
+// +128): the frame's shape as seen on that TV is W x pixel-shape / H; a film wider than that is letterboxed to the
+// height `film height x W x pixel-shape / film width`. For 16:10 the launcher sends a 1152x720 video mode that is "not
+// widescreen", so the pixel shape is not 1 and the film is squeezed for a TV that is not there (720 x 0.625 = 450 rows
+// measured; a 16:9 film in a 1152x720 frame with square pixels is 648 rows).
+// A PC screen shows the frame with square pixels in every mode we offer, so the pixel shape is 1 while the film's
+// rectangle is worked out (16:9: it already was 1, nothing changes; 16:10: 1152x648, centred; a wider frame: the film
+// centred at its own shape). The stored value is put back afterwards. Logged a few times with the game's numbers.
+REXCVAR_DEFINE_BOOL(gow1_movie_square_pixels, true, "Gears 1",
+                    "GitHub #407: logo films and the loading screen keep their shape at 16:10 and other frame shapes "
+                    "(the film player assumes square screen pixels). false = the game's own TV pixel shape");
+namespace {
+float Gow1MovieLoadF(const uint8_t* base, uint32_t a) {
+  const uint32_t v = ue3::native_viewport::Load32(base, a);
+  float f;
+  std::memcpy(&f, &v, 4);
+  return f;
+}
+void Gow1MovieStoreF(uint8_t* base, uint32_t a, float f) {
+  uint32_t v;
+  std::memcpy(&v, &f, 4);
+  v = __builtin_bswap32(v);
+  std::memcpy(base + a, &v, 4);
+}
+}  // namespace
+extern "C" void __imp__sub_82C36058(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void sub_82C36058(PPCContext& __restrict ctx, uint8_t* base) {
+  const uint32_t player = ctx.r3.u32;
+  const bool on = REXCVAR_GET(gow1_movie_square_pixels) && player >= 0x00100000u;
+  const float shape = player >= 0x00100000u ? Gow1MovieLoadF(base, player + 140) : 1.0f;
+  if (on) Gow1MovieStoreF(base, player + 140, 1.0f);
+  __imp__sub_82C36058(ctx, base);
+  if (player < 0x00100000u) return;
+  if (on) Gow1MovieStoreF(base, player + 140, shape);
+  static std::atomic<int> told{0};
+  if (told.fetch_add(1) < 6)
+    REXLOG_INFO("gow1_movie_square_pixels: {} - film {}x{} in a {}x{} frame, the game's pixel shape {} (TV shape constants "
+                "{} / {}); film rectangle x {}..{}, y {}..{}", on ? "on" : "off", ue3::native_viewport::Load32(base, player + 124),
+                ue3::native_viewport::Load32(base, player + 128), Gow1MovieLoadF(base, player + 132), Gow1MovieLoadF(base, player + 136), shape,
+                Gow1MovieLoadF(base, 0x8213E7FCu), Gow1MovieLoadF(base, 0x82044D1Cu), int32_t(ue3::native_viewport::Load32(base, player + 96)),
+                int32_t(ue3::native_viewport::Load32(base, player + 104)), int32_t(ue3::native_viewport::Load32(base, player + 100)),
+                int32_t(ue3::native_viewport::Load32(base, player + 108)));
+}
+
 // 0.6.5 (Shagg 16 Nov: 16:10): with a 1152x720 video mode Gears 2 / 3 / Judgment fill a 16:10 screen, but Gears 1 kept
 // 16:9 with bars (job 1969's gameplay shots): its view code (sub_82392008, TU5) letterboxes to the camera's aspect when
 // the camera's constrain flag (bit 1 of the word at +432) is set. Canary's TU5 16:10 patch by boma makes the branch at
