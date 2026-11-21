@@ -25,6 +25,8 @@
 #include <xenos/dev_tools.h>
 #include <xenos/frame_limiter.h>
 #include <ue3/config_bundle.h>
+#include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
+#include <ue3/objects.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -136,6 +138,52 @@ void Gow1NativeSceneWidth(PPCRegister& r31) {  // before `li r5,120` at 0x824BC4
 }
 void Gow1NativeDeviceHeight(PPCRegister& r11) {  // after `li r11,720` at 0x824BC490: the height beside that width
   if (Gow1NativeLines()) r11.u64 = Gow1NativeLines();
+}
+// 0.6.6 (job 2189: at true 1080p the pause menu sat in the top-left 1280x720 of the 1920x1080 picture): the game's
+// FViewport still reports the console's 1280x720 to the UI (ue3/native_viewport.h: why, the checks, and the Gears 2 / 3
+// code it was read from: the UI scene client's GetViewportSize asks RenderViewport->GetSizeX / GetSizeY, virtual calls).
+// Gears 1's own code was NOT read for this (its generated files were not staged): the object is GEngine (cheats.cpp's
+// 0x82FCDD50) -> GameViewport -> Viewport with both offsets from the script classes (GameEngine.GameViewport,
+// GameViewportClient.Viewport) through ue3::obj - no guessed fallback - and Install checks the getters at run time
+// (slots 2 / 3 first, then any neighbouring pair: the 2006 engine's FViewport may order its virtuals differently).
+// Called from cheats.cpp's FEngineLoop::Tick override with its object-table opener; every 30 ticks until on.
+void Gow1NativeUiViewportTick(bool (*open_objects)()) {
+  namespace nv = ue3::native_viewport;
+  namespace obj = ue3::obj;
+  if (!Gow1NativeLines()) return;
+  static uint32_t ticks = 0;
+  static int fails = 0, gv_off = -1, vp_off = -1;
+  if (++ticks % 30 || fails > 20) return;
+  if (gv_off < 0 || vp_off < 0) {
+    if (ticks % 300 || !open_objects || !(obj::Ready() || open_objects())) return;  // FindClass misses: every 5 s at most
+    const uint32_t ge = obj::FindClass("GameEngine"), gvc = obj::FindClass("GameViewportClient");
+    if (!ge || !gvc) { ++fails; return; }
+    gv_off = obj::PropertyOffset(ge, "GameViewport");
+    vp_off = obj::PropertyOffset(gvc, "Viewport");
+    REXLOG_INFO("gow1_native_lines: GameEngine.GameViewport +{}, GameViewportClient.Viewport +{} (-1 = not found)", gv_off,
+                vp_off);
+    if (gv_off < 0 || vp_off < 0) {
+      fails = 100;
+      REXLOG_WARN("gow1_native_lines: the menus stay laid out in 1280x720 - the viewport properties were not found");
+      return;
+    }
+  }
+  const uint32_t engine = obj::Read32(0x82FCDD50u);
+  const uint32_t client = engine ? obj::Read32(engine + uint32_t(gv_off)) : 0;
+  const uint32_t viewport = client ? obj::Read32(client + uint32_t(vp_off)) : 0;
+  if (!viewport) return;
+  if (nv::g_installed.load(std::memory_order_relaxed)) {
+    nv::NoteViewport(viewport);
+    return;
+  }
+  const nv::Result r = nv::Install(viewport, Gow1NativeLines());
+  if (r.ok) {
+    REXLOG_INFO("gow1_native_lines: UI scene viewport {}x{} -> {}x{} (the game's FViewport 0x{:08X}: GetSizeX / GetSizeY "
+                "0x{:08X} / 0x{:08X}, vtable slots {} / {}) - the menus lay out in the larger screen",
+                r.w0, r.h0, r.w1, r.h1, viewport, r.fn_x, r.fn_y, r.slot, r.slot + 1);
+  } else if (++fails > 20) {
+    REXLOG_WARN("gow1_native_lines: the menus stay laid out in 1280x720 - {}", r.why);
+  }
 }
 
 // 0.6.5 (Shagg 16 Nov: 16:10): with a 1152x720 video mode Gears 2 / 3 / Judgment fill a 16:10 screen, but Gears 1 kept
