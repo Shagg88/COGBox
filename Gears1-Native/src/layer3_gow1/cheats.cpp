@@ -25,6 +25,7 @@
 #include <rex/ppc/context.h>
 
 #include <ue3/auto_cheats.h>
+#include <ue3/chat.h>   // in-match chat (Y / U)
 #include <ue3/console.h>
 #include <ue3/name_tags.h>
 #include <iterator>   // std::size  // GitHub #353
@@ -69,6 +70,8 @@ void Gow1InstallCheats() {
   if (cheats) target.before_each = "EnableCheats";
   ue3::match::Configure({"Gears 1", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
+  Ue3ChatConfigure({"Gears 1", target.engine_global, target.players_data_offset, target.players_num_offset,
+                    &OpenObjects, true});   // Gears 1 takes one word unless quoted
   target.gate = &ue3::cheats::GateLocalOnly;   // 0.6.3: not in a Versus match; #342: and only this PC's players
   Ue3ConsoleSetTarget(target);
   // GitHub #342: the launcher's cheats - only while every player is on this PC (Gears 1's AllowCheats: standalone games)
@@ -96,6 +99,7 @@ extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
   // text (kill feed, names over heads, TacCom), and not every such place is found yet - plain on every screen.
   Ue3NameTagsTick([] { return ue3::obj::Ready() || OpenObjects(); }, Ue3NameTagStyle{"", "", true});
   Ue3ConsoleRunQueued(ctx, base);
+  Ue3ChatPump(ctx, base);   // in-match chat: the HUD's received lines, taken and emptied
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   Gow1AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   Gow1NativeUiViewportTick(&OpenObjects);   // 0.6.6: true 1080p menus (game_patches.cpp; off: one test)

@@ -32,6 +32,7 @@
 #include <rex/ppc/context.h>
 
 #include <ue3/auto_cheats.h>
+#include <ue3/chat.h>   // in-match chat (Y / U)
 #include <ue3/console.h>
 #include <ue3/name_tags.h>
 #include <iterator>   // std::size
@@ -76,6 +77,8 @@ void GowjInstallCheats() {
   target.exec_vtable_slot = 0;
   ue3::match::Configure({"Judgment", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
+  Ue3ChatConfigure({"Judgment", target.engine_global, target.players_data_offset, target.players_num_offset,
+                    &OpenObjects, false});
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
   // GitHub #342: the launcher's cheats - also in a game this PC hosts (Judgment's own AllowCheats returns True)
@@ -117,6 +120,7 @@ extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
   GowjPollLoadingMovie(ctx, base);
   __imp__sub_8255E200(ctx, base);
   Ue3ConsoleRunQueued(ctx, base);
+  Ue3ChatPump(ctx, base);   // in-match chat: the HUD's received lines, taken and emptied
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   GowjAdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   GowjFirstPersonTick();        // --gowj_first_person (first_person.cpp; off: one flag test)
