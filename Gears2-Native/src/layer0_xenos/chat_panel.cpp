@@ -25,8 +25,10 @@
 #include <xenos/chat_logic.h>
 #include <xenos/dev_tools.h>                  // XenosInGameMenuIsOpen
 
-REXCVAR_DEFINE_BOOL(cogbox_match_chat, true, "Gears2",
+REXCVAR_DEFINE_BOOL(cogbox_match_chat, true, "COGBox",
                     "In-match chat: Y / U open a chat box in a match and other players' messages show on the left");
+REXCVAR_DEFINE_STRING(cogbox_match_chat_background, "dark", "COGBox",
+                      "In-match chat background: dark (a see-through panel with a red edge) or none (outlined text only)");
 
 namespace {
 namespace chat = xenos::chat;
@@ -230,18 +232,35 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
 
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     const ImVec2 p0(0.f, bottom - height), p1(width, bottom);
-    dl->AddRectFilled(p0, p1, WithAlpha(kBack, panel_alpha));
-    dl->AddRectFilled(p0, ImVec2(kEdge * u, bottom), WithAlpha(kRed, panel_alpha));
+    const bool box = REXCVAR_GET(cogbox_match_chat_background) != "none";
+    if (box) {
+      dl->AddRectFilled(p0, p1, WithAlpha(kBack, panel_alpha));
+      dl->AddRectFilled(p0, ImVec2(kEdge * u, bottom), WithAlpha(kRed, panel_alpha));
+    }
+    // No background: each line outlined in near-black so it reads over any part of the game.
+    const auto text = [&](ImVec2 at, ImU32 colour, float alpha, const char* b, const char* e) {
+      if (!box) {
+        const float o = std::max(1.f, u);
+        const ImU32 outline = WithAlpha(IM_COL32(0, 0, 0, 220), alpha);
+        for (const ImVec2 d : {ImVec2(-o, 0), ImVec2(o, 0), ImVec2(0, -o), ImVec2(0, o)})
+          dl->AddText(font, px, ImVec2(at.x + d.x, at.y + d.y), outline, b, e);
+      }
+      dl->AddText(font, px, at, WithAlpha(colour, alpha), b, e);
+    };
 
     const float x = kEdge * u + pad_x;
     float y = p0.y + pad_y;
     for (const Row& r : rows) {
-      dl->AddText(font, px, ImVec2(x, y), WithAlpha(r.colour, r.alpha), r.text.c_str());
+      text(ImVec2(x, y), r.colour, r.alpha, r.text.c_str(), nullptr);
       if (r.name_chars && r.colour != kTeam)   // the name in white over the line's own colour
         dl->AddText(font, px, ImVec2(x, y), WithAlpha(kName, r.alpha), r.text.c_str(), r.text.c_str() + r.name_chars);
       y += row_h + gap;
     }
-    if (typing_) DrawTyping(dl, font, px, x, y, text_w);
+    if (typing_) {
+      if (!box)   // the typing row keeps a dark strip of its own, like a text field
+        dl->AddRectFilled(ImVec2(0.f, y - pad_y * 0.5f), ImVec2(width, y + row_h + pad_y * 0.5f), kBack);
+      DrawTyping(dl, font, px, x, y, text_w);
+    }
   }
 
   // mutex_ held.

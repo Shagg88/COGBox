@@ -644,6 +644,38 @@ int summary() {
         for (const std::string& x : build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr)) has = has || x == "--cogbox_show_ping=true";
         if (has != (on != 0)) { std::cout << "FAIL show ping arg (" << on << ")\n"; ++fails; }
     }
+    // In-match chat (Y / U): an option in every game, on by default; sends --cogbox_match_chat=true / false to an exe
+    // that knows it, nothing to one that doesn't
+    for (int g = 0; g < 4; ++g) {
+        const Option* o = find_option(static_cast<Game>(g), "MatchChat");
+        if (!o || o->label != "In-match chat" || o->def != 1) { std::cout << "FAIL MatchChat option, game " << g << "\n"; ++fails; }
+    }
+    for (int on = 0; on <= 2; ++on) {   // 2: an exe without the option
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [on](const std::string&) { return on != 2; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        Store st; Settings s = st.view(Game::Gears2, e);
+        s.set("MatchChat", on == 1 ? 1 : 0);
+        std::string got;
+        for (const std::string& x : build_args(Game::Gears2, Version::TitleUpdate, s, e, nullptr))
+            if (x.rfind("--cogbox_match_chat=", 0) == 0) got = x;
+        const std::string want = on == 2 ? "" : on ? "--cogbox_match_chat=true" : "--cogbox_match_chat=false";
+        if (got != want) { std::cout << "FAIL match chat arg (" << on << "): '" << got << "'\n"; ++fails; }
+    }
+    // In-match chat background: Dark see-through (default) / None -> --cogbox_match_chat_background=dark / none
+    for (int bg = 0; bg <= 1; ++bg) {
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        Store st; Settings s = st.view(Game::Gears1, e);
+        const Option* o = find_option(Game::Gears1, "MatchChatBackground");
+        if (!o || o->label != "Chat background" || o->def != 0) { std::cout << "FAIL MatchChatBackground option\n"; ++fails; break; }
+        s.set("MatchChatBackground", bg);
+        bool has = false;
+        const std::string want = bg ? "--cogbox_match_chat_background=none" : "--cogbox_match_chat_background=dark";
+        for (const std::string& x : build_args(Game::Gears1, Version::TitleUpdate, s, e, nullptr)) has = has || x == want;
+        if (!has) { std::cout << "FAIL match chat background arg (" << bg << ")\n"; ++fails; }
+    }
     // social step 4: Gears 3 TU6 gets its UE3 GNames / GEngine addresses (the private match lobby fixes), others not
     for (int gi = 0; gi < 2; ++gi) {
         const Game g = gi ? Game::Judgment : Game::Gears3;

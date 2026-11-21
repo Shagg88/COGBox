@@ -563,6 +563,13 @@ std::vector<Option> make_options(Game g) {
     add(choice("DeadBodies", "Dead bodies", Tab::Gameplay, PG, { "Game's own", "More", "Many" }, 0,
                "How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; "
                "this costs some performance and memory. Bodies are still cleared at cutscenes.", 0), "iniedit");
+    // In-match chat (docs/superpowers/specs/2026-11-21-match-chat-design.md): Y / U, the keys in KEYBOARD KEYS
+    add(make("MatchChat", "In-match chat", Tab::Gameplay, Kind::Bool, SH, 1,
+             "In a match, Y opens chat to everyone and U chat to your team; messages show on the left of the screen. "
+             "Off: the keys do nothing and no messages are shown.", 0));
+    add(choice("MatchChatBackground", "Chat background", Tab::Gameplay, SH, { "Dark see-through", "None" }, 0,
+               "Dark see-through: the messages sit on a dark panel with a red edge. None: just the text, outlined so it "
+               "stays readable, so less of the game is covered.", 0));
     add(make("SkipLogos", "Skip the intro logos", Tab::Gameplay, Kind::Bool, PG, 0,
              "Starts at the title screen without the publisher / studio logo films. The loading film and cutscenes still play.", 326),
         "skiplogos");
@@ -2466,6 +2473,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         a.push_back(std::string("--cogbox_ach_hide=") + (s.b("HideAchievementPopups") ? "true" : "false"));
     }
     if (s.b("ShowPing") && cap_exe(env, "cogbox_show_ping")) a.push_back("--cogbox_show_ping=true");   // SDK patch 93
+    if (cap_exe(env, "cogbox_match_chat"))   // in-match chat
+        a.push_back(std::string("--cogbox_match_chat=") + (s.b("MatchChat") ? "true" : "false"));
+    if (cap_exe(env, "cogbox_match_chat_background"))
+        a.push_back(std::string("--cogbox_match_chat_background=") + (s.i("MatchChatBackground") == 1 ? "none" : "dark"));
     // PS1 929: FPS counter
     switch (s.i("FpsMode")) {
     case 1: a.push_back("--gow2_fps_bar=top"); break;
@@ -2692,6 +2703,8 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         { "Sharpen", { { "gow2_present_sharpen", "0" } } },
         { "FpsMode", { { "gow2_fps_bar", "off" } } },
         { "ShowPing", { { "cogbox_show_ping", "false" } } },
+        { "MatchChat", { { "cogbox_match_chat", "true" } } },
+        { "MatchChatBackground", { { "cogbox_match_chat_background", "dark" } } },
         { "HideNotes", { { "gow2_hide_onscreen_notes", "false" } } },
         { "Mute", { { p + "_mute_unfocused", "false" } } },
         { "Vibration", { { "vibration", "true" } } },
