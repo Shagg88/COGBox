@@ -79,6 +79,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/social_popup.cpp
     src/layer0_xenos/cheat_popup.cpp
     src/layer0_xenos/chat_logic.cpp          # in-match chat (Y / U)
+    src/layer0_xenos/chat_panel.cpp
     src/layer0_xenos/social_shared.cpp
     src/layer0_xenos/profiler.cpp
 )

@@ -30,6 +30,7 @@
 #include <rex/ppc/context.h>
 
 #include <ue3/auto_cheats.h>
+#include <xenos/chat_panel.h>   // in-match chat: the overlay side
 #include <ue3/chat.h>   // in-match chat (Y / U)
 #include <ue3/console.h>
 #include <ue3/match_guard.h>
@@ -86,6 +87,8 @@ void Gow3InstallExtras() {
                          target.players_num_offset, &OpenObjects});
   Ue3ChatConfigure({"Gears 3", target.engine_global, target.players_data_offset, target.players_num_offset,
                     &OpenObjects, false});
+  Ue3ChatSetSink([](const Ue3ChatReceived& line) { XenosChatReceive(line.raw, line.team); });
+  XenosChatSetHooks(&Ue3ChatMatchRunning, &Ue3ChatSend);
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
   // GitHub #342: the launcher's cheats. God mode, speed and a hidden HUD need no cheat manager (no package patch, so they

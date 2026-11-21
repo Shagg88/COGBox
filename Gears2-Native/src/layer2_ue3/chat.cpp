@@ -34,9 +34,19 @@ std::atomic<bool> g_configured{false}, g_ready{false}, g_match{false};
 Offsets g_off;   // written once before g_ready
 std::atomic<void (*)(const Ue3ChatReceived&)> g_sink{nullptr};
 
-// This player's recent team messages (the approved fallback for the team tag).
+// This player's recent team messages (the approved fallback for the team tag), and the messages waiting to be sent:
+// the engine drops a message sent within 2 s of the last one (PlayerController.AllowTextMessage - Gears 1 even when
+// playing solo, the others online), so they go out one at a time, kSendGap apart, from Ue3ChatPump.
 std::mutex g_sent_mutex;
 std::deque<std::string> g_sent_team;
+std::deque<std::string> g_waiting;   // console commands, oldest first
+constexpr size_t kMaxWaiting = 5;
+constexpr double kSendGap = 2.1;     // seconds
+double g_last_send = -1e9;           // game thread
+
+double Seconds() {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 void Resolve() {
   for (int attempt = 0; attempt < 60; attempt++) {
@@ -121,12 +131,26 @@ bool Ue3ChatSend(const std::string& typed, bool team) {
       if (c == '"') c = '\'';   // a quote would end the argument
     text = "\"" + text + "\"";
   }
-  Ue3ConsoleQueueTrusted(std::string(team ? "TeamSay " : "Say ") + text);
+  std::lock_guard<std::mutex> lock(g_sent_mutex);
+  if (g_waiting.size() >= kMaxWaiting) {
+    REXLOG_INFO("chat: {} messages already waiting to be sent - this one was dropped", kMaxWaiting);
+    return false;
+  }
+  g_waiting.push_back(std::string(team ? "TeamSay " : "Say ") + text);
   return true;
 }
 
 void Ue3ChatPump(PPCContext&, uint8_t*) {
   if (!g_ready.load(std::memory_order_acquire)) return;
+  {
+    const double now = Seconds();
+    std::lock_guard<std::mutex> lock(g_sent_mutex);
+    if (!g_waiting.empty() && now - g_last_send >= kSendGap) {
+      Ue3ConsoleQueueTrusted(g_waiting.front());   // runs on the next Ue3ConsoleRunQueued
+      g_waiting.pop_front();
+      g_last_send = now;
+    }
+  }
   const Offsets& o = g_off;
   bool match = false;
   const uint32_t engine = obj::Read32(g_config.engine_global);
@@ -153,9 +177,13 @@ void Ue3ChatPump(PPCContext&, uint8_t*) {
       auto* sink = g_sink.load(std::memory_order_acquire);
       for (uint32_t i = 0; i < num; ++i) {
         const uint32_t entry = data + i * kEntrySize;
-        if (!obj::Read32(entry + kEntryPri)) continue;   // the engine's own text, not a player's message
+        // A player's message is "<that PRI's PlayerName>: text". Anything else is the engine's own text (the menus'
+        // "Get flag from registry" has a PRI too), and is dropped.
+        const uint32_t pri = obj::Read32(entry + kEntryPri);
         Ue3ChatReceived line;
-        if (!ReadFString(entry, &line.raw)) continue;
+        std::string name;
+        if (!pri || o.player_name < 0 || !ReadFString(pri + uint32_t(o.player_name), &name) || name.empty()) continue;
+        if (!ReadFString(entry, &line.raw) || line.raw.compare(0, name.size() + 2, name + ": ") != 0) continue;
         line.team = OwnTeamLine(line.raw);
         if (sink) sink(line);
       }
