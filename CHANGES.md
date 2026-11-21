@@ -19,9 +19,6 @@ Fixes for the reports against 0.6.6, and two pull requests.
   lay out in the console's 1280x720 and the canvas is scaled to the screen while they are drawn.
   `--gow1_native_ui_layout720=false` brings back 0.6.6. (Subtitles and other HUD text are not UI scenes and keep
   their 720p pixel size at 1080 lines.)
-- **Gears of War at 16:10: logo films and the loading screen keep their shape** (#407). The film player squeezed
-  them for a TV with non-square pixels because the 16:10 video mode is "not widescreen" to the game; a PC screen's
-  pixels are square. `--gow1_movie_square_pixels=false` brings back 0.6.6.
 - **Gears 3: a rare crash about 20 seconds into start-up** ("read of guest 0x4A9E7324"; seen in 1 of 7 to 1 of 44
   starts in our tests). The game's file thread adds to its name-to-file-handle table while the game thread looks
   names up in it, with no lock in the game's own code. The three functions now share a lock.
@@ -34,6 +31,9 @@ Fixes for the reports against 0.6.6, and two pull requests.
   Performance the game draws 1920x1080 itself and the upscaler makes 3840x2160 of it (it only anti-aliased there
   before). Tested by its author with DLSS on DirectX 12.
 - **Hungarian translation** updated for 0.6.6's texts (PR #410, hevesij).
+- **Known, not fixed: Gears of War at 16:10**, the logo films are flattened (#407: full width, 62 % of the height).
+  A fix aimed at the film player's TV pixel shape was built for this version and did not change the picture (its
+  function is not the one that places these films), so it was taken out again.
 - **Known, not fixed: Judgment, the loading screen after Monroe Commons** (Sofia's testimony) can stay up for ever
   with a frame-rate limit above 30 (#405). The loading-screen limit of earlier versions does not cure it (the hang
   starts before the loading screen). Until it is fixed: set the frame-rate limit to 30 before finishing that section
