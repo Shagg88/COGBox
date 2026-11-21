@@ -3357,6 +3357,9 @@ class D3D12Backend final : public Backend {
     ID3D12Heap* heap = nullptr;
     std::map<uint64_t, uint64_t> free;
     uint64_t fresh_from = 0;  // 0.6.2 (#311): bytes from here on were never handed to a texture
+    // #365: made with D3D12_HEAP_FLAG_CREATE_NOT_ZEROED - then even its never-used bytes are undefined (AMD hands back
+    // video memory the process used before, e.g. freed render targets), so every range counts as recycled.
+    bool not_zeroed = false;
   };
   static constexpr uint64_t kTextureHeapBytes = 64ull << 20;
   static constexpr uint64_t kTexturePlacedMax = 16ull << 20;
@@ -3377,7 +3380,7 @@ class D3D12Backend final : public Backend {
         f.erase(it);
         if (rest) f.emplace(offset + size, rest);
         heap = int32_t(h);
-        recycled = offset < tex_heaps_[h].fresh_from;  // 0.6.2 (#311): the range held a texture before
+        recycled = offset < tex_heaps_[h].fresh_from || tex_heaps_[h].not_zeroed;  // 0.6.2 (#311), #365
         tex_heaps_[h].fresh_from = std::max(tex_heaps_[h].fresh_from, offset + size);
         return true;
       }
@@ -3393,6 +3396,7 @@ class D3D12Backend final : public Backend {
     hd.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES | D3D12_HEAP_FLAG_CREATE_NOT_ZEROED;
     TextureHeap th;
     HRESULT hr = device_->CreateHeap(&hd, IID_PPV_ARGS(&th.heap));
+    th.not_zeroed = SUCCEEDED(hr);  // #365
     if (FAILED(hr)) {
       hd.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
       hr = device_->CreateHeap(&hd, IID_PPV_ARGS(&th.heap));
@@ -3405,6 +3409,7 @@ class D3D12Backend final : public Backend {
     th.heap->SetName(L"gow2 texture heap");
     th.free.emplace(size, kTextureHeapBytes - size);
     th.fresh_from = size;
+    recycled = th.not_zeroed;  // #365: the first texture of a not-zeroed heap is not zero either
     tex_heaps_.push_back(std::move(th));
     ++stats_.texture_heaps;
     uint64_t free_bytes = 0, largest_free = 0;
@@ -3414,10 +3419,11 @@ class D3D12Backend final : public Backend {
         largest_free = std::max(largest_free, n);
       }
     REXLOG_INFO("gow2_renderer: texture heap {} created ({} MB, patch 0017) for a {} KB texture | live placed textures {} "
-                "({:.1f} MB), free in the other heaps {:.1f} MB (largest range {} KB)",
+                "({:.1f} MB), free in the other heaps {:.1f} MB (largest range {} KB) | not zeroed {} (#365: its new "
+                "textures that can leave levels unwritten are zeroed first)",
                 tex_heaps_.size(), kTextureHeapBytes >> 20, size >> 10, placed_live_count_,
                 double(placed_live_bytes_) / 1048576.0, double(free_bytes) / 1048576.0,
-                largest_free >> 10);
+                largest_free >> 10, tex_heaps_.back().not_zeroed);
     heap = int32_t(tex_heaps_.size() - 1);
     offset = 0;
     return true;

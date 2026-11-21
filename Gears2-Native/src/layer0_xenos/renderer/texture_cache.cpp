@@ -109,7 +109,7 @@ REXCVAR_DEFINE_STRING(gow2_renderer_bc_cpu_over_gpu, "auto", "Gears2",
 // are recycled, so a texture level that a load did not write shows the previous tenant's bytes (Vulkan zeroes
 // block-compressed images at creation, VKA3). A new texture whose first load can leave levels unwritten (a BC texture
 // loaded through the scratch buffer, or a mip chain with no mip address) is given zero contents first, on D3D12 in a
-// recycled heap range only. Default on; false = the 0.6.1 behaviour. (Failed loads are separately retried, always.)
+// recycled heap range or a heap made not-zeroed (#365: AMD returns old video memory there). Default on; false = the 0.6.1 behaviour. (Failed loads are separately retried, always.)
 REXCVAR_DEFINE_BOOL(gow2_renderer_zero_new_textures, true, "Gears2",
                     "GitHub #311 (white / flickering floors, D3D12): newly created placed D3D12 textures whose first load can "
                     "leave levels unwritten (BC textures loaded on the GPU, mip chains without a mip address) start with "
