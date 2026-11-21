@@ -1070,8 +1070,20 @@ void GowjUltrawideSharedMemory(PPCRegister& r5) {
   if (!l) { l = true; REXLOG_INFO("gowj_ultrawide: scene shared memory block 2 0x{:X} -> 0x{:X} (GitHub #396)", r5.u32, kStock720); }
   r5.u64 = kStock720;
 }
+// 0.6.7: same as Gears 3 (gow3_native_ui_show_all): at --gowj_native_lines the game's own Scaleform scale mode draws
+// the 1280x720 menus at 720p pixel size (job 2200 A-1080p-Judgment: pause text 2/3 size). Skipping the store keeps
+// show-all, as under Ultrawide: the console layout scaled by lines / 720.
+REXCVAR_DEFINE_BOOL(gowj_native_ui_show_all, true, "Judgment",
+                    "With --gowj_native_lines: Scaleform menus keep the show-all scale mode, so the console's 1280x720 "
+                    "layout is scaled to the larger screen (false = the 0.6.6 behaviour: drawn at 720p size)");
 bool GowjUltrawideUiScale(PPCRegister& r4) {  // jump_address_on_true 0x82CBA688: the store is skipped, r4 = 1
-  if (!REXCVAR_GET(gowj_ultrawide)) return false;
+  if (!REXCVAR_GET(gowj_ultrawide)) {
+    if (!GowjNativeLines() || !REXCVAR_GET(gowj_native_ui_show_all)) return false;
+    static bool n = false;
+    LogOnce(n, "native lines: Scaleform scale mode (menus keep show-all)", uint32_t(r4.u32), 1u);
+    r4.u64 = 1;
+    return true;
+  }
   static bool l = false;
   LogOnce(l, "Scaleform scale mode", uint32_t(r4.u32), 1u);
   r4.u64 = 1;
