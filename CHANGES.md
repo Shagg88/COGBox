@@ -2,7 +2,7 @@
 
 ## 0.6.7
 
-A hotfix for three reports against 0.6.6.
+Fixes for the reports against 0.6.6, and two pull requests.
 
 - **Gears 3: crash entering a game online.** The class-derivation cache in the object search was a shared table
   without a lock; the name-tag worker and the squad-slot code used it at the same time when other players entered
@@ -14,8 +14,30 @@ A hotfix for three reports against 0.6.6.
 - **Black screen with sound in a folder with non-ASCII letters** (#409). The shader compiler's folder (and the
   recipe pack, draw-log and frame-capture paths) were read in the Windows ANSI code page instead of UTF-8, so
   dxcompiler.dll was not found and nothing could be drawn. All four games.
-- Still open: Gears of War's menus at the 1080p render resolution (#408, Gears 1 part - a fix tried for 0.6.7
-  placed them in the top-left corner and was taken out) and its 16:10 logo / loading screens (#407).
+- **Gears of War, 1080p render resolution: menus at the right size** (#408). Gears 1's menus are UI scenes drawn on a
+  canvas whose transform comes from the render target's size, so at 1080 lines they stayed 720p-sized. The scenes now
+  lay out in the console's 1280x720 and the canvas is scaled to the screen while they are drawn.
+  `--gow1_native_ui_layout720=false` brings back 0.6.6. (Subtitles and other HUD text are not UI scenes and keep
+  their 720p pixel size at 1080 lines.)
+- **Gears of War at 16:10: logo films and the loading screen keep their shape** (#407). The film player squeezed
+  them for a TV with non-square pixels because the 16:10 video mode is "not widescreen" to the game; a PC screen's
+  pixels are square. `--gow1_movie_square_pixels=false` brings back 0.6.6.
+- **Gears 3: a rare crash about 20 seconds into start-up** ("read of guest 0x4A9E7324"; seen in 1 of 7 to 1 of 44
+  starts in our tests). The game's file thread adds to its name-to-file-handle table while the game thread looks
+  names up in it, with no lock in the game's own code. The three functions now share a lock.
+  `--gow3_file_handle_map_lock=false` turns it off.
+- **Ambient occlusion: Off is back** (#406). Default / On in 0.6.6 had removed it; Off switches the game's own
+  ambient occlusion off, as before 0.6.6. A saved Off stays Off.
+- **Ambient occlusion On: full size for a 720p / 1080p scene** (PR #411, gmihaic). Half resolution is only used when
+  the 3D scene is drawn at 2x or more; at 1x it looked smeared and crawled.
+- **DLSS / FSR Performance at 4K** (PR #411, gmihaic). With the 4K render resolution and Scene resolution
+  Performance the game draws 1920x1080 itself and the upscaler makes 3840x2160 of it (it only anti-aliased there
+  before). Tested by its author with DLSS on DirectX 12.
+- **Hungarian translation** updated for 0.6.6's texts (PR #410, hevesij).
+- **Known, not fixed: Judgment, the loading screen after Monroe Commons** (Sofia's testimony) can stay up for ever
+  with a frame-rate limit above 30 (#405). The loading-screen limit of earlier versions does not cure it (the hang
+  starts before the loading screen). Until it is fixed: set the frame-rate limit to 30 before finishing that section
+  and set it back in the next one (from players' reports, not re-tested by us).
 
 ## 0.6.6
 

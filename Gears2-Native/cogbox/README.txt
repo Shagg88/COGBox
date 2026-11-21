@@ -75,8 +75,14 @@ New in 0.6.7
   (they were drawn at 720p size, squeezed into the top of the screen).
 - Black screen with sound when COGBox is in a folder whose name has letters outside your Windows language (for
   example Cyrillic): fixed in all four games.
-- Known: Gears of War at the 1080p render resolution still draws its menus at 720p size (#408); the 16:10 logo
-  and loading screens in Gears of War are flattened (#407).
+- Gears of War at the 1080p render resolution: its menus fill the screen too (#408).
+- Gears of War on a 16:10 screen: the logo films and the loading screen are no longer flattened (#407).
+- Gears 3: fixed a rare crash about 20 seconds after starting the game.
+- Ambient occlusion: "Off" is back in the list (#406). "On" is drawn at full size when the game draws 720p or 1080p.
+- DLSS / FSR "Performance" now really upscales at the 4K render resolution (1920x1080 to 3840x2160).
+- Hungarian translation updated.
+- Known: Judgment - the loading screen after Monroe Commons (Sofia's testimony) can stay up for ever with a
+  frame-rate limit above 30 (#405). Set the limit to 30 before you finish that section, then set it back.
 
 
 New in 0.6.6
