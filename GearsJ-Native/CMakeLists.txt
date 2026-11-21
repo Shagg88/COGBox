@@ -112,7 +112,8 @@ set(GOWJ_SOURCES
 )
 # ue3/objects.h is Gears 2's (its objects.cpp is built in layer 2 above); only these files get that folder, so this
 # game's own ue3/ headers are not shadowed.
-set_source_files_properties(src/layer3_gowj/adaptive_triggers.cpp src/layer3_gowj/first_person.cpp src/layer3_gowj/cheats.cpp PROPERTIES
+set_source_files_properties(src/layer3_gowj/adaptive_triggers.cpp src/layer3_gowj/first_person.cpp src/layer3_gowj/cheats.cpp
+    src/layer3_gowj/game_patches.cpp PROPERTIES  # 0.6.6: game_patches.cpp uses ue3::obj too (true-1080p menus)
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 if(WIN32)
     # GitHub #355: the game's own window / taskbar icon (res/gowj.rc; SDL takes the exe's first icon)
