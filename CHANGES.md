@@ -29,6 +29,10 @@ games.
   dirty-disc error (#392, #393 - always on, no launcher box).
 - **Gears 3:** DLSS / FSR upscale the finished scene, and object motion is matched by object rows (PR #379, gmihaic).
 - **Judgment:** ultrawide scene targets follow the picture's height (#396).
+- **Gears 3, ultrawide menus (#396):** full-screen menus are drawn in a 16:9 box in the centre, so pieces of other
+  menus no longer show in the side strips.
+- **AMD graphics, pink / purple textures (#365):** new textures are set up the way AMD's guide asks before the game
+  first writes them.
 - **HDR:** more SDR fallbacks (PR #380, legoliamneeson).
 - **Frame generation** is not offered on graphics with under 3.5 GB of their own video memory (#397).
 - **Screenshots and frame shots** are written by their full Unicode path (a Pictures folder with letters outside the
@@ -44,7 +48,7 @@ games.
     and Title Update 6 is now the only version built.
 - **True 1080p.** The 1080p render resolution now makes the game itself draw 1920x1080 - real detail, where it used
   to be 720p upscaled and sharpened. With Ultrawide on, Gears 2 and Gears 3 scale the wide picture the same way
-  (1280x550 becomes 1920x826); Judgment and Gears of War still upscale there.
+  (1280x550 becomes 1920x826); Judgment and Gears of War still upscale there. The games' own menus follow the larger screen too.
 - **Notices:** the XeGTAO, SMAA, stb_dxt and native mouse look licence texts are in `THIRD_PARTY_NOTICES.md`; Intel's
   terms are gone with XeSS.
 
