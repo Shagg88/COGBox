@@ -1261,6 +1261,8 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
                "On Vulkan, DLSS is not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
                "frame generation is AMD FSR only (experimental), "
                "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
+    if (o.id == "AO")   // 0.6.7, GitHub #406: Off is back
+        base += "\nOff: no ambient occlusion at all.";
     if (o.id == "AO" && g == Game::Judgment)   // notes/81
         base += "\nJudgment: On replaces the game's own AO, which can flicker with DLSS.";
     if (o.id == "DoF" && g == Game::Gears1)   // GitHub #179
@@ -1531,8 +1533,8 @@ Settings Store::view(Game g, const Environment& env) const {
     // game fell back to when Intel's could not run).
     if (s.i("AAMode") == 4) s.set("AAMode", 1);
     if (s.i("FrameGen") == k_fgDropped) s.set("FrameGen", 1);
-    // 0.6.6: Ambient occlusion is Default / On - a saved Off becomes Default, a saved Ultra or CACAO becomes On
-    if (s.i("AO") == 0) s.set("AO", 1);
+    // 0.6.6: Ambient occlusion was Default / On. 0.6.7 (GitHub #406, Shagg 21 Nov): Off (0) is offered again, so a
+    // saved Off stays Off; a saved Ultra or CACAO still becomes On
     if (s.i("AO") >= 3) s.set("AO", 2);
     if ((g == Game::Judgment || g == Game::Gears1) && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
     if (g == Game::Gears1 && !gears1_lang(s.i("Lang"))) s.set("Lang", 0);   // a language Gears 1 has no text for
