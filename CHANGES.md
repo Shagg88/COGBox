@@ -1,5 +1,22 @@
 # COGBox changes
 
+## 0.6.7
+
+A hotfix for three reports against 0.6.6.
+
+- **Gears 3: crash entering a game online.** The class-derivation cache in the object search was a shared table
+  without a lock; the name-tag worker and the squad-slot code used it at the same time when other players entered
+  a level. It now takes a lock.
+- **Gears 3 and Judgment, 1080p render resolution: menus at the right size** (#408). The menus are Scaleform movies;
+  the game told them to draw at 1:1 pixel size, which only fits at 720 lines. They now keep the "show all" scale
+  mode (as with Ultrawide), so the console layout is scaled to the larger screen. `--gow3_native_ui_show_all=false`
+  / `--gowj_native_ui_show_all=false` bring back 0.6.6.
+- **Black screen with sound in a folder with non-ASCII letters** (#409). The shader compiler's folder (and the
+  recipe pack, draw-log and frame-capture paths) were read in the Windows ANSI code page instead of UTF-8, so
+  dxcompiler.dll was not found and nothing could be drawn. All four games.
+- Still open: Gears of War's menus at the 1080p render resolution (#408, Gears 1 part - a fix tried for 0.6.7
+  placed them in the top-left corner and was taken out) and its 16:10 logo / loading screens (#407).
+
 ## 0.6.6
 
 Everything worked on since 0.6.5. **Speed first:** the renderer's speed work is now on for every player, in all four

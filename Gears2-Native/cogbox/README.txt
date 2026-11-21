@@ -2,7 +2,7 @@ COGBox - Gears of War native PC ports
 =====================================
 
 COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
-Judgment. This README is for COGBox 0.6.6.
+Judgment. This README is for COGBox 0.6.7.
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project. COGBox isn't affiliated with Microsoft, Epic Games or The
 Coalition.
@@ -34,7 +34,7 @@ What you need
 
 Getting started
 ---------------
-1. Right-click COGBox-0.6.6.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
+1. Right-click COGBox-0.6.7.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
    7-zip.org) to a folder of its own that you can write to, for example C:\Games\COGBox. Don't start
    COGBox from inside the archive, and don't use Program Files (Windows protects it) - COGBox tells
    you on start-up if it's in such a place.
@@ -65,6 +65,18 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 Alt+Enter in the game window switches between windowed and borderless full screen (all four games; another key:
 --bind_cogbox_fullscreen=<key> in extra-args.txt, None = off).
+
+
+New in 0.6.7
+------------
+- Gears 3: fixed a crash when entering a game while playing online (two parts of the game read the same list at
+  once).
+- Gears 3 and Judgment at the 1080p render resolution: menus are the right size and in the right place again
+  (they were drawn at 720p size, squeezed into the top of the screen).
+- Black screen with sound when COGBox is in a folder whose name has letters outside your Windows language (for
+  example Cyrillic): fixed in all four games.
+- Known: Gears of War at the 1080p render resolution still draws its menus at 720p size (#408); the 16:10 logo
+  and loading screens in Gears of War are flattened (#407).
 
 
 New in 0.6.6
