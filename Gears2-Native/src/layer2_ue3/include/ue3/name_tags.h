@@ -14,15 +14,16 @@
 #include <cstdint>
 
 struct Ue3NameTagStyle {
-  const char* before = "";  // markup before "#1234", e.g. Gears 3's "<font color='#808080'>" (its Flash text fields)
+  const char* before = "";  // markup before "#1234", e.g. "<font color='#808080'>" (empty in every game for now)
   const char* after = "";   // ... and after it
   // Gears 1 / 2 (UE3 2006-08): their `set` takes a class only, not one object. Then, in one game frame (this tick must
   // run on the game thread just before Ue3ConsoleRunQueued): every player's name is read, `set PlayerReplicationInfo
   // PlayerName <160 x>` gives every PlayerName (instances and class defaults) a new engine-owned 160-character buffer,
   // and each gets its own name back in it - with the tag where it has one. The placeholder is never drawn or sent.
   bool class_set = false;
-  // Gears 1: the only grey text style it ships ("<Styles:credits_headers>") draws in another font, and its UI ignores
-  // <Fonts:...>. "Style=Font" (object names): that style draws in this font (from when both are loaded).
+  // For a style that draws in another font (Gears 1's one grey text style, "<Styles:credits_headers>", when its grey
+  // was in use; its UI ignores <Fonts:...>). "Style=Font" (object names): that style draws in this font (from when
+  // both are loaded). Unused while no game has markup.
   const char* style_font = "";
 };
 
@@ -35,6 +36,7 @@ void Ue3NameTagsTick(bool (*objects_ready)(), const Ue3NameTagStyle& style);
 // FString whose text holds the tag's markup) a scratch copy without the markup, in guest memory of our own. The caller's
 // text is never changed. Nothing happens until the worker has checked that the game's Canvas natives are the ones the
 // hooks were written for (Ue3NameTagsTextHookChecks, from a static initializer of the game file that has the hooks).
+// Idle (no scratch memory either) while the game's tags have no markup - every game, for now.
 struct Ue3TextHookCheck {
   const char* function;   // a Canvas function, e.g. "DrawText"
   uint32_t exec;          // its native's code address in this build
