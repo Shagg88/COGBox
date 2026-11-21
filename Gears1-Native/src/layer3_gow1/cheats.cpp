@@ -90,8 +90,10 @@ extern "C" void __imp__sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base);
 extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
   __imp__sub_8222A6E0(ctx, base);
   // GitHub #353: COGBox tags after the players' names. Gears 1's set takes a class only: the class-wide form, put right
-  // in the same frame (so before Ue3ConsoleRunQueued). Grey: its one grey text style, set to the names' own font.
-  Ue3NameTagsTick([] { return ue3::obj::Ready() || OpenObjects(); }, Ue3NameTagStyle{"<Styles:credits_headers>", "<Styles:/>", true, "credits_headers=WarfareFonts_Euro20"});
+  // in the same frame (so before Ue3ConsoleRunQueued).
+  // No colour for now (Flippage / Shagg): the grey markup showed as text wherever the game draws a name as plain
+  // text (kill feed, names over heads, TacCom), and not every such place is found yet - plain on every screen.
+  Ue3NameTagsTick([] { return ue3::obj::Ready() || OpenObjects(); }, Ue3NameTagStyle{"", "", true});
   Ue3ConsoleRunQueued(ctx, base);
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   Gow1AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
