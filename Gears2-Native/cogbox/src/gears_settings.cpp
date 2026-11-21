@@ -1873,10 +1873,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
     }
     // PS1 856 (patch 0142): scene resolution, with an upscaler that is really used
+    int scene_scale = scale;   // the scale the 3D scene is drawn at: lower than `scale` in an upscaling mode
     {
         static const char* const modes[4] = { "", "--gow2_upscale_mode=quality", "--gow2_upscale_mode=performance", "--gow2_upscale_mode=ultra" };
         int m = s.i("SceneMode");
         if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4) a.push_back(modes[m]);
+        if (aa >= 2 && aa <= 4 && avail("SceneMode") && scene_mode_fits(m, scale))
+            scene_scale = m == 1 ? 2 : m == 2 ? scale / 2 : 1;   // Quality 3x -> 2x, Performance 2x -> 1x / 4x -> 2x, Ultra 3x -> 1x
         // to-do 18 (GitHub #98): with the scene at full size the upscaler only anti-aliases (DLSS = DLAA, FSR =
         // native AA) - say so, so nobody expects more frames from it
         if (aa >= 2 && aa <= 4 && !(avail("SceneMode") && m > 0 && m < 4)) {
@@ -1984,7 +1987,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                 // automatic choice (#204: 2 without DLSS / FSR, by the scene scale with one)
                 // 0.6.6: On = high at half resolution where the build has it (job 2169: half the cost, the game picture
                 // 0.16 / 255 apart on average) - as measured there, with the build's own denoise; otherwise as before
-                if (s.i("AO") == 2 && cap_exe(env, "gow2_ao_half")) a.push_back("--gow2_ao_half=true");
+                // Half resolution only for a scene of 2x or more. XeGTAO runs at the scene's size; at 1x
+                // (720p, 1080p, and the 1x scene of Performance at 1440p / 4K or Ultra performance) its half is 640x360
+                // or 960x540 - smeared, with patches that crawl from frame to frame - and the full-size pass is cheap
+                // there. Those get the full-size High as before 0.6.6.
+                if (s.i("AO") == 2 && cap_exe(env, "gow2_ao_half") && scene_scale >= 2) a.push_back("--gow2_ao_half=true");
                 else if (s.i("AO") == 2) a.push_back("--gow2_ao_denoise=2");
             }
         }

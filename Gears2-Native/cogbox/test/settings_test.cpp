@@ -447,6 +447,24 @@ int summary() {
             if (av.ok != want || (!want && av.why.find("render resolution") == std::string::npos)) {
                 std::cout << "FAIL scene mode gate (mode " << m << ", " << out << "x): ok " << av.ok << " '" << av.why << "'\n"; ++fails; }
         }
+    // XeGTAO "On" is at half resolution only when the 3D scene is drawn at 2x or more - at 1x (720p, 1080p,
+    // and the 1x scene of Performance at 1440p or Ultra performance at 4K) it gets the full-size High.
+    for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
+        for (int res = 0; res <= 3; ++res)       // render resolution 1x .. 4x
+            for (int mode = 0; mode <= 3; ++mode) {
+                Environment e; e.update_ready = true; e.gpus = { "NVIDIA GeForce RTX 4070" };
+                e.cap.exe_has = [](const std::string& n) { return n.find("native_lines") == std::string::npos; };
+                e.cap.runtime_has = [](const std::string&) { return true; }; e.cap.file_next_to_exe = e.cap.runtime_has;
+                Store st; Settings s = st.view(g, e);
+                s.set("Resolution", res); s.set("AAMode", 3); s.set("SceneMode", mode); s.set("AO", 2);
+                const std::vector<std::string> a = build_args(g, effective_version(g, s, e), s, e, nullptr);
+                auto has = [&](const std::string& v) { for (const std::string& x : a) if (x == v) return true; return false; };
+                const int out = res + 1;
+                const int scene = !scene_mode_fits(mode, out) ? out : mode == 1 ? 2 : mode == 2 ? out / 2 : 1;
+                if (has("--gow2_ao=gtao") && (has("--gow2_ao_half=true") != (scene >= 2) || has("--gow2_ao_denoise=2") != (scene < 2))) {
+                    std::cout << "FAIL XeGTAO half resolution: game " << static_cast<int>(g) << ", " << out << "x, mode " << mode
+                              << ", scene " << scene << "x\n"; ++fails; }
+            }
     // 0.6.4 (GitHub #341): the texture cache - Auto sends nothing (512) without a texture pack and 2048 with one; a size
     // other than 512 is sent as picked; nothing for an exe without the cvar
     for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
