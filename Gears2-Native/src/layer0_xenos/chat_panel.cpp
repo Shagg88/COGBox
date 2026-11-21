@@ -90,14 +90,13 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
     if (!REXCVAR_GET(cogbox_match_chat) || XenosInGameMenuIsOpen()) return;
     auto* running = g_match_running.load();
     if (!running || !running()) return;
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (typing_) {
-      team_ = team;
-      skip_char_ = true;
-      return;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (typing_) return;
+      typing_ = true, team_ = team, text_.clear(), caret_ = 0, skip_char_ = true;
+      opened_at_ = Now();
     }
-    typing_ = true, team_ = team, text_.clear(), caret_ = 0, skip_char_ = true;
-    opened_at_ = Now();
+    // (not under mutex_: the window could hand us an event from inside the call)
     if (window_) window_->SetTextInputActive(true);   // SDL sends typed characters only while this is on
     Attach();
   }
@@ -134,9 +133,14 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
         default: break;
       }
     }
+    ApplyTextInput();
     if (!send.empty()) {
       auto* fn = g_send.load();
-      if (fn && !fn(send, team)) REXLOG_INFO("chat: nothing sent (empty after cleaning, or chat not ready)");
+      if (fn && !fn(send, team) && !chat::CleanText(send).empty()) {
+        // there was something to send, but it could not go (5 already waiting): say so instead of losing it silently
+        std::lock_guard<std::mutex> lock(mutex_);
+        log_.Add({"", "Not sent: too many messages waiting - try again in a few seconds", false, Now()});
+      }
     }
     return true;
   }
@@ -154,8 +158,11 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
   }
 
   void CloseNow() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (typing_) Close(rex::ui::VirtualKey::kNone);
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (typing_) Close(rex::ui::VirtualKey::kNone);
+    }
+    ApplyTextInput();
   }
   bool WantsContinuousPaint() const override { return false; }   // drawn with each game frame
 
@@ -179,10 +186,12 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
         if (!running || !running() || XenosInGameMenuIsOpen()) Close(rex::ui::VirtualKey::kNone);
       }
       lines = log_.Visible(Now(), typing_);
-      if (lines.empty() && !typing_) {
-        imgui_drawer()->RemoveDialog(this);   // safe during drawing (the SDK defers it)
-        return;
-      }
+      drawing_typing_ = typing_;   // Draw's copy (read without the lock)
+    }
+    ApplyTextInput();
+    if (lines.empty() && !drawing_typing_) {
+      imgui_drawer()->RemoveDialog(this);   // safe during drawing (the SDK defers it)
+      return;
     }
     if (!REXCVAR_GET(cogbox_match_chat) || XenosInGameMenuIsOpen()) return;
     Draw(io, lines);
@@ -222,12 +231,12 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
     }
     if (int(rows.size()) > kRowsShown) rows.erase(rows.begin(), rows.end() - kRowsShown);   // oldest rows go first
 
-    const int shown = int(rows.size()) + (typing_ ? 1 : 0);
+    const int shown = int(rows.size()) + (drawing_typing_ ? 1 : 0);
     if (!shown) return;
     const float full_h = 2.f * pad_y + float(kRowsShown + 1) * row_h + float(kRowsShown) * gap;
     const float bottom = io.DisplaySize.y * 0.5f + full_h * 0.5f;
     const float height = 2.f * pad_y + float(shown) * row_h + float(shown - 1) * gap;
-    float panel_alpha = typing_ ? 1.f : 0.f;
+    float panel_alpha = drawing_typing_ ? 1.f : 0.f;
     for (const Row& r : rows) panel_alpha = std::max(panel_alpha, r.alpha);
 
     ImDrawList* dl = ImGui::GetForegroundDrawList();
@@ -256,7 +265,7 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
         dl->AddText(font, px, ImVec2(x, y), WithAlpha(kName, r.alpha), r.text.c_str(), r.text.c_str() + r.name_chars);
       y += row_h + gap;
     }
-    if (typing_) {
+    if (drawing_typing_) {
       if (!box)   // the typing row keeps a dark strip of its own, like a text field
         dl->AddRectFilled(ImVec2(0.f, y - pad_y * 0.5f), ImVec2(width, y + row_h + pad_y * 0.5f), kBack);
       DrawTyping(dl, font, px, x, y, text_w);
@@ -267,7 +276,12 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
   void Close(rex::ui::VirtualKey key) {
     typing_ = false, text_.clear(), caret_ = 0;
     swallowing_ = key;
-    if (window_) window_->SetTextInputActive(false);   // (UI thread: every Close is from a key, a draw or focus loss)
+    text_input_off_ = true;   // switched off by ApplyTextInput, once mutex_ is let go
+  }
+
+  // UI thread, mutex_ NOT held: text input off after a Close (every Close is from a key, a draw or focus loss).
+  void ApplyTextInput() {
+    if (text_input_off_.exchange(false) && window_) window_->SetTextInputActive(false);
   }
 
   // The typing row: "ALL:" / "TEAM:", then the text (its end when it is wider than the row) and a blinking caret.
@@ -301,6 +315,8 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
   std::mutex mutex_;
   chat::Log log_;
   bool typing_ = false, team_ = false, skip_char_ = false;
+  bool drawing_typing_ = false;              // UI thread: typing_ as OnDraw last saw it
+  std::atomic<bool> text_input_off_{false};
   std::string text_;
   size_t caret_ = 0;
   double opened_at_ = 0;

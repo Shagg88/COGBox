@@ -97,8 +97,10 @@ bool ReadFString(uint32_t at, std::string* out) {
   return true;
 }
 
-// Is `pri`'s line `raw` one of this player's own recent team messages? (Takes it off the list when it is.)
-bool OwnTeamLine(const std::string& raw) {
+// Is `raw` (sent by this player: `own`) one of this player's recent team messages? (Takes it off the list when it is.)
+// Another player's line is never tagged, even with the same text.
+bool OwnTeamLine(const std::string& raw, bool own) {
+  if (!own) return false;
   const size_t colon = raw.find(": ");
   if (colon == std::string::npos) return false;
   const std::string text = raw.substr(colon + 2);
@@ -121,27 +123,24 @@ bool Ue3ChatSend(const std::string& typed, bool team) {
   if (!g_ready.load(std::memory_order_acquire)) return false;
   std::string text = xenos::chat::CleanText(typed);
   if (text.empty()) return false;
-  if (team) {
-    std::lock_guard<std::mutex> lock(g_sent_mutex);
+  std::lock_guard<std::mutex> lock(g_sent_mutex);
+  if (g_waiting.size() >= kMaxWaiting) {
+    REXLOG_INFO("chat: {} messages already waiting to be sent - this one was not sent", kMaxWaiting);
+    return false;
+  }
+  if (team) {   // remembered only once it is really going out
     g_sent_team.push_back(text);
     while (g_sent_team.size() > 8) g_sent_team.pop_front();
   }
-  if (g_config.quote_text) {
-    for (char& c : text)
-      if (c == '"') c = '\'';   // a quote would end the argument
-    text = "\"" + text + "\"";
-  }
-  std::lock_guard<std::mutex> lock(g_sent_mutex);
-  if (g_waiting.size() >= kMaxWaiting) {
-    REXLOG_INFO("chat: {} messages already waiting to be sent - this one was dropped", kMaxWaiting);
-    return false;
-  }
+  // Gears 1 takes one word unless quoted (CleanText has already turned any '"' into '\'')
+  if (g_config.quote_text) text = "\"" + text + "\"";
   g_waiting.push_back(std::string(team ? "TeamSay " : "Say ") + text);
   return true;
 }
 
 void Ue3ChatPump(PPCContext&, uint8_t*) {
-  if (!g_ready.load(std::memory_order_acquire)) return;
+  // the HUD's array is the game thread's (it is read and emptied here): never from any other thread
+  if (!g_ready.load(std::memory_order_acquire) || !Ue3ConsoleIsGameThread()) return;
   {
     const double now = Seconds();
     std::lock_guard<std::mutex> lock(g_sent_mutex);
@@ -184,7 +183,7 @@ void Ue3ChatPump(PPCContext&, uint8_t*) {
         std::string name;
         if (!pri || o.player_name < 0 || !ReadFString(pri + uint32_t(o.player_name), &name) || name.empty()) continue;
         if (!ReadFString(entry, &line.raw) || line.raw.compare(0, name.size() + 2, name + ": ") != 0) continue;
-        line.team = OwnTeamLine(line.raw);
+        line.team = OwnTeamLine(line.raw, pri == obj::Read32(pc + uint32_t(o.pri)));
         if (sink) sink(line);
       }
       obj::Write32(array + 4, 0);   // emptied (the allocation stays the engine's): it never draws them itself

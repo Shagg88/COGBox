@@ -28,8 +28,11 @@ void CleanTextTests() {
   CHECK(CleanText("caf\xC3\xA9") == "caf");
   CHECK(CleanText("   ").empty());
   CHECK(CleanText(std::string(200, 'x')).size() == 150);
-  CHECK(CleanText("\"quoted\" 100% -x") == "\"quoted\" 100% -x");
+  // '"' would end (or start) the console's string argument: it becomes '\''
+  CHECK(CleanText("\"quoted\" 100% -x") == "'quoted' 100% -x");
   CHECK(CleanText("hi; quit") == "hi quit");
+  CHECK(CleanText("hi | quit") == "hi  quit");   // UE3's Exec runs each '|' part as its own command
+  CHECK(CleanText("|") .empty());
 }
 
 void ParseTests() {

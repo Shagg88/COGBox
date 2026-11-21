@@ -18,7 +18,8 @@ constexpr int kMaxWrap = 3;         // rows one message may wrap to
 constexpr double kFadeAfter = 8.0;  // seconds a line stays fully visible
 constexpr double kFadeTime = 1.0;   // seconds it then takes to fade out
 
-// What may be sent: printable ASCII (0x20-0x7E) without ';' (the console queue's separator), trimmed, at most kMaxChars.
+// What may be sent: printable ASCII (0x20-0x7E) without ';' and '|' (both split a console line into more commands),
+// '"' turned into '\'' (it would end the string argument), trimmed, at most kMaxChars.
 // "" means there is nothing to send.
 std::string CleanText(std::string_view typed);
 

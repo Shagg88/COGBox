@@ -10,7 +10,8 @@ std::string CleanText(std::string_view typed) {
   out.reserve(typed.size());
   for (const char ch : typed) {
     const unsigned char c = static_cast<unsigned char>(ch);
-    if (c >= 0x20 && c <= 0x7E && c != ';') out.push_back(ch);
+    // ';' and '|' split a console line into more commands; '"' would end the string argument
+    if (c >= 0x20 && c <= 0x7E && c != ';' && c != '|') out.push_back(c == '"' ? '\'' : ch);
   }
   const size_t first = out.find_first_not_of(' ');
   if (first == std::string::npos) return std::string();
