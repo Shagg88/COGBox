@@ -178,12 +178,20 @@ bool fsr_vulkan_on(const Settings& s, const Environment& env);   // ...and "FSR 
 int expected_render_scale(Game g, const Settings& s, const Environment& env);
 // #345 / GitHub #98: Scene resolution mode m (1 Quality, 2 Performance, 3 Ultra performance) has a whole-number scene size
 // at render scale `out` - otherwise the upscaler only anti-aliases (DLAA / native AA)
-inline bool scene_mode_fits(int m, int out) { return (m == 2 && (out == 2 || out == 4)) || ((m == 1 || m == 3) && out == 3); }
+// perf1080 (performance_1080_base): at 3x (4K) Performance fits too - the scene is then the game's own 1920x1080
+// (true 1080p), drawn at 1x under a 2x output, a whole-number pair.
+inline bool scene_mode_fits(int m, int out, bool perf1080 = false) {
+    return (m == 2 && (out == 2 || out == 4 || (out == 3 && perf1080))) || ((m == 1 || m == 3) && out == 3);
+}
+// Performance at 4K from the true-1080p base: this game's exe can draw 1920x1080 itself (the same conditions as the
+// 1080p render resolution - its menus, and the wide picture with Ultrawide on). The launcher then sends 2x of 1080
+// lines instead of 3x of 720 for "4K + Performance": the same 3840x2160 output, with a 1920x1080 scene for the upscaler.
+bool performance_1080_base(Game g, const Settings& s, const Environment& env);
 // 0.6.6 (Shagg 20 Nov; job 2137b: DLSS "Quality" at 1440p cost 1.1 ms of GPU time and lowered nothing): a Scene
 // resolution that the render resolution can't divide is greyed in the list, with what would make it work.
-inline Availability scene_mode_choice_available(int m, int out) {
+inline Availability scene_mode_choice_available(int m, int out, bool perf1080 = false) {
     Availability a;
-    if (m < 1 || m > 3 || scene_mode_fits(m, out)) return a;
+    if (m < 1 || m > 3 || scene_mode_fits(m, out, perf1080)) return a;
     a.ok = false;
     const std::string at = out == 1 ? "720p / 1080p (1x)" : out == 2 ? "1440p (2x)" : out == 3 ? "4K (3x)" : "5K (4x)";
     a.why = m == 2 ? "Performance draws the scene at half size, which needs render resolution 2x (1440p) or 4x. At " + at +

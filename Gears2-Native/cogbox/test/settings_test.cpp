@@ -447,24 +447,42 @@ int summary() {
             if (av.ok != want || (!want && av.why.find("render resolution") == std::string::npos)) {
                 std::cout << "FAIL scene mode gate (mode " << m << ", " << out << "x): ok " << av.ok << " '" << av.why << "'\n"; ++fails; }
         }
-    // XeGTAO "On" is at half resolution only when the 3D scene is drawn at 2x or more - at 1x (720p, 1080p,
-    // and the 1x scene of Performance at 1440p or Ultra performance at 4K) it gets the full-size High.
+    // 4K + Performance from the true-1080p base: with an exe that can draw 1920x1080 itself, "3x (4K)" with Scene
+    // resolution Performance sends 2x of 1080 lines (the upscaler then gets a 1920x1080 scene) and the choice is not
+    // greyed; every other pairing, and an exe without the switch, is as before. And XeGTAO "On" is at half
+    // resolution only when the 3D scene is drawn at 2x or more - at 1x it gets the full-size High.
     for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
-        for (int res = 0; res <= 3; ++res)       // render resolution 1x .. 4x
-            for (int mode = 0; mode <= 3; ++mode) {
-                Environment e; e.update_ready = true; e.gpus = { "NVIDIA GeForce RTX 4070" };
-                e.cap.exe_has = [](const std::string& n) { return n.find("native_lines") == std::string::npos; };
-                e.cap.runtime_has = [](const std::string&) { return true; }; e.cap.file_next_to_exe = e.cap.runtime_has;
-                Store st; Settings s = st.view(g, e);
-                s.set("Resolution", res); s.set("AAMode", 3); s.set("SceneMode", mode); s.set("AO", 2);
-                const std::vector<std::string> a = build_args(g, effective_version(g, s, e), s, e, nullptr);
-                auto has = [&](const std::string& v) { for (const std::string& x : a) if (x == v) return true; return false; };
-                const int out = res + 1;
-                const int scene = !scene_mode_fits(mode, out) ? out : mode == 1 ? 2 : mode == 2 ? out / 2 : 1;
-                if (has("--gow2_ao=gtao") && (has("--gow2_ao_half=true") != (scene >= 2) || has("--gow2_ao_denoise=2") != (scene < 2))) {
-                    std::cout << "FAIL XeGTAO half resolution: game " << static_cast<int>(g) << ", " << out << "x, mode " << mode
-                              << ", scene " << scene << "x\n"; ++fails; }
-            }
+        for (int lines = 0; lines <= 1; ++lines)
+            for (int res = 0; res <= 3; ++res)       // render resolution 1x .. 4x
+                for (int mode = 0; mode <= 3; ++mode) {
+                    Environment e; e.update_ready = true; e.gpus = { "NVIDIA GeForce RTX 4070" };
+                    e.cap.exe_has = [lines](const std::string& n) { return lines || n.find("native_lines") == std::string::npos; };
+                    e.cap.runtime_has = [](const std::string&) { return true; }; e.cap.file_next_to_exe = e.cap.runtime_has;
+                    Store st; Settings s = st.view(g, e);
+                    s.set("Resolution", res); s.set("AAMode", 3); s.set("SceneMode", mode); s.set("AO", 2);
+                    const std::vector<std::string> a = build_args(g, effective_version(g, s, e), s, e, nullptr);
+                    auto has = [&](const std::string& v) { for (const std::string& x : a) if (x == v) return true; return false; };
+                    auto starts = [&](const std::string& v) { for (const std::string& x : a) if (x.rfind(v, 0) == 0) return true; return false; };
+                    const int out = res + 1;
+                    const bool base1080 = performance_1080_base(g, s, e);
+                    const bool perf = lines && out == 3 && mode == 2;
+                    const bool fits = scene_mode_fits(mode, out);
+                    const int scene = perf ? 1 : !fits ? out : mode == 1 ? 2 : mode == 2 ? out / 2 : 1;
+                    const bool gtao = has("--gow2_ao=gtao");
+                    std::string why;
+                    if (base1080 != (lines != 0)) why = "performance_1080_base";
+                    else if (has("--gow2_renderer_resolution_scale=" + std::to_string(perf ? 2 : out)) == false) why = "render scale";
+                    else if (starts("--gow") && (has("--gow2_renderer_edram_extended=true") != perf)) why = "extended EDRAM";
+                    else if ((starts("--gow2_native_lines=1080") || starts("--gow3_native_lines=1080") ||
+                              starts("--gowj_native_lines=1080") || starts("--gow1_native_lines=1080")) != perf) why = "native lines";
+                    else if (mode && has("--gow2_upscale_mode=performance") != (mode == 2)) why = "upscale mode";
+                    else if (scene_mode_choice_available(mode, out, base1080).ok != (mode == 0 || fits || perf)) why = "choice gate";
+                    else if (gtao && has("--gow2_ao_half=true") != (scene >= 2)) why = "XeGTAO half resolution";
+                    else if (gtao && has("--gow2_ao_denoise=2") != (scene < 2)) why = "XeGTAO full-size High";
+                    if (!why.empty()) {
+                        std::cout << "FAIL 4K Performance / AO half (" << why << "): game " << static_cast<int>(g) << ", lines " << lines
+                                  << ", " << out << "x, mode " << mode << ", scene " << scene << "x\n"; ++fails; }
+                }
     // 0.6.4 (GitHub #341): the texture cache - Auto sends nothing (512) without a texture pack and 2048 with one; a size
     // other than 512 is sent as picked; nothing for an exe without the cvar
     for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })

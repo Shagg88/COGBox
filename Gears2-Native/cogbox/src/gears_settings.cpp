@@ -695,6 +695,17 @@ int expected_render_scale(Game g, const Settings& s, const Environment& e) {
     const double need = wide ? e.monitor_w / 1280.0 : std::min(e.monitor_w / 1280.0, e.monitor_h / 720.0);
     return std::clamp(static_cast<int>(std::ceil(need - 1e-9)), 1, 4);
 }
+bool performance_1080_base(Game g, const Settings& s, const Environment& e) {
+    static const char* const k_lines[kGameCount] = { "gow2_native_lines", "gow3_native_lines", "gowj_native_lines",
+                                                     "gow1_native_lines" };
+    if (!cap_exe(e, k_lines[static_cast<int>(g)]) || !cap_exe(e, "gow2_renderer_edram_extended") ||
+        !cap_exe(e, "_native_lines: UI scene viewport"))
+        return false;
+    // with Ultrawide really sent: only an exe that scales the wide picture too (as the 1080p render resolution)
+    const Option* uw = find_option(g, "Ultrawide");
+    const bool wide = uw && s.b("Ultrawide") && available(*uw, g, effective_version(g, s, e), s, e).ok;
+    return !wide || cap_exe(e, "the wide picture is scaled the same way");
+}
 namespace {
 
 std::vector<std::string> gpu_list(const Environment& env) {
@@ -1873,13 +1884,26 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
     }
     // PS1 856 (patch 0142): scene resolution, with an upscaler that is really used
+    bool perf1080 = false;     // 4K + Performance from the true-1080p base (below)
     int scene_scale = scale;   // the scale the 3D scene is drawn at: lower than `scale` in an upscaling mode
     {
         static const char* const modes[4] = { "", "--gow2_upscale_mode=quality", "--gow2_upscale_mode=performance", "--gow2_upscale_mode=ultra" };
         int m = s.i("SceneMode");
         if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4) a.push_back(modes[m]);
-        if (aa >= 2 && aa <= 4 && avail("SceneMode") && scene_mode_fits(m, scale))
+        // 4K + Performance: 3x of 720 lines has no whole-number half, so the upscaler only anti-aliased there. The same
+        // 3840x2160 comes out of 2x of the game's own 1080 lines (true 1080p), and Performance is then 2x -> 1x: the
+        // upscaler really gets a 1920x1080 scene. Only for an exe the 1080p render resolution is offered for.
+        if (aa >= 2 && aa <= 4 && avail("SceneMode") && m == 2 && scale == 3 && performance_1080_base(g, s, env)) {
+            for (std::string& x : a)
+                if (x == "--gow2_renderer_resolution_scale=3") x = "--gow2_renderer_resolution_scale=2";
+            a.insert(a.end(), { std::string("--") + k_nativeLines[gi] + "=1080", "--gow2_renderer_edram_extended=true" });
+            notes.push_back("launcher: 4K with Scene resolution Performance - the game draws 1920x1080 itself and the "
+                            "picture is 2x of that (3840x2160), so the upscaler gets a 1920x1080 scene");
+            perf1080 = true;
+            scene_scale = 1;
+        } else if (aa >= 2 && aa <= 4 && avail("SceneMode") && scene_mode_fits(m, scale)) {
             scene_scale = m == 1 ? 2 : m == 2 ? scale / 2 : 1;   // Quality 3x -> 2x, Performance 2x -> 1x / 4x -> 2x, Ultra 3x -> 1x
+        }
         // to-do 18 (GitHub #98): with the scene at full size the upscaler only anti-aliases (DLSS = DLAA, FSR =
         // native AA) - say so, so nobody expects more frames from it
         if (aa >= 2 && aa <= 4 && !(avail("SceneMode") && m > 0 && m < 4)) {
@@ -1893,7 +1917,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // #345: "Match my monitor" too, with the scale the game will pick (4K: 3x, so Performance there was DLAA unsaid).
         if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4) {
             const int out = expected_render_scale(g, s, env);
-            const bool fits = scene_mode_fits(m, out);
+            const bool fits = scene_mode_fits(m, out, perf1080);
             if (!fits) {
                 static const char* const mname[4] = { "", "Quality", "Performance", "Ultra performance" };
                 notes.push_back(std::string("launcher: Scene resolution ") + mname[m] + " has no whole-number scene size at render "
