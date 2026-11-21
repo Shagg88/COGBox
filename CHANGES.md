@@ -15,7 +15,7 @@ and 0.6.6 back to back, each warmed up first (jobs 2199 / 2204; average frame ti
 | Gears of War: Judgment | 10.09 ms | 7.85 ms | 22 % |
 | Gears of War | 6.99 ms | 6.27 ms | 10 % |
 
-Vulkan, same test: Gears 2 12.84 -> 11.34 ms, Gears 3 9.89 -> 6.39 ms. Your PC's numbers will differ; the gain is
+Vulkan, same test: Gears 2 12.84 -> 11.34 ms (12 % faster), Gears 3 9.89 -> 6.39 ms (35 % faster). Your PC's numbers will differ; the gain is
 largest where the graphics card was the limit.
 
 - **Faster drawing, all four games.** Pixel shaders without the alpha test when a draw does not use it (the graphics
