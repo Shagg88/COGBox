@@ -70,8 +70,8 @@ Alt+Enter in the game window switches between windowed and borderless full scree
 New in 0.6.6
 ------------
 - FASTER DRAWING IN ALL FOUR GAMES: the renderer's speed work (pixel shaders without an unused alpha test, less
-  per-texture work, cheaper vertex and front-buffer copies) is now on for everyone. (Measured gains are listed in
-  CHANGES.md once the 0.6.5 comparison has been run.)
+  per-texture work, cheaper vertex and front-buffer copies) is now on for everyone. Measured on one PC (1440p,
+  DirectX 12): Gears 2 37 % faster, Gears 3 21 %, Judgment 22 %, Gears of War 10 % (details in CHANGES.md).
 - Upscalers at 32:9 and wider: FSR / DLSS / SMAA T2x now start (they never started on a 32:9 screen with Ultrawide on).
 - TRUE 1080p: the 1080p render resolution now has the game draw 1920x1080 itself (it was 720p upscaled). Also
   with Ultrawide in Gears 2 and Gears 3; Judgment and Gears of War with Ultrawide still upscale.
@@ -84,6 +84,7 @@ New in 0.6.6
 - Frame generation is not offered on graphics with under 3.5 GB of their own memory (it could not keep up there).
 - Screenshots work when the Pictures folder has letters outside your Windows language.
 - System Link is no longer labelled experimental.
+- Name tags show as plain Name#1234 in every game (thanks Flippage).
 - Removed: Intel XeSS and XeSS frame generation (a saved XeSS choice becomes SMAA, a saved XeSS frame generation
   becomes AMD FSR frame generation), the second ambient-occlusion method (CACAO), the "Match my monitor" render
   resolution (a saved one becomes the nearest whole-number scale) and the "Game version" choice (title updates

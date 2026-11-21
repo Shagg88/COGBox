@@ -5,8 +5,18 @@
 Everything worked on since 0.6.5. **Speed first:** the renderer's speed work is now on for every player, in all four
 games.
 
-> Performance table: to be filled in from the 0.6.5 comparison run (one job per game, the same route, 0.6.5 against
-> 0.6.6 back to back). No numbers are quoted here until that run has been made.
+Measured on one PC (RTX 3080 Ti, 2x render scale = 1440p, DirectX 12, no frame cap), the same gameplay route, 0.6.5
+and 0.6.6 back to back, each warmed up first (jobs 2199 / 2204; average frame time, lower is better):
+
+| Game | 0.6.5 | 0.6.6 | Faster |
+|---|---|---|---|
+| Gears of War 2 | 8.54 ms | 5.39 ms | 37 % |
+| Gears of War 3 | 5.87 ms | 4.66 ms | 21 % |
+| Gears of War: Judgment | 10.09 ms | 7.85 ms | 22 % |
+| Gears of War | 6.99 ms | 6.27 ms | 10 % |
+
+Vulkan, same test: Gears 2 12.84 -> 11.34 ms, Gears 3 9.89 -> 6.39 ms. Your PC's numbers will differ; the gain is
+largest where the graphics card was the limit.
 
 - **Faster drawing, all four games.** Pixel shaders without the alpha test when a draw does not use it (the graphics
   card keeps its early depth rejection), texture fetches that skip post-processing they do not need, no 16-bit filter
@@ -39,6 +49,8 @@ games.
   Windows code page).
 - **Launcher:** System Link is no longer labelled experimental; long labels wrap beside their control (PR #381,
   Flippage); Hungarian translation update (#390, hevesij); the in-game menu no longer lists choices that were dropped.
+- **Name tags** (#353 follow-up, PR #404, Flippage): COGBox tags show as plain `Name#1234` in every game. The grey
+  markup showed up as text where a game draws a name as plain text (kill feed, names over heads, TacCom).
 - **Removed:**
   - Intel XeSS and XeSS frame generation. A saved XeSS choice becomes SMAA; a saved XeSS frame generation becomes AMD
     FSR frame generation. Their DLLs are no longer shipped, and the launcher removes them from an older install.
@@ -48,7 +60,8 @@ games.
     and Title Update 6 is now the only version built.
 - **True 1080p.** The 1080p render resolution now makes the game itself draw 1920x1080 - real detail, where it used
   to be 720p upscaled and sharpened. With Ultrawide on, Gears 2 and Gears 3 scale the wide picture the same way
-  (1280x550 becomes 1920x826); Judgment and Gears of War still upscale there. The games' own menus follow the larger screen too.
+  (1280x550 becomes 1920x826); Judgment and Gears of War still upscale there. The games' own menus and pause screens fill the larger screen too
+  (Gears 2's menus lay out in the console's 1280x720 and are scaled up, as on the console).
 - **Notices:** the XeGTAO, SMAA, stb_dxt and native mouse look licence texts are in `THIRD_PARTY_NOTICES.md`; Intel's
   terms are gone with XeSS.
 
