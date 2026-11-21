@@ -334,8 +334,8 @@ int summary() {
             if (s3.i("AAMode") != 1 || s3.i("FrameGen") != 1) { std::cout << "FAIL dropped-upscaler migration: AAMode " << s3.i("AAMode") << " FrameGen " << s3.i("FrameGen") << "\n"; ++fails; }
             if (!framegen_choice_hidden(k_fgDropped, e3)) { std::cout << "FAIL dropped frame generation still listed\n"; ++fails; }
         }
-        // 0.6.6: Ambient occlusion is Default (1) / On (2) - a saved Off becomes Default, Ultra / CACAO become On
-        for (const auto& c : { std::array<int, 2>{ 0, 1 }, std::array<int, 2>{ 1, 1 }, std::array<int, 2>{ 2, 2 }, std::array<int, 2>{ 3, 2 }, std::array<int, 2>{ 4, 2 } }) {
+        // 0.6.7: Ambient occlusion is Off (0) / Default (1) / On (2) - a saved Off stays Off (GitHub #406), Ultra / CACAO become On
+        for (const auto& c : { std::array<int, 2>{ 0, 0 }, std::array<int, 2>{ 1, 1 }, std::array<int, 2>{ 2, 2 }, std::array<int, 2>{ 3, 2 }, std::array<int, 2>{ 4, 2 } }) {
             Environment e4; e4.update_ready = true;
             Store st4; st4.top["AO"] = c[0];
             const Settings s4 = st4.view(Game::Gears2, e4);

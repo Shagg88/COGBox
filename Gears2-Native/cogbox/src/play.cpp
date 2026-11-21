@@ -276,9 +276,9 @@ static void write_menu_file(App &a, int g, gs::Version ver, const std::string &l
         if (!choices.empty()) {
             t += "choices=";
             // 0.6.6: a choice that is no longer offered keeps its place (the value is the index) but goes out empty -
-            // the in-game menu leaves empty choices out of its list (AO: Default / On; no dropped upscaler; no Match my monitor)
+            // the in-game menu leaves empty choices out of its list (AO: Off / Default / On; no dropped upscaler; no Match my monitor)
             auto offered = [&](size_t i) {
-                if (o.id == "AO") return i == 1 || i == 2;
+                if (o.id == "AO") return i <= 2;   // 0.6.7: Off is offered again (GitHub #406)
                 if (o.id == "AAMode" || o.id == "Resolution") return i != 4;
                 if (o.id == "FrameGen") return (int)i != gs::k_fgDropped;   // review 20 Nov: the dropped frame generation too
                 return true;
