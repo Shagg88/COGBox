@@ -40,6 +40,7 @@
 #include <filesystem>
 #include <string_view>
 #include <format>
+#include <mutex>   // 0.6.7: the file-handle map lock
 #include <string>
 #include <cstdio>
 #include <thread>
@@ -399,6 +400,58 @@ extern "C" void sub_82929C38(PPCContext& __restrict ctx, uint8_t* base) {
     }
   }
   __imp__sub_82929C38(ctx, base);
+}
+#endif
+
+// ---- Start-up crash "read of guest 0x4A9E7324" (jobs 1925 / 2253b: 1 in 7 to 1 in 44 Gears 3 starts) ----------------
+// The async file system (UE3 FAsyncIOSystemBase, TU6) keeps a name -> file-handle map (NameToHandleMap, a
+// TMap<FString, handle> at this+12, 32-byte pairs). Read in gow3_recomp (TU6):
+//   - sub_822C86D8 (GetCachedFileHandle): looks a name up (sub_822C8810 -> sub_822BD110, the map's Find) and, when it
+//     is not there, opens the file (vtable +52) and ADDS it (sub_822CB058, the map's Set - its only caller). Called
+//     only from the file thread's loop sub_822C8E50, outside the request lock (that lock, [this+8]+4, guards the
+//     request arrays only).
+//   - sub_822CB1A8: the map's Remove; its only caller is the same loop (the "done with this file" request).
+//   - sub_8296C3D8 (a virtual of the Xbox file system): looks a name up through the same sub_822C8810 with NO lock and
+//     reads the handle - and this one runs on the GAME thread (crash stack: sub_822BD110+0x259 <- sub_822C8810 <-
+//     sub_8296C3D8 <- sub_822FF6C0 <- sub_829B03C0 ..., while the file thread was in sub_822C8E50 -> sub_822C8088,
+//     the step right after sub_822C86D8).
+// So during start-up the game thread can walk the map while the file thread's Set moves the pairs (a grown array is
+// reallocated, the hash rebuilt): the walk reads a pair that is no longer one, takes its "string" pointer and the
+// compare (sub_82CDE308) reads unmapped memory. A race in the game's own code; the console's timing hid it.
+// The three functions now run under one host lock, so a lookup from the game thread never overlaps an add / remove.
+// The file thread's own lookups elsewhere need none (it is the only writer). Nothing inside waits on the game
+// thread: sub_822C86D8 only opens a file and allocates, sub_8296C3D8 only compares and stores three words.
+REXCVAR_DEFINE_BOOL(gow3_file_handle_map_lock, true, "Gears3",
+                    "The async file system's name -> handle map is locked between the file thread (add / remove) and "
+                    "the game thread's lookup (the rare start-up crash 'read of guest 0x4A9E7324'). false = as before");
+#if defined(GOW3_TU6) && GOW3_TU6
+namespace {
+std::recursive_mutex g_file_handle_map_mutex;
+void FileHandleMapLocked(void (*original)(PPCContext&, uint8_t*), PPCContext& ctx, uint8_t* base, const char* what,
+                         std::atomic<bool>& told) {
+  if (!REXCVAR_GET(gow3_file_handle_map_lock)) {
+    original(ctx, base);
+    return;
+  }
+  if (!told.exchange(true)) REXLOG_INFO("gow3_file_handle_map_lock: {} runs under the map lock", what);
+  std::lock_guard lock(g_file_handle_map_mutex);
+  original(ctx, base);
+}
+}  // namespace
+extern "C" void __imp__sub_822C86D8(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void sub_822C86D8(PPCContext& __restrict ctx, uint8_t* base) {
+  static std::atomic<bool> told{false};
+  FileHandleMapLocked(__imp__sub_822C86D8, ctx, base, "the file thread's find-or-open (sub_822C86D8)", told);
+}
+extern "C" void __imp__sub_822CB1A8(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void sub_822CB1A8(PPCContext& __restrict ctx, uint8_t* base) {
+  static std::atomic<bool> told{false};
+  FileHandleMapLocked(__imp__sub_822CB1A8, ctx, base, "the file thread's remove (sub_822CB1A8)", told);
+}
+extern "C" void __imp__sub_8296C3D8(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void sub_8296C3D8(PPCContext& __restrict ctx, uint8_t* base) {
+  static std::atomic<bool> told{false};
+  FileHandleMapLocked(__imp__sub_8296C3D8, ctx, base, "the game thread's lookup (sub_8296C3D8)", told);
 }
 #endif
 
