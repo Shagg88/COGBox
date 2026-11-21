@@ -3,6 +3,7 @@
 // matches the other three games' shape.
 #include "mouse_look.h"   // 0.5.0: CogMouseLookNoteFov
 #include <atomic>
+#include <cmath>   // 0.6.7 true 1080p menus: std::round, std::fabs
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -184,6 +185,99 @@ void Gow1NativeUiViewportTick(bool (*open_objects)()) {
   } else if (++fails > 20) {
     REXLOG_WARN("gow1_native_lines: the menus stay laid out in 1280x720 - {}", r.why);
   }
+}
+
+// 0.6.7 (GitHub #408, Gears 1 part): true 1080p menus, as Gears 2's 1ba61f7 / 27cffac. Gears 1's FViewport is already
+// 1920x1080 by itself (the size function above), so the hook above changes nothing ("1920x1080 -> 1920x1080" in #408's
+// log) and the UI scenes lay out in 1920x1080 screen pixels: their pixel-authored parts (the 1280-wide backdrop images,
+// logo, text) stay 720p-sized - the title screen, main menu and pause menu of #408 and of jobs 2189 / 2200 / 2204 alike.
+// So, as in Gears 2: the UI scene client's GetViewportSize reports the console's 1280x720 (a size above 1280 / 720 is
+// divided by lines / 720) and the game scales the scenes to the screen (Gears 2, job 2206).
+// The function, sub_82304590 (TU5; 0x82304590..0x82304638 in codegen.partition.json): Canary's TU5 21:9 patch by boma
+// writes `li r3,550` / `b +8` at 0x823045F0 - the same two words his Gears 2 patch writes at disc 0x826E3720 / TU6
+// 0x826E9BF0 ("Set UIScene viewport height", in Gears 2's GetViewportSize sub_826E36C0 / sub_826E9B90), and all three
+// sit 0x60 bytes into their function. Its code was NOT read here (gow1_recomp.131.cpp was not staged), so nothing more
+// is assumed: the code must hold at least two virtual calls (GetSizeX / GetSizeY, `bctrl`), checked once; and the output
+// is recognised, not assumed - after the original, r5 (UT3's GetViewportSize(Scene, out)) or else r4 must point at two
+// floats holding the screen size (height = lines, width above 1280); that register is used from then on. Otherwise
+// nothing changes (0.6.6) and it is logged once. Gears 2's CanvasToScreen matrix step is not carried over (all zeros in
+// Gears 2 TU6, it never acted - notes 20 Nov 19:28).
+REXCVAR_DEFINE_BOOL(gow1_native_ui_layout720, true, "Gears 1",
+                    "With --gow1_native_lines: menus and other UI scenes lay out in the console's 1280x720 and are "
+                    "scaled to the whole screen (false = the 0.6.6 behaviour, laid out in screen pixels)");
+namespace {
+constexpr uint32_t kGow1UiViewportSize = 0x82304590u, kGow1UiViewportSizeEnd = 0x82304638u;
+std::atomic<int> g_ui_size_code{-1};  // -1 = not checked yet, 0 = not the expected code (left alone), 1 = ok
+std::atomic<int> g_ui_size_out{0};    // the register holding the output: 0 = not found yet, 4 / 5, -1 = given up
+float Gow1LoadF(const uint8_t* base, uint32_t a) {
+  const uint32_t v = ue3::native_viewport::Load32(base, a);
+  float f;
+  std::memcpy(&f, &v, 4);
+  return f;
+}
+void Gow1StoreF(uint8_t* base, uint32_t a, float f) {
+  uint32_t v;
+  std::memcpy(&v, &f, 4);
+  v = __builtin_bswap32(v);
+  std::memcpy(base + a, &v, 4);
+}
+bool Gow1UiSizeCodeOk(const uint8_t* base) {
+  int v = g_ui_size_code.load(std::memory_order_relaxed);
+  if (v >= 0) return v == 1;
+  int calls = 0;
+  for (uint32_t a = kGow1UiViewportSize; a < kGow1UiViewportSizeEnd; a += 4)
+    if (ue3::native_viewport::Load32(base, a) == 0x4E800421u) ++calls;  // bctrl
+  v = calls >= 2 ? 1 : 0;
+  g_ui_size_code.store(v);
+  if (v)
+    REXLOG_INFO("gow1_native_ui_layout720: GetViewportSize 0x{:08X} holds {} virtual calls - on", kGow1UiViewportSize, calls);
+  else
+    REXLOG_WARN("gow1_native_ui_layout720: 0x{:08X} holds {} virtual calls, not GetSizeX / GetSizeY - the menus stay laid "
+                "out in screen pixels (0.6.6)", kGow1UiViewportSize, calls);
+  return v == 1;
+}
+// Two floats at `out` holding the screen size: height = lines (+-0.5), width above 1280 (1920 at 16:9, 1728 at 16:10).
+bool Gow1UiOutIsScreen(const uint8_t* base, uint32_t out) {
+  if (!ue3::native_viewport::InHeap(out) || !ue3::obj::Readable(out, 8)) return false;
+  const float w = Gow1LoadF(base, out), h = Gow1LoadF(base, out + 4);
+  return std::fabs(h - float(Gow1NativeLines())) < 0.5f && w > 1280.5f && w < 8192.0f;
+}
+}  // namespace
+extern "C" void __imp__sub_82304590(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void sub_82304590(PPCContext& __restrict ctx, uint8_t* base) {
+  // the arguments from entry: after the call r3 is the UBOOL result (Gears 2's 27cffac)
+  const uint32_t a4 = ctx.r4.u32, a5 = ctx.r5.u32;
+  __imp__sub_82304590(ctx, base);
+  if (!Gow1NativeLines() || ctx.r3.u32 == 0 || !REXCVAR_GET(gow1_native_ui_layout720) || !Gow1UiSizeCodeOk(base)) return;
+  int reg = g_ui_size_out.load(std::memory_order_relaxed);
+  if (reg < 0) return;
+  if (reg == 0) {
+    static std::atomic<int> misses{0};
+    if (Gow1UiOutIsScreen(base, a5)) {
+      reg = 5;
+    } else if (Gow1UiOutIsScreen(base, a4)) {
+      reg = 4;
+    } else {
+      if (misses.fetch_add(1) == 200) {
+        g_ui_size_out.store(-1);
+        REXLOG_WARN("gow1_native_ui_layout720: GetViewportSize's output not found (r5 0x{:08X}, r4 0x{:08X}) - the menus stay "
+                    "laid out in screen pixels (0.6.6)", a5, a4);
+      }
+      return;
+    }
+    g_ui_size_out.store(reg);
+  }
+  const uint32_t out = reg == 5 ? a5 : a4;
+  if (!ue3::native_viewport::InHeap(out)) return;
+  const float w0 = Gow1LoadF(base, out), h0 = Gow1LoadF(base, out + 4);
+  const float k = float(Gow1NativeLines()) / 720.0f;
+  const float w1 = w0 > 1280.5f ? std::round(w0 / k) : w0, h1 = h0 > 720.5f ? std::round(h0 / k) : h0;
+  Gow1StoreF(base, out, w1);
+  Gow1StoreF(base, out + 4, h1);
+  static std::atomic<bool> told{false};
+  if (!told.exchange(true))
+    REXLOG_INFO("gow1_native_lines: UI scene layout size {}x{} -> {}x{} (console pixels; GetViewportSize 0x{:08X}, output in "
+                "r{})", w0, h0, w1, h1, kGow1UiViewportSize, reg);
 }
 
 // 0.6.5 (Shagg 16 Nov: 16:10): with a 1152x720 video mode Gears 2 / 3 / Judgment fill a 16:10 screen, but Gears 1 kept
