@@ -342,6 +342,47 @@ bool Gow3UltrawideVideo(PPCRegister& r4) {  // jump_address_on_true: past `stw r
   return true;
 }
 
+// GitHub #396 (Gears 3 part, 3440x1440): with a wider picture the menus showed other menus' pieces and stray art in the
+// strips left and right of the 16:9 centre (the lobby's party list beside the Stats & Awards and Options panels, the
+// title's background art ending short of the edges). The store skipped above is the Scaleform movie's scale mode
+// (TU6 sub_82BDD3B8 = SetViewScaleMode: `stw r4,136(r3)`, then the movie's SetViewport, vtable +100, with the viewport
+// kept at +64 - Judgment's 0x82CBA684 is the same function, "Scaleform's scale mode" there); Canary's 1 = show all:
+// each movie's 16:9 stage sits in the centre of a full-width viewport, and whatever a movie places off its stage
+// (art made wider than 16:9, a panel under a modal one) is drawn into the strips too, where at 16:9 it falls off the
+// screen. Every movie's viewport is set through TU6 sub_82929C38 (GViewport on the stack: BufferWidth/Height, Left,
+// Top, Width, Height = r4..r9, the scissor zeroed, flags r10; then vtable +100): from sub_829343E0 (one movie;
+// sub_82934188 runs it for every movie, also after sub_82931728 sets a new FViewport) and sub_82932C28 [read in
+// gow3_recomp.129 / .74 / .181 / .52]. A full-screen viewport wider than 16:9 becomes the 16:9 box in its centre:
+// the layout is the same (show all in a 16:9 box = the stage exactly) and D3D's viewport clips the rest, so nothing
+// off-stage reaches the strips [the clip: D3D9 / Xenos viewport behaviour, not seen in the game's renderer]. The
+// strips keep what is under the menus (the 3D scene in game, black or the clear colour in the front end).
+// --gow3_ultrawide_ui_full_width brings the old full-width viewport back.
+REXCVAR_DEFINE_BOOL(gow3_ultrawide_ui_full_width, false, "Gears3",
+                    "With --gow3_ultrawide / --gow3_aspect: Scaleform menus get the whole wide picture as their viewport, "
+                    "as before 0.6.7 (GitHub #396: other menus' pieces show in the strips beside the 16:9 centre). "
+                    "Off = each full-screen menu is drawn in a 16:9 box in the centre");
+#if defined(GOW3_TU6) && GOW3_TU6
+extern "C" void __imp__sub_82929C38(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void sub_82929C38(PPCContext& __restrict ctx, uint8_t* base) {
+  if (Wide() && !REXCVAR_GET(gow3_ultrawide_ui_full_width)) {
+    const uint32_t bw = ctx.r4.u32, bh = ctx.r5.u32, l = ctx.r6.u32, t = ctx.r7.u32, w = ctx.r8.u32, h = ctx.r9.u32;
+    // only a viewport covering the whole buffer (split-screen and render-to-texture movies are left alone), and only
+    // when it is wider than 16:9 by more than a rounding step
+    if (l == 0 && t == 0 && w == bw && h == bh && h > 0 && uint64_t(w) * 9u > uint64_t(h) * 16u + 9u) {
+      const uint32_t w169 = (h * 16u / 9u + 1u) & ~1u;
+      const uint32_t left = (w - w169) / 2u;
+      static std::atomic<int> told{0};
+      if (told.fetch_add(1) < 4)
+        REXLOG_INFO("gow3_aspect: Scaleform movie viewport {}x{} -> {}x{} from x {} (GitHub #396; flags 0x{:X})", w, h,
+                    w169, h, left, ctx.r10.u32);
+      ctx.r6.u64 = left;
+      ctx.r8.u64 = w169;
+    }
+  }
+  __imp__sub_82929C38(ctx, base);
+}
+#endif
+
 // ---- Frame rate and the engine tick ---------------------------------------------------------------------------------
 // GetMaxTickRate 0x8253D9A0: f1 = 0.0 (no limit); with frame-rate smoothing on (flag 0x8343F7D4, bSmoothFrameRate=TRUE
 // in Xbox360-GearEngine.ini) `lfs f1,0x4C8(r3)` at 0x8253D9B0 loads MaxSmoothedFrameRate (62 in that ini) and returns
