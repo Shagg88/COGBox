@@ -1089,8 +1089,9 @@ static void option_row(App &a, int g, const gs::Option &o)
         // included: 4K picks 3x) only anti-aliases - said in the list and the closed box
         if (o.id == "SceneMode" && items.size() == 4) {
             const int out = gs::expected_render_scale((gs::Game)g, a.cur[g], a.env[g]);
+            const bool p1080 = gs::performance_1080_base((gs::Game)g, a.cur[g], a.env[g]);   // 4K + Performance
             for (int i = 1; i < 4; ++i)
-                if (!gs::scene_mode_fits(i, out)) items[i] += std::string(" - ") + tr("anti-aliasing only at this render resolution");
+                if (!gs::scene_mode_fits(i, out, p1080)) items[i] += std::string(" - ") + tr("anti-aliasing only at this render resolution");
         }
         // 0.6.2 Proton review (R11): settings from Windows say DirectX 12, but "Graphics API on Proton / Wine" = Automatic
         // runs Vulkan - the closed box says what the game will actually run
@@ -1111,7 +1112,8 @@ static void option_row(App &a, int g, const gs::Option &o)
                 if (ca.ok && o.id == "FrameGen") ca = gs::framegen_choice_available(i, a.env[g], gs::runs_vulkan(a.cur[g], a.env[g]));
                 // 0.6.6: a Scene resolution with no whole-number scene size here is greyed, with the reason (hover)
                 if (ca.ok && o.id == "SceneMode" && i != idx)
-                    ca = gs::scene_mode_choice_available(i, gs::expected_render_scale((gs::Game)g, a.cur[g], a.env[g]));
+                    ca = gs::scene_mode_choice_available(i, gs::expected_render_scale((gs::Game)g, a.cur[g], a.env[g]),
+                                                         gs::performance_1080_base((gs::Game)g, a.cur[g], a.env[g]));
                 // 0.3.0 (Shagg 14:18): FSR / DLSS are DirectX 12 only - greyed while Vulkan is the Graphics API
                 if (ca.ok && o.id == "AAMode" && i >= 2 && i <= 4 && gs::runs_vulkan(a.cur[g], a.env[g]) && !(i == 2 && gs::fsr_vulkan_on(a.cur[g], a.env[g]))) {   // 5 SMAA T2x: both APIs; fsr049: FSR on Vulkan (opt-in)
                     ca.ok = false;
@@ -1225,7 +1227,7 @@ static void option_row(App &a, int g, const gs::Option &o)
     if (o.id == "SceneMode" && av.ok && v >= 1 && v <= 3) {
         const int aa = a.cur[g].i("AAMode");
         const int out = gs::expected_render_scale((gs::Game)g, a.cur[g], a.env[g]);
-        if (aa >= 2 && aa <= 4 && !gs::scene_mode_fits((int)v, out))
+        if (aa >= 2 && aa <= 4 && !gs::scene_mode_fits((int)v, out, gs::performance_1080_base((gs::Game)g, a.cur[g], a.env[g])))
             ui_note(v == 2 ? (out == 3 ? "At this render resolution (3x) Performance keeps the scene at full size, so the upscaler only "
                                          "anti-aliases (no extra frames). Pick Quality or Ultra performance, or a 2x render resolution."
                                        : "At this render resolution Performance keeps the scene at full size, so the upscaler only "
