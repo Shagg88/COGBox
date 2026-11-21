@@ -1775,7 +1775,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
 #endif
       return false;
     }
-    const std::filesystem::path dxc_dir(REXCVAR_GET(gow2_dxc_dir));
+    const std::filesystem::path dxc_dir = rex::to_path(REXCVAR_GET(gow2_dxc_dir));  // UTF-8 (#409: a folder with non-ASCII letters -> dxcompiler.dll not found, black screen)
     {
       std::string dxc_error;
       if (!rr::CreateDxcCompiler(dxc_dir, dxc_error))
@@ -3674,7 +3674,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void LoadRecipes() {
     const std::string path = REXCVAR_GET(gow2_renderer_shader_recipes);
     if (path.empty()) return;
-    std::ifstream f{std::filesystem::path(path)};  // braces: a ( ) here would declare a function
+    std::ifstream f{rex::to_path(path)};  // UTF-8 (#409); braces: a ( ) here would declare a function
     if (!f) {
       REXLOG_WARN("gow2_renderer: chapter recipes: {} could not be opened - off", path);
       return;
@@ -13216,7 +13216,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     static_assert(sizeof(PipelineRecord) == xenos::recipes::Pack::kRecordBytes, "recipe records are PipelineRecords");
     std::vector<uint8_t> b;
     {
-      std::ifstream f{std::filesystem::path(path), std::ios::binary};  // braces: see LoadRecipes
+      std::ifstream f{rex::to_path(path), std::ios::binary};  // braces: see LoadRecipes
       if (f) b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
     }
     std::string err;

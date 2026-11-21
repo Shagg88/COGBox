@@ -5,6 +5,7 @@
 // logs are aligned and diffed offline (draws that appear, vanish, or change constants).
 #include <xenos/dev_tools.h>
 
+#include <rex/filesystem.h>
 #include <rex/cvar.h>
 #include <rex/graphics/draw_observer.h>
 #include <rex/graphics/register_file.h>
@@ -121,7 +122,7 @@ void XenosInstallDrawLogIfRequested() {
   std::stringstream ss(list);
   std::string item;
   while (std::getline(ss, item, ',')) if (!item.empty()) frames.insert(std::stoull(item));
-  std::filesystem::path dir = REXCVAR_GET(gow2_draw_log_dir);
+  std::filesystem::path dir = rex::to_path(REXCVAR_GET(gow2_draw_log_dir));  // UTF-8 (#409)
   if (dir.empty()) dir = "drawlog";
   static DrawLog log(frames, dir);
   XenosRegisterDrawObserver(&log);

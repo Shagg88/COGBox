@@ -69,16 +69,20 @@ class DxcCompiler final : public ShaderCompiler {
         dir = std::filesystem::path(gn_shared_dlls::SharedDir());
     }
     const std::filesystem::path dll = dir / L"dxcompiler.dll";
+    // #409: the path as UTF-8 for the messages (path::string() uses the ANSI code page and can throw on other letters)
+    const std::wstring dll_w = dll.wstring();
+    std::string dll_text(size_t(WideCharToMultiByte(CP_UTF8, 0, dll_w.c_str(), int(dll_w.size()), nullptr, 0, nullptr, nullptr)), '\0');
+    if (!dll_text.empty()) WideCharToMultiByte(CP_UTF8, 0, dll_w.c_str(), int(dll_w.size()), dll_text.data(), int(dll_text.size()), nullptr, nullptr);
     // LOAD_WITH_ALTERED_SEARCH_PATH: dxil.dll is then found next to dxcompiler.dll too.
     module_ = LoadLibraryExW(dll.wstring().c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!module_) {
-      error = "could not load " + dll.string() + " (error " + std::to_string(GetLastError()) + ")";
+      error = "could not load " + dll_text + " (error " + std::to_string(GetLastError()) + ")";
       return false;
     }
     auto create = reinterpret_cast<DxcCreateInstanceProc>(
         reinterpret_cast<void*>(GetProcAddress(module_, "DxcCreateInstance")));
     if (!create) {
-      error = "DxcCreateInstance not found in " + dll.string();
+      error = "DxcCreateInstance not found in " + dll_text;
       return false;
     }
     if (FAILED(create(CLSID_DxcUtils, IID_PPV_ARGS(&utils_))) ||
@@ -103,7 +107,7 @@ class DxcCompiler final : public ShaderCompiler {
       }
       info2->Release();
     }
-    path_ = dll.string();
+    path_ = dll_text;
     return true;
   }
 
