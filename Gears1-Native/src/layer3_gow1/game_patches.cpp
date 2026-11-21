@@ -280,6 +280,80 @@ extern "C" void sub_82304590(PPCContext& __restrict ctx, uint8_t* base) {
                 "r{})", w0, h0, w1, h1, kGow1UiViewportSize, reg);
 }
 
+// 0.6.7, second half of the Gears 1 menu fix (job 2246: with the layout size alone the title screen and main menu were
+// a 1280x720 box in the top-left of the 1920x1080 picture - this engine does not scale a UI layout to the screen).
+// Read in the TU5 generated code (job af01):
+//   - FCanvas: +4 the render target, +12 / +16 the transform stack (TArray of 64-byte matrices, row vectors: m00 at
+//     +0, m11 at +20). Its constructor sub_823399A0 builds the base transform from the RENDER TARGET's size
+//     (GetSizeX / GetSizeY, vtable slots 0 / 1: 1 / (W / 2), -1 / (H / 2)) - never from GetViewportSize, which is why
+//     the 1280x720 layout stayed 1280x720 screen pixels. (Gears 2 builds its UI transform from GetViewportSize.)
+//   - sub_8233A0D8 = FCanvas::PushRelativeTransform(M): pushes M x top.
+//   - sub_82306D00 (scene client, r4 = FCanvas*, r5 = the scene / widget): multiplies the canvas opacity by the
+//     object's, PushRelativeTransform(the object's own matrix, sub_822E1E60), pre-render (vtable +420), the client's
+//     render (+268), post-render (+424), pops the transform. The only PushRelativeTransform in the scene client.
+// So while sub_82306D00 runs, the top of the canvas' transform stack is multiplied by lines / 720 in its rows 0 and 1
+// (layout pixel -> screen pixel, applied last because every later push is "M x top"), and put back afterwards. Only the
+// outermost call scales (a nested call already draws under the scaled top). Only with the layout hook above active
+// and after the code check (the `bl sub_8233A0D8` at 0x82306D54); the HUD and everything else drawn on the same canvas
+// outside UI scenes is not touched.
+namespace {
+constexpr uint32_t kGow1UiRenderPushSite = 0x82306D54u, kGow1UiRenderPushWord = 0x48033385u;  // bl 0x8233A0D8
+std::atomic<int> g_ui_render_code{-1};
+thread_local int t_ui_render_depth = 0;
+bool Gow1UiRenderCodeOk(const uint8_t* base) {
+  int v = g_ui_render_code.load(std::memory_order_relaxed);
+  if (v >= 0) return v == 1;
+  const uint32_t w = ue3::native_viewport::Load32(base, kGow1UiRenderPushSite);
+  v = w == kGow1UiRenderPushWord ? 1 : 0;
+  g_ui_render_code.store(v);
+  if (v)
+    REXLOG_INFO("gow1_native_ui_layout720: UI scene render 0x82306D00 found (PushRelativeTransform call at 0x{:08X}) - "
+                "scenes are scaled to the screen", kGow1UiRenderPushSite);
+  else
+    REXLOG_WARN("gow1_native_ui_layout720: 0x{:08X} holds 0x{:08X}, not the expected call - UI scenes are not scaled",
+                kGow1UiRenderPushSite, w);
+  return v == 1;
+}
+}  // namespace
+extern "C" void __imp__sub_82306D00(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void sub_82306D00(PPCContext& __restrict ctx, uint8_t* base) {
+  const uint32_t canvas = ctx.r4.u32;
+  uint32_t top = 0;
+  float saved[8] = {};
+  // the layout hook must have recognised its output (g_ui_size_out 4 / 5): otherwise the scenes still lay out in
+  // screen pixels and must not be scaled
+  if (Gow1NativeLines() > 720u && REXCVAR_GET(gow1_native_ui_layout720) && g_ui_size_out.load(std::memory_order_relaxed) > 0 &&
+      t_ui_render_depth == 0 && Gow1UiRenderCodeOk(base) && ue3::native_viewport::InHeap(canvas) &&
+      ue3::obj::Readable(canvas, 24)) {
+    const uint32_t data = ue3::native_viewport::Load32(base, canvas + 12), count = ue3::native_viewport::Load32(base, canvas + 16);
+    if (count >= 1 && count < 256 && ue3::native_viewport::InHeap(data) && ue3::obj::Readable(data + (count - 1) * 64u, 64)) {
+      top = data + (count - 1) * 64u;
+      const float k = float(Gow1NativeLines()) / 720.0f;
+      for (int i = 0; i < 8; ++i) {
+        saved[i] = Gow1LoadF(base, top + uint32_t(i) * 4u);
+        Gow1StoreF(base, top + uint32_t(i) * 4u, saved[i] * k);
+      }
+      static std::atomic<int> told{0};
+      if (told.fetch_add(1) < 3)
+        REXLOG_INFO("gow1_native_ui_layout720: scene 0x{:08X} on canvas 0x{:08X} (transform stack {}): rows 0 / 1 x {} - "
+                    "m00 {} -> {}, m11 {} -> {}, translation {} {}", ctx.r5.u32, canvas, count, k, saved[0], saved[0] * k,
+                    saved[5], saved[5] * k, Gow1LoadF(base, top + 48), Gow1LoadF(base, top + 52));
+    }
+  }
+  ++t_ui_render_depth;
+  __imp__sub_82306D00(ctx, base);
+  --t_ui_render_depth;
+  if (top) {
+    // the stack is back at the same depth (the function pops what it pushed); the array may have been reallocated by
+    // its push, so the address is taken again
+    const uint32_t data = ue3::native_viewport::Load32(base, canvas + 12), count = ue3::native_viewport::Load32(base, canvas + 16);
+    if (count >= 1 && count < 256 && ue3::native_viewport::InHeap(data) && ue3::obj::Readable(data + (count - 1) * 64u, 64)) {
+      const uint32_t now = data + (count - 1) * 64u;
+      for (int i = 0; i < 8; ++i) Gow1StoreF(base, now + uint32_t(i) * 4u, saved[i]);
+    }
+  }
+}
+
 // 0.6.5 (Shagg 16 Nov: 16:10): with a 1152x720 video mode Gears 2 / 3 / Judgment fill a 16:10 screen, but Gears 1 kept
 // 16:9 with bars (job 1969's gameplay shots): its view code (sub_82392008, TU5) letterboxes to the camera's aspect when
 // the camera's constrain flag (bit 1 of the word at +432) is set. Canary's TU5 16:10 patch by boma makes the branch at
