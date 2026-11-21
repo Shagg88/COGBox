@@ -121,8 +121,10 @@ extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
   GowjAdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   GowjFirstPersonTick();        // --gowj_first_person (first_person.cpp; off: one flag test)
   GowjNativeUiViewportTick();   // 0.6.6: true 1080p menus (game_patches.cpp; off: one test)
-  // GitHub #353: COGBox tags after the players' names, grey (Judgment's Flash text fields render <font>, as Gears 3's)
-  Ue3NameTagsTick(&GowjObjectsReady, Ue3NameTagStyle{"<font color='#808080'>", "</font>"});
+  // GitHub #353: COGBox tags after the players' names.
+  // No colour for now (Flippage / Shagg): the grey markup showed as text wherever the game draws a name as plain
+  // text (kill feed, names over heads, TacCom), and not every such place is found yet - plain on every screen.
+  Ue3NameTagsTick(&GowjObjectsReady, Ue3NameTagStyle{});
 }
 
 // GitHub #353, the kill feed: the HUD keeps copies of the names in its DeathData entries and draws them through

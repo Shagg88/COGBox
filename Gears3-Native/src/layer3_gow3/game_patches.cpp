@@ -892,9 +892,11 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
     Gow3CheckpointStreamTick();  // GitHub #226
     Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
     Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
-    // GitHub #353: COGBox tags after the players' names, grey (the Flash text fields render <font>)
+    // GitHub #353: COGBox tags after the players' names.
+    // No colour for now (Flippage / Shagg): the grey markup showed as text wherever the game draws a name as plain
+    // text (kill feed, names over heads, TacCom), and not every such place is found yet - plain on every screen.
     Ue3NameTagsTick([] { return ue3::obj::Ready() || ue3::obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar); },
-                    Ue3NameTagStyle{"<font color='#808080'>", "</font>"});
+                    Ue3NameTagStyle{});
   }
   const int32_t v = LiveMaxFps();
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {

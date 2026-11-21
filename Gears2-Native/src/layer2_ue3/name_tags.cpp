@@ -302,6 +302,7 @@ std::atomic<uint32_t> g_scratch{0}, g_scratch_next{0};
 
 void AllocScratch() {
   if (g_check_count == 0 || g_scratch.load()) return;   // no hooks in this game
+  if (Mk().before.empty() && Mk().after.empty()) return;   // no markup in use: the hooks have nothing to take out
   rex::Runtime* rt = rex::Runtime::instance();
   const uint32_t a = rt && rt->memory() ? rt->memory()->SystemHeapAlloc(kSlots * kSlotBytes) : 0;
   g_scratch.store(a, std::memory_order_release);
@@ -371,7 +372,9 @@ void CheckTextHooks() {
     passed += ok ? 1 : 0;
   }
   g_text_ok.store(passed == g_check_count, std::memory_order_release);
-  if (passed == g_check_count) REXLOG_INFO("name tags: kill feed text hooks on ({} Canvas natives as expected)", passed);
+  if (passed == g_check_count && Mk().before.empty() && Mk().after.empty())
+    REXLOG_INFO("name tags: kill feed text hooks idle - the tags have no markup to take out");
+  else if (passed == g_check_count) REXLOG_INFO("name tags: kill feed text hooks on ({} Canvas natives as expected)", passed);
   else REXLOG_WARN("name tags: kill feed text hooks off - {} of {} Canvas natives are not this build's", g_check_count - passed, g_check_count);
 }
 }  // namespace
