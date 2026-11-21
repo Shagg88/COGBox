@@ -623,6 +623,9 @@ void Gow2NativeUiMatrix(uint32_t client, float w, float h, float k, uint8_t* bas
 // UBOOL GetViewportSize(const UUIScene*, FVector2D& out): r5 = out
 extern "C" void GOW2_UI_VIEWPORT_SIZE(PPCContext& __restrict ctx, uint8_t* base) {
   const uint32_t out = ctx.r5.u32;
+  // job 2204: r3 holds the scene client only on entry - after the call it is the UBOOL result (1), and 1 + 112 = guest
+  // 0x71 crashed the matrix check. Keep the client from here.
+  const uint32_t client = ctx.r3.u32;
   // 0.6.6 (job 2189): the game's FViewport (this scene client's RenderViewport, +64: `lwz r11,64(r31)` here) reports the
   // larger screen from now on - its GetSizeX / GetSizeY (vtable +8 / +12, the two bctrl in this function) through the
   // dispatcher (ue3/native_viewport.h), so the canvas and every other caller see it too. Set before the original runs.
@@ -656,7 +659,7 @@ extern "C" void GOW2_UI_VIEWPORT_SIZE(PPCContext& __restrict ctx, uint8_t* base)
     uicentre::StoreF(base, out + 4, h1);
     static std::atomic<bool> told{false};
     if (!told.exchange(true)) REXLOG_INFO("gow2_native_lines: UI scene layout size {}x{} -> {}x{} (console pixels)", w0, h0, w1, h1);
-    Gow2NativeUiMatrix(ctx.r3.u32, w1, h1, k, base);
+    if (client) Gow2NativeUiMatrix(client, w1, h1, k, base);
   }
   if (!uicentre::On() || ctx.r3.u32 == 0 || !out) return;
   const float w = uicentre::LoadF(base, out), h = uicentre::LoadF(base, out + 4);
