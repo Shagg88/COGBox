@@ -359,7 +359,7 @@ bool Gow3UltrawideVideo(PPCRegister& r4) {  // jump_address_on_true: past `stw r
 // --gow3_ultrawide_ui_full_width brings the old full-width viewport back.
 REXCVAR_DEFINE_BOOL(gow3_ultrawide_ui_full_width, false, "Gears3",
                     "With --gow3_ultrawide / --gow3_aspect: Scaleform menus get the whole wide picture as their viewport, "
-                    "as before 0.6.7 (GitHub #396: other menus' pieces show in the strips beside the 16:9 centre). "
+                    "as before 0.6.6 (GitHub #396: other menus' pieces show in the strips beside the 16:9 centre). "
                     "Off = each full-screen menu is drawn in a 16:9 box in the centre");
 #if defined(GOW3_TU6) && GOW3_TU6
 extern "C" void __imp__sub_82929C38(PPCContext& __restrict ctx, uint8_t* base);
