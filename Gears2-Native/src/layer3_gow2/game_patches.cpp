@@ -37,6 +37,7 @@
 #include <xenos/frame_limiter.h>
 
 #include "gow2_addresses.h"
+#include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/objects.h>  // GitHub #313 pace check: ue3::obj::Read32 (safe guest reads; no table lookup)
 #include "mouse_look.h"  // GitHub #52: CogMouseLookNoteFov
 
@@ -561,14 +562,33 @@ extern "C" void GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_ORIGIN)(PPCContext& __res
 // UBOOL GetViewportSize(const UUIScene*, FVector2D& out): r5 = out
 extern "C" void GOW2_UI_VIEWPORT_SIZE(PPCContext& __restrict ctx, uint8_t* base) {
   const uint32_t out = ctx.r5.u32;
+  // 0.6.6 (job 2189): the game's FViewport (this scene client's RenderViewport, +64: `lwz r11,64(r31)` here) reports the
+  // larger screen from now on - its GetSizeX / GetSizeY (vtable +8 / +12, the two bctrl in this function) through the
+  // dispatcher (ue3/native_viewport.h), so the canvas and every other caller see it too. Set before the original runs.
+  if (Gow2NativeLines() && !ue3::native_viewport::g_installed.load(std::memory_order_relaxed) && ctx.r3.u32) {
+    static int tries = 0;
+    if (tries < 20) {
+      const uint32_t viewport = ue3::obj::Read32(ctx.r3.u32 + 64u);
+      const ue3::native_viewport::Result r = viewport ? ue3::native_viewport::Install(viewport, Gow2NativeLines())
+                                                      : ue3::native_viewport::Result{};
+      if (r.ok)
+        REXLOG_INFO("gow2_native_lines: UI scene viewport (the game's FViewport 0x{:08X}) {}x{} -> {}x{}: GetSizeX / "
+                    "GetSizeY 0x{:08X} / 0x{:08X}, vtable slots {} / {}", viewport, r.w0, r.h0, r.w1, r.h1, r.fn_x, r.fn_y,
+                    r.slot, r.slot + 1);
+      else if (viewport && ++tries == 20)
+        REXLOG_WARN("gow2_native_lines: the FViewport keeps 1280x720 ({}) - only the UI scenes' size is scaled", r.why);
+    }
+  }
   GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_SIZE)(ctx, base);
   // 0.6.6 (job 2189: at true 1080p the pause menu sat in the top-left 1280x720 of the 1920x1080 picture): the scene
-  // client still reports the console's 1280x720 here while everything is drawn 1.5 times larger. The UI scenes lay
-  // themselves out from this size (GitHub #278), so it is scaled with the screen: 1280x720 -> 1920x1080.
+  // client reported the console's 1280x720 here while everything is drawn 1.5 times larger. The UI scenes lay
+  // themselves out from this size (GitHub #278), so it is scaled with the screen: 1280x720 -> 1920x1080. With the
+  // FViewport hook above on, the size already is the larger one and only a smaller value is scaled: the ultrawide UI
+  // height (Gow2UltrawideUiHeight replaces GetSizeY's answer with 564 after the bctrl) -> 564 x lines / 720.
   if (Gow2NativeLines() && ctx.r3.u32 != 0 && out) {
     const float w0 = uicentre::LoadF(base, out), h0 = uicentre::LoadF(base, out + 4);
     const float k = float(Gow2NativeLines()) / 720.0f;
-    const float w1 = std::round(w0 * k), h1 = std::round(h0 * k);
+    const float w1 = w0 <= 1280.5f ? std::round(w0 * k) : w0, h1 = h0 <= 720.5f ? std::round(h0 * k) : h0;
     uicentre::StoreF(base, out, w1);
     uicentre::StoreF(base, out + 4, h1);
     static std::atomic<bool> told{false};
