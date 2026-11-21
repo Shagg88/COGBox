@@ -335,8 +335,27 @@ void Gow3UltrawideSharedMemory(PPCRegister& r5) {
                 "there; GitHub #330)", r5.u32, kStock720);
   r5.u64 = kStock720;
 }
+// 0.6.7 (Shagg's 0.6.6 report, 21 Nov: Gears 3 at true 1080p, main menu squeezed into the top ~42% and drawn at 720p
+// size; job 2200's A-1080p-Gears3 pause menu had the same 720p-sized text and a 1280x720 backdrop box in the centre,
+// while U-1080uw-Gears3 - true 1080p WITH this skip, through Wide() - was scaled right). The store below is the
+// Scaleform movies' scale mode (SetViewScaleMode, see GitHub #396 below). The game's own mode draws a movie's
+// 1280x720 stage at 1:1 and lets its script place things against the viewport's edges: at 720 lines the viewport IS
+// the stage, so any mode looks the same; at 1080 lines (FViewport 1920x1080, logged "UI scene viewport 1920x1080 ->
+// 1920x1080") every menu keeps 720p pixel sizes and the scripts' anchoring moves the pieces (the main menu ~180 rows
+// up). With the store skipped the movie keeps show-all, as under Ultrawide (the Canary patch): a full-screen 16:9
+// viewport shows the stage scaled by exactly lines / 720 - the console's layout, larger. Split-screen / non-16:9
+// viewports: show-all as under Ultrawide (not checked at 1080 lines).
+REXCVAR_DEFINE_BOOL(gow3_native_ui_show_all, true, "Gears3",
+                    "With --gow3_native_lines: Scaleform menus keep the show-all scale mode, so the console's 1280x720 "
+                    "layout is scaled to the larger screen (false = the 0.6.6 behaviour: drawn at 720p size)");
 bool Gow3UltrawideVideo(PPCRegister& r4) {  // jump_address_on_true: past `stw r4,0x88(r3)` at 0x82BC9D84
-  if (!Wide()) return false;
+  if (!Wide()) {
+    if (!Gow3NativeLines() || !REXCVAR_GET(gow3_native_ui_show_all)) return false;
+    GOW3_LOG_ONCE("gow3_native_lines: Scaleform scale mode {} not stored - menus keep show-all (scaled x{:.2f})",
+                  r4.u32, double(Gow3NativeLines()) / 720.0);
+    r4.u64 = 1;
+    return true;
+  }
   GOW3_LOG_ONCE("gow3_aspect: 0x82BC9D84 store of {} skipped", r4.u32);
   r4.u64 = 1;  // as Canary's `li r4,1` in place of the store
   return true;
