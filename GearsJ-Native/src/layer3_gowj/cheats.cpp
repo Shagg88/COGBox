@@ -97,6 +97,7 @@ void GowjInstallCheats() {
 void GowjAdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers, --pad_trigger_rumble)
 void GowjFirstPersonTick();        // first_person.cpp (--gowj_first_person)
 bool GowjObjectsReady();           // adaptive_triggers.cpp (GitHub #353)
+void GowjNativeUiViewportTick();   // game_patches.cpp (0.6.6 true 1080p menus; off: one test)
 void GowjPollLoadingMovie(PPCContext& ctx, uint8_t* base);  // game_patches.cpp (GitHub #318, --gowj_loading_fps)
 extern "C" void __imp__sub_8255E200(PPCContext& __restrict ctx, uint8_t* base);
 extern std::atomic<uint32_t> g_gowj_tick_caller;  // game_patches.cpp (0.6.3 host fps)
@@ -119,6 +120,7 @@ extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   GowjAdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   GowjFirstPersonTick();        // --gowj_first_person (first_person.cpp; off: one flag test)
+  GowjNativeUiViewportTick();   // 0.6.6: true 1080p menus (game_patches.cpp; off: one test)
   // GitHub #353: COGBox tags after the players' names, grey (Judgment's Flash text fields render <font>, as Gears 3's)
   Ue3NameTagsTick(&GowjObjectsReady, Ue3NameTagStyle{"<font color='#808080'>", "</font>"});
 }

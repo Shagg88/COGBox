@@ -18,6 +18,8 @@
 #include <xenos/dev_tools.h>
 #include <xenos/frame_limiter.h>
 #include <xenos/display_size.h>
+#include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
+#include <ue3/objects.h>
 #include "mouse_look.h"   // 0.5.0: CogMouseLookNoteFov (aim / zoom sensitivity)
 
 #include <algorithm>
@@ -971,6 +973,49 @@ void GowjNativeCallHeight(PPCRegister& r6) {  // after `li r6,720` at 0x829926A4
 }
 void GowjNativeWidthCheck(PPCRegister& r11) {  // after `lwz r11,0(r30)` at 0x829926B8: compared with 1280
   if (GowjNativeLines() && r11.u32 == GowjNativeWidth(1280)) r11.u64 = 1280;  // only the full-width (16:9) case
+}
+// 0.6.6 (job 2189: at true 1080p the menus sat in the top-left 1280x720 of the 1920x1080 picture): the game's FViewport
+// still reports the console's 1280x720 to every UI system (ue3/native_viewport.h: why, the checks, and the Gears 3 TU6
+// code it was read from - Judgment's engine is Gears 3's: its Scaleform movies take their GViewport from the GFx
+// engine's Viewport->GetSizeX / GetSizeY, as UGameViewportClient::GetViewportSize does). The object: GEngine (cheats.cpp's
+// 0x83544E04) -> GameViewport -> Viewport, the two offsets read from the script classes (GameEngine.GameViewport,
+// GameViewportClient.Viewport); if a name is not found, Gears 3's layout moved by Judgment's GamePlayers (+4: 1188 here,
+// 1184 in Gears 3) - GameViewport +1200 [not read in Judgment's code], Viewport +68 - and Install's checks decide.
+// Once per engine tick (cheats.cpp's GetMaxTickRate override) until on, every 30 ticks; then the object is followed.
+bool GowjObjectsReady();  // adaptive_triggers.cpp
+void GowjNativeUiViewportTick() {
+  namespace nv = ue3::native_viewport;
+  namespace obj = ue3::obj;
+  if (!GowjNativeLines()) return;
+  static uint32_t ticks = 0;
+  static int fails = 0, gv_off = -1, vp_off = -1;
+  if (++ticks % 30 || fails > 20) return;
+  if (gv_off < 0 || vp_off < 0) {
+    if (ticks % 300 || !GowjObjectsReady()) return;   // FindClass misses scan every object: every 5 s at most
+    const uint32_t ge = obj::FindClass("GameEngine"), gvc = obj::FindClass("GameViewportClient");
+    if (!ge || !gvc) { ++fails; return; }
+    const int g = obj::PropertyOffset(ge, "GameViewport"), v = obj::PropertyOffset(gvc, "Viewport");
+    gv_off = g >= 0 ? g : 1200;
+    vp_off = v >= 0 ? v : 68;
+    REXLOG_INFO("gowj_native_lines: GameEngine.GameViewport +{}{}, GameViewportClient.Viewport +{}{}", gv_off,
+                g >= 0 ? "" : " (not found: Gears 3's layout)", vp_off, v >= 0 ? "" : " (not found: Gears 3's)");
+  }
+  const uint32_t engine = obj::Read32(0x83544E04u);
+  const uint32_t client = engine ? obj::Read32(engine + uint32_t(gv_off)) : 0;
+  const uint32_t viewport = client ? obj::Read32(client + uint32_t(vp_off)) : 0;
+  if (!viewport) return;
+  if (nv::g_installed.load(std::memory_order_relaxed)) {
+    nv::NoteViewport(viewport);
+    return;
+  }
+  const nv::Result r = nv::Install(viewport, GowjNativeLines());
+  if (r.ok) {
+    REXLOG_INFO("gowj_native_lines: UI scene viewport {}x{} -> {}x{} (the game's FViewport 0x{:08X}: GetSizeX / GetSizeY "
+                "0x{:08X} / 0x{:08X}, vtable slots {} / {}) - menus and Scaleform movies lay out in the larger screen",
+                r.w0, r.h0, r.w1, r.h1, viewport, r.fn_x, r.fn_y, r.slot, r.slot + 1);
+  } else if (++fails > 20) {
+    REXLOG_WARN("gowj_native_lines: the menus stay laid out in 1280x720 - {}", r.why);
+  }
 }
 void GowjUltrawideSceneHeight(PPCRegister& r11) {
   if (GowjNativeLines()) {
