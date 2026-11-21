@@ -559,7 +559,7 @@ inline void StoreF(uint8_t* base, uint32_t a, float f) {
 #define GOW2_UI_JOIN(a, b) GOW2_UI_JOIN2(a, b)
 extern "C" void GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_SIZE)(PPCContext& __restrict ctx, uint8_t* base);
 extern "C" void GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_ORIGIN)(PPCContext& __restrict ctx, uint8_t* base);
-// 0.6.7 true 1080p menus. UUISceneClient's CanvasToScreen (UT3 script: "Stores the 3D projection matrix being used
+// 0.6.6 true 1080p menus. UUISceneClient's CanvasToScreen (UT3 script: "Stores the 3D projection matrix being used
 // to render the UI"; UpdateCanvasToScreen "should be called anytime the viewport size or origin changes" -
 // wiki.beyondunreal.com/UE3:UISceneClient_(UT3)). At client +112 (16 floats, row vectors: m00 +112, m11 +132, the
 // translation row +160..+172) per santiquiroz's port (disc build; TU6 assumed the same - checked here, not trusted).
@@ -641,7 +641,7 @@ extern "C" void GOW2_UI_VIEWPORT_SIZE(PPCContext& __restrict ctx, uint8_t* base)
     }
   }
   GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_SIZE)(ctx, base);
-  // 0.6.7 (job 2200: the 0.6.6 scale-up changed nothing - the FViewport already is 1920x1080, so this size already
+  // 0.6.6 (job 2200: the 0.6.6 scale-up changed nothing - the FViewport already is 1920x1080, so this size already
   // was): the UI scenes are authored in pixels of the console's 1280x720 - full-width images are 0..1280 pixels
   // (Position.Value[2] = 1280; santiquiroz's gow2_widescreen.cpp, disc build), text has no auto-scale - so with a
   // 1920x1080 layout space the percent-placed parts fill the screen and the pixel-placed ones stay 720p-sized at the
