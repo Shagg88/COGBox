@@ -99,6 +99,8 @@ set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
 # GitHub #353: the shared name tags, with this game's own ue3/ headers (its objects.h: Gears 3's ue3::obj).
 target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp)
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_OBJECTS_GOW3=1)
+target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/chat.cpp)  # in-match chat
+set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/chat.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_OBJECTS_GOW3=1)
 
 # Layer 3: Gears of War 3 (the executable).
 set(GOW3_SOURCES

@@ -30,6 +30,8 @@
 #include <rex/ppc/context.h>
 
 #include <ue3/auto_cheats.h>
+#include <xenos/chat_panel.h>   // in-match chat: the overlay side
+#include <ue3/chat.h>   // in-match chat (Y / U)
 #include <ue3/console.h>
 #include <ue3/match_guard.h>
 #include <ue3/settings_dump.h>
@@ -83,6 +85,10 @@ void Gow3InstallExtras() {
   target.log_global = gow3::addr::kGLog;
   ue3::match::Configure({"Gears 3", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
+  Ue3ChatConfigure({"Gears 3", target.engine_global, target.players_data_offset, target.players_num_offset,
+                    &OpenObjects, false});
+  Ue3ChatSetSink([](const Ue3ChatReceived& line) { XenosChatReceive(line.raw, line.team, line.name_len); });
+  XenosChatSetHooks(&Ue3ChatMatchRunning, &Ue3ChatSend);
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
   // GitHub #342: the launcher's cheats. God mode, speed and a hidden HUD need no cheat manager (no package patch, so they
@@ -142,5 +148,6 @@ extern "C" void GOW3_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
   Gow3NoteTickCall(hits_before, ctx.f1.f64, caller);  // read-only: counts the ticks that did not reach the limiter hook
   if (caller == gow3::addr::kServerTickClientsTickRateRet) return;  // once per engine frame (the engine loop's call)
   Ue3ConsoleRunQueued(ctx, base);
+  Ue3ChatPump(ctx, base);   // in-match chat: the HUD's received lines, taken and emptied
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
 }
