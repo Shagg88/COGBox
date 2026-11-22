@@ -132,6 +132,9 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
         case VirtualKey::kEnd: caret_ = text_.size(); break;
         default: break;
       }
+      // A new key press after the box opened: any character from now on is typed, never the opening key's own
+      // (Flippage: "Y" then "yes" lost its first 'y').
+      skip_char_ = false;
     }
     ApplyTextInput();
     if (!send.empty()) {
@@ -149,7 +152,9 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
   bool Char(unsigned int c) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!typing_) return false;
-    if (skip_char_) {   // the bind's own letter (Y / U) arrives as a character right after it opened the box
+    // the bind's own letter (Y / U) may arrive as a character right after it opened the box, before any other key
+    // press - only that one is skipped
+    if (skip_char_) {
       skip_char_ = false;
       if (Now() - opened_at_ < 0.5 && (c == 'y' || c == 'Y' || c == 'u' || c == 'U')) return true;
     }
