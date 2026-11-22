@@ -147,10 +147,14 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/console.cpp  # GitHub #264: engine console commands (--gow2_cheats, --ue3_hotkeys, --ue3_exec); Gears 3 builds it too
     src/layer2_ue3/objects.cpp  # GitHub #245: the engine's objects by name (ue3/objects.h; Gears 2 only - Gears 1 / 3 have their own)
     src/layer2_ue3/name_tags.cpp  # GitHub #353: COGBox tags after the players' names (Gears 1 / 3 / J build it too)
+    src/layer2_ue3/mod_extras.cpp  # --ue3_mods extras on modcore (KiltedKernel's, shared with Gears 3): mod.ini rules, bare files, config fragments
+    ../../Gears3-Native/src/layer2_ue3/modcore/modcore.cpp
 )
 # console.cpp's options are saved under Gears2 here (Gears 3 keeps its Gears3 group)
 set_source_files_properties(src/layer2_ue3/console.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_CONSOLE_GEARS2=1)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
+# modcore's headers (modcore/modcore.h, modcore/campaigns.h) live next to Gears 3's layer 2
+target_include_directories(gn_layer2_ue3 PRIVATE ../../Gears3-Native/src/layer2_ue3)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer1_xdk7645)
 rexglue_apply_target_settings(gn_layer2_ue3)
 
