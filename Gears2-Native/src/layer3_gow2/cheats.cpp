@@ -192,6 +192,7 @@ void Gow2FirstPersonTick();        // first_person.cpp (--gow2_first_person)
 #define GOW2_JOIN(a, b) GOW2_JOIN2(a, b)
 extern "C" void GOW2_JOIN(__imp__, GOW2_MAX_TICK_RATE)(PPCContext& __restrict ctx, uint8_t* base);
 void Gow2NoteTickCall(uint32_t caller);  // game_patches.cpp (0.6.3 host fps)
+void Gow2MaxTickRateFallback(PPCRegister& f1);  // game_patches.cpp (GitHub #420)
 extern std::atomic<uint32_t> g_gow2_tick_caller;  // game_patches.cpp
 extern "C" void GOW2_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
   // 0.6.3: who asks (the guest return address). A host with remote players asks twice per frame - the engine loop and
@@ -200,6 +201,7 @@ extern "C" void GOW2_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
   const uint32_t caller = uint32_t(ctx.lr);
   g_gow2_tick_caller.store(caller, std::memory_order_relaxed);
   GOW2_JOIN(__imp__, GOW2_MAX_TICK_RATE)(ctx, base);
+  if (caller != gow2::addr::kServerTickClientsTickRateRet) Gow2MaxTickRateFallback(ctx.f1);   // GitHub #420
   Gow2NoteTickCall(caller);
   if (caller == gow2::addr::kServerTickClientsTickRateRet) return;
   // GitHub #353: COGBox tags after the players' names. Gears 2's set takes a class only: the class-wide form, put right
