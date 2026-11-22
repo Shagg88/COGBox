@@ -13,7 +13,7 @@
 //   enabled = true
 //   side = everyone | host | client        who needs the mod in multiplayer (below; default everyone)
 //   requires = Other Mod, Another          mods that must be enabled too (by name or folder), else this one is off
-//   game = gears3                          the game it is made for (gears3 if not given); others are turned off
+//   game = gears3                          the game it is made for (the game reading it if not given); others are turned off
 //   content = MPCH_COGMarcusG2MP_SF, ...   the game's own content packages the mod's levels use that the campaign
 //                                          does not load (multiplayer characters...)
 //
@@ -102,9 +102,10 @@ namespace modcore
         return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
     }
 
-    inline Manifest Read(const std::filesystem::path& dir)
+    inline Manifest Read(const std::filesystem::path& dir, const std::string& defaultGame = "gears3")
     {
         Manifest m;
+        m.game = defaultGame;   // no game key (and every folder-only mod) = made for the game that reads it
         m.dir = dir;
         m.folder = m.name = U8(dir.filename());
         // review r369 F3 (security audit): a mod.ini is a few lines; a huge one (a mod that would hang the launcher and the
@@ -220,7 +221,7 @@ namespace modcore
             else if (key == "priority") m.priority = atoi(value.c_str());
             else if (key == "enabled") m.enabled = !(low == "false" || low == "0" || low == "no");
             else if (key == "side") m.side = low == "client" ? Side::Client : low == "host" || low == "server" ? Side::Host : Side::Everyone;
-            else if (key == "game") m.game = low.empty() ? "gears3" : low;
+            else if (key == "game") m.game = low.empty() ? defaultGame : low;
             else if (key == "requires" || key == "content")
             {
                 auto& list = key == "content" ? m.content : m.needs;
@@ -264,7 +265,7 @@ namespace modcore
         bool loose = false;
         for (const auto& e : std::filesystem::directory_iterator(root, ec))
         {
-            if (e.is_directory(ec) && (folderMods || std::filesystem::is_regular_file(e.path() / "mod.ini", ec))) mods.push_back(Read(e.path()));
+            if (e.is_directory(ec) && (folderMods || std::filesystem::is_regular_file(e.path() / "mod.ini", ec))) mods.push_back(Read(e.path(), game));
             else loose = true;
         }
         if (loose) { Manifest m; m.name = m.folder = "(loose files)"; m.dir = root; m.loose = true; mods.push_back(m); }
@@ -287,7 +288,7 @@ namespace modcore
     inline std::vector<Manifest> FromFolders(const std::vector<std::filesystem::path>& dirs, const std::string& game = "gears3")
     {
         std::vector<Manifest> mods;
-        for (const auto& d : dirs) mods.push_back(Read(d));
+        for (const auto& d : dirs) mods.push_back(Read(d, game));
         CheckProblems(mods, game);
         return mods;
     }

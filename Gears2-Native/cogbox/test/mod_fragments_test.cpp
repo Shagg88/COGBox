@@ -136,6 +136,30 @@ int main() {
     check(modcore::GamePath("mod.ini", "cookedxenon") == "", "GamePath: mod.ini is the mod's own");
     check(modcore::GamePath("config\\x.ini", "cookedxenon") == "", "GamePath: fragments are the mod's own");
 
+    // the game a mod is for (mod_extras.cpp ActiveModFolders reads --ue3_mods with FromFolders(dirs, "gears2")):
+    // a folder-only mod and a mod.ini without a game key are for the game reading them; a game key still wins
+    {
+        const std::filesystem::path m = dir / "mods";
+        std::filesystem::create_directories(m / "FolderOnly");
+        std::filesystem::create_directories(m / "NoGameKey");
+        std::filesystem::create_directories(m / "ForGears3");
+        std::filesystem::create_directories(m / "ForGears2");
+        write_text(m / "NoGameKey" / "mod.ini", "[Mod]\nName = No game key\n");
+        write_text(m / "ForGears3" / "mod.ini", "[Mod]\nName = G3 only\nGame = gears3\n");
+        write_text(m / "ForGears2" / "mod.ini", "[Mod]\nName = G2 only\nGame = gears2\n");
+        const auto g2 = modcore::FromFolders({m / "FolderOnly", m / "NoGameKey", m / "ForGears3", m / "ForGears2"}, "gears2");
+        check(g2.size() == 4, "FromFolders: four mods");
+        if (g2.size() == 4) {
+            check(g2[0].Active() && g2[0].game == "gears2", "Gears 2: a folder-only mod is active");
+            check(g2[1].Active() && g2[1].game == "gears2", "Gears 2: a mod.ini without Game is active");
+            check(!g2[2].Active() && g2[2].problem.find("Gears of War 3") != std::string::npos, "Gears 2: a Gears 3 mod is left out");
+            check(g2[3].Active(), "Gears 2: a Gears 2 mod is active");
+        }
+        const auto g3 = modcore::FromFolders({m / "FolderOnly", m / "NoGameKey", m / "ForGears2"}, "gears3");
+        check(g3.size() == 3 && g3[0].Active() && g3[1].Active() && !g3[2].Active(), "Gears 3: unchanged (default gears3, Gears 2 mod out)");
+        check(modcore::Read(m / "FolderOnly").game == "gears3", "Read without a game: gears3 as before");
+    }
+
     std::cout << (fails ? "FAILED\n" : "ok\n");
     return fails ? 1 : 0;
 }
