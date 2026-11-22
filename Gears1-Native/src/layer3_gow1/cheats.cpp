@@ -73,7 +73,7 @@ void Gow1InstallCheats() {
                          target.players_num_offset, &OpenObjects});
   Ue3ChatConfigure({"Gears 1", target.engine_global, target.players_data_offset, target.players_num_offset,
                     &OpenObjects, true});   // Gears 1 takes one word unless quoted
-  Ue3ChatSetSink([](const Ue3ChatReceived& line) { XenosChatReceive(line.raw, line.team); });
+  Ue3ChatSetSink([](const Ue3ChatReceived& line) { XenosChatReceive(line.raw, line.team, line.name_len); });
   XenosChatSetHooks(&Ue3ChatMatchRunning, &Ue3ChatSend);
   target.gate = &ue3::cheats::GateLocalOnly;   // 0.6.3: not in a Versus match; #342: and only this PC's players
   Ue3ConsoleSetTarget(target);

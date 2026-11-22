@@ -18,6 +18,7 @@ struct PPCContext;
 
 struct Ue3ChatReceived {
   std::string raw;   // "Name#1234: text"
+  size_t name_len = 0;   // the sender's PlayerName length (it may hold ": " itself)
   bool team = false;   // (the overlay reads the team marker in `raw`)
 };
 

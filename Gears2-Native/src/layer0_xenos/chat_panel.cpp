@@ -171,10 +171,10 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
   }
   bool WantsContinuousPaint() const override { return false; }   // drawn with each game frame
 
-  void Receive(const std::string& raw, bool team) {
+  void Receive(const std::string& raw, bool team, size_t name_len) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      chat::Line line = chat::ParseReceived(raw, Now());
+      chat::Line line = chat::ParseReceived(raw, Now(), name_len);
       line.team = line.team || team;   // the team marker (ParseReceived) or the caller's say
       log_.Add(std::move(line));
     }
@@ -356,16 +356,20 @@ void XenosInstallChatPanel(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window
 }
 
 void XenosShutdownChatPanel() {
+  {   // an open typing box gives the window its text input back first
+    std::lock_guard<std::mutex> lock(g_panel_mutex);
+    if (g_panel) g_panel->CloseNow();
+  }
   rex::ui::UnregisterBind("bind_cogbox_chat_all");
   rex::ui::UnregisterBind("bind_cogbox_chat_team");
   std::lock_guard<std::mutex> lock(g_panel_mutex);
   g_panel.reset();
 }
 
-void XenosChatReceive(const std::string& raw, bool team) {
+void XenosChatReceive(const std::string& raw, bool team, size_t name_len) {
   if (!REXCVAR_GET(cogbox_match_chat)) return;
   std::lock_guard<std::mutex> lock(g_panel_mutex);
-  if (g_panel) g_panel->Receive(raw, team);
+  if (g_panel) g_panel->Receive(raw, team, name_len);
 }
 
 void XenosChatSetHooks(bool (*match_running)(), bool (*send)(const std::string& text, bool team)) {

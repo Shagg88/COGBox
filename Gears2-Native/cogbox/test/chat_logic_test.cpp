@@ -27,7 +27,7 @@ void CleanTextTests() {
   CHECK(CleanText("\x01tab\there") == "tabhere");
   CHECK(CleanText("caf\xC3\xA9") == "caf");
   CHECK(CleanText("   ").empty());
-  CHECK(CleanText(std::string(200, 'x')).size() == 150);
+  CHECK(CleanText(std::string(200, 'x')).size() == 125);   // the marker (3) + 125 fit UE3 Say's Left(Msg, 128)
   // '"' would end (or start) the console's string argument: it becomes '\''
   CHECK(CleanText("\"quoted\" 100% -x") == "'quoted' 100% -x");
   CHECK(CleanText("hi; quit") == "hi quit");
@@ -46,6 +46,9 @@ void TeamMarkerTests() {
   const auto line = ParseReceived("Baird#7310: ~T flank", 2);
   CHECK(line.who == "Baird#7310" && line.text == "flank" && line.team);
   CHECK(!ParseReceived("Baird#7310: flank", 2).team);
+  // a name with ": " in it: the caller gives the name's length
+  const auto odd = ParseReceived("Mr: X#0001: ~T hi", 2, 10);
+  CHECK(odd.who == "Mr: X#0001" && odd.text == "hi" && odd.team);
 }
 
 void ParseTests() {

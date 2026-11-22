@@ -164,10 +164,18 @@ void Ue3ChatPump(PPCContext&, uint8_t*) {
         std::string name;
         if (!pri || o.player_name < 0 || !ReadFString(pri + uint32_t(o.player_name), &name) || name.empty()) continue;
         if (!ReadFString(entry, &line.raw) || line.raw.compare(0, name.size() + 2, name + ": ") != 0) continue;
+        line.name_len = name.size();
         if (sink) sink(line);
       }
-      obj::Write32(array + 4, 0);   // emptied (the allocation stays the engine's): it never draws them itself
+      // Emptied (the allocation stays the engine's), so it never draws them itself. Each entry's text buffer is left
+      // behind (the engine overwrites the slot later without freeing it): a few dozen bytes of guest heap per line,
+      // accepted (second review) - freeing needs the engine's allocator.
+      obj::Write32(array + 4, 0);
     }
+  }
+  if (!match && g_match.load(std::memory_order_relaxed)) {   // the match ended: what was still waiting is not sent
+    std::lock_guard<std::mutex> lock(g_sent_mutex);
+    g_waiting.clear();
   }
   g_match.store(match, std::memory_order_relaxed);
 }

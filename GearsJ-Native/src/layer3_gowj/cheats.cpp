@@ -80,7 +80,7 @@ void GowjInstallCheats() {
                          target.players_num_offset, &OpenObjects});
   Ue3ChatConfigure({"Judgment", target.engine_global, target.players_data_offset, target.players_num_offset,
                     &OpenObjects, false});
-  Ue3ChatSetSink([](const Ue3ChatReceived& line) { XenosChatReceive(line.raw, line.team); });
+  Ue3ChatSetSink([](const Ue3ChatReceived& line) { XenosChatReceive(line.raw, line.team, line.name_len); });
   XenosChatSetHooks(&Ue3ChatMatchRunning, &Ue3ChatSend);
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);

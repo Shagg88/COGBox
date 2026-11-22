@@ -36,10 +36,10 @@ bool TakeTeamMarker(std::string* text) {
   return true;
 }
 
-Line ParseReceived(std::string_view raw, double now) {
+Line ParseReceived(std::string_view raw, double now, size_t name_len) {
   Line line;
   line.at = now;
-  const size_t colon = raw.find(": ");
+  const size_t colon = (name_len && raw.compare(name_len, 2, ": ") == 0) ? name_len : raw.find(": ");
   if (colon == std::string_view::npos || colon == 0) {
     line.text = std::string(raw);
   } else {

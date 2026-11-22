@@ -12,7 +12,8 @@
 
 namespace xenos::chat {
 
-constexpr size_t kMaxChars = 150;   // a message, after cleaning
+constexpr size_t kMaxChars = 125;   // a message, after cleaning: with the team marker (3) it fits the 128 characters
+                                    // UE3's PlayerController.Say / TeamSay keep (Left(Msg, 128))
 constexpr int kMaxLines = 5;        // messages kept on screen
 constexpr int kMaxWrap = 3;         // rows one message may wrap to
 constexpr double kFadeAfter = 8.0;  // seconds a line stays fully visible
@@ -37,7 +38,8 @@ struct Line {
 
 // "Name#1234: text" -> who / text (team when the text carries the team marker, which is removed). Without ": " who is
 // empty and the whole string is the text.
-Line ParseReceived(std::string_view raw, double now);
+// `name_len`: the sender's name length when the caller knows it (a name may hold ": " itself).
+Line ParseReceived(std::string_view raw, double now, size_t name_len = 0);
 
 class Log {
  public:
