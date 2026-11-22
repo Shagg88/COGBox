@@ -1,11 +1,12 @@
-// Layer 2 (Unreal Engine 3): the in-match chat's engine side (docs/superpowers/specs/2026-11-21-match-chat-design.md).
+// Layer 2 (Unreal Engine 3): the in-match chat's engine side (PR #421).
 // Sending: the game's own `Say` / `TeamSay` through ue3/console.h's trusted queue (no cheat gate, no notice) - the host
 // passes it on to everyone / the team (UE3's GameInfo.Broadcast / BroadcastTeam), each player's PlayerController.
 // TeamMessage puts "Name#1234: text" in its HUD's ConsoleMessages (TArray of 24-byte entries: FString Text, FColor,
 // float MessageLife, PlayerReplicationInfo* - same in all four games, 2026-11-21 probes).
-// Receiving: once a frame on the game thread, the local player's HUD's ConsoleMessages are taken and the array emptied,
-// so the engine never draws them itself (Gears 1 does in a match, the menus of Gears 3 / Judgment do). Entries without a
-// PlayerReplicationInfo are the engine's own debug text ("Open Main Menu"...) and are dropped.
+// Receiving: once a frame on the game thread, only in a match and with --cogbox_match_chat on, the players' lines in the
+// local player's HUD's ConsoleMessages are taken and their text made "" in place, so the engine draws nothing for them
+// (Gears 1 would in a match) and still frees them itself. Entries without a PlayerReplicationInfo are the engine's own
+// text ("Open Main Menu"...) and are left alone, as is the whole list outside a match.
 // The entries do not say Say from TeamSay, so a team message carries xenos/chat_logic.h's team marker in front of
 // its text (the overlay takes it off and draws the line as a team line). Header kept identical in the four games.
 // Our code (MIT).

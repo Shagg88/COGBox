@@ -102,7 +102,7 @@ extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
   // text (kill feed, names over heads, TacCom), and not every such place is found yet - plain on every screen.
   Ue3NameTagsTick([] { return ue3::obj::Ready() || OpenObjects(); }, Ue3NameTagStyle{"", "", true});
   Ue3ConsoleRunQueued(ctx, base);
-  Ue3ChatPump(ctx, base);   // in-match chat: the HUD's received lines, taken and emptied
+  Ue3ChatPump(ctx, base);   // in-match chat: the HUD's received lines, taken (in a match only)
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   Gow1AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   Gow1NativeUiViewportTick(&OpenObjects);   // 0.6.6: true 1080p menus (game_patches.cpp; off: one test)

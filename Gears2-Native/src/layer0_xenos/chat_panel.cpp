@@ -13,6 +13,7 @@
 
 #include <imgui.h>
 
+#include <rex/cvar.h>
 #include <rex/ui/imgui_dialog.h>
 #include <rex/logging/macros.h>
 #include <rex/ui/imgui_drawer.h>
@@ -85,11 +86,32 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
     }
   }
 
-  // UI thread (the Y / U binds). Opens the typing row (or switches ALL / TEAM while open).
-  void Open(bool team) {
-    if (!REXCVAR_GET(cogbox_match_chat) || XenosInGameMenuIsOpen()) return;
+  // Whether Y / U may open the typing row now: chat on, no COGBox screen, a match running.
+  static bool CanOpen() {
+    if (!REXCVAR_GET(cogbox_match_chat) || XenosInGameMenuIsOpen()) return false;
     auto* running = g_match_running.load();
-    if (!running || !running()) return;
+    return running && running();
+  }
+
+  // UI thread, the listener (z 200, above the keyboard / mouse driver and the SDK's binds): a press of the chat keys
+  // opens the box and is the box's - but only when it can open (in a match). Anywhere else the key goes on to the
+  // game as any other key (the SDK bind below then finds it, does nothing, and the game has already had it).
+  bool BindKey(rex::ui::VirtualKey vk, bool repeat) {
+    if (repeat || vk == rex::ui::VirtualKey::kNone) return false;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (typing_) return false;
+    }
+    const auto key_of = [](const char* bind) { return rex::ui::ParseVirtualKey(rex::cvar::GetFlagByName(bind)); };
+    const bool all = vk == key_of("bind_cogbox_chat_all"), team = !all && vk == key_of("bind_cogbox_chat_team");
+    if ((!all && !team) || !CanOpen()) return false;
+    Open(team);
+    return true;
+  }
+
+  // UI thread (BindKey, or the Y / U binds). Opens the typing row (or switches ALL / TEAM while open).
+  void Open(bool team) {
+    if (!CanOpen()) return;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (typing_) return;
@@ -227,13 +249,25 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
       return font->CalcTextSizeA(px, FLT_MAX, 0.f, s.data(), s.data() + s.size()).x;
     };
 
+    // Wrapped rows are kept per line (and dropped when the font size or width changes), so each frame only measures
+    // lines it has not wrapped yet - not every line on screen again.
+    if (wrap_px_ != px || wrap_w_ != text_w || wrap_font_ != font) wrap_cache_.clear(), wrap_px_ = px, wrap_w_ = text_w, wrap_font_ = font;
+    std::vector<WrapEntry> keep;
     std::vector<Row> rows;
     for (const auto& [line, alpha] : lines) {
       const std::string prefix = (line.team ? "[TEAM] " : "") + (line.who.empty() ? std::string() : line.who + ": ");
-      const auto wrapped = chat::Wrap(prefix + line.text, text_w, measure);
+      std::string all = prefix + line.text;
+      auto hit = std::find_if(wrap_cache_.begin(), wrap_cache_.end(), [&](const WrapEntry& w) { return w.at == line.at && w.text == all; });
+      if (hit == wrap_cache_.end()) {
+        wrap_cache_.push_back({line.at, all, chat::Wrap(all, text_w, measure)});
+        hit = wrap_cache_.end() - 1;
+      }
+      keep.push_back(*hit);
+      const auto& wrapped = hit->rows;
       for (size_t i = 0; i < wrapped.size(); ++i)
         rows.push_back({wrapped[i], i == 0 ? std::min(prefix.size(), wrapped[i].size()) : 0, line.team ? kTeam : kAll, alpha});
     }
+    wrap_cache_ = std::move(keep);   // only the lines still shown
     if (int(rows.size()) > kRowsShown) rows.erase(rows.begin(), rows.end() - kRowsShown);   // oldest rows go first
 
     const int shown = int(rows.size()) + (drawing_typing_ ? 1 : 0);
@@ -314,6 +348,15 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
     }
   }
 
+  struct WrapEntry {
+    double at;
+    std::string text;
+    std::vector<std::string> rows;
+  };
+  std::vector<WrapEntry> wrap_cache_;   // UI thread (Draw)
+  float wrap_px_ = 0, wrap_w_ = 0;
+  const ImFont* wrap_font_ = nullptr;
+
   rex::ui::Window* window_;
   KeyListener keys_;
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
@@ -329,6 +372,10 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
 };
 
 void KeyListener::OnKeyDown(rex::ui::KeyEvent& e) {
+  if (panel_->BindKey(e.virtual_key(), e.prev_state())) {
+    e.set_handled(true);
+    return;
+  }
   if (panel_->Key(e.virtual_key(), e.prev_state())) e.set_handled(true);
 }
 void KeyListener::OnKeyChar(rex::ui::KeyEvent& e) {

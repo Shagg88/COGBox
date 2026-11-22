@@ -148,6 +148,6 @@ extern "C" void GOW3_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
   Gow3NoteTickCall(hits_before, ctx.f1.f64, caller);  // read-only: counts the ticks that did not reach the limiter hook
   if (caller == gow3::addr::kServerTickClientsTickRateRet) return;  // once per engine frame (the engine loop's call)
   Ue3ConsoleRunQueued(ctx, base);
-  Ue3ChatPump(ctx, base);   // in-match chat: the HUD's received lines, taken and emptied
+  Ue3ChatPump(ctx, base);   // in-match chat: the HUD's received lines, taken (in a match only)
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
 }

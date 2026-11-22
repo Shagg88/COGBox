@@ -4,6 +4,7 @@
 #include <ue3/console.h>
 #include <ue3/objects.h>
 #include <xenos/chat_logic.h>
+#include <xenos/chat_panel.h>   // cogbox_match_chat
 
 #include <rex/logging/macros.h>
 
@@ -151,8 +152,10 @@ void Ue3ChatPump(PPCContext&, uint8_t*) {
     if (gri && o.match_over >= 0 && o.over_mask)
       match = match && (obj::Read32(gri + uint32_t(o.match_over)) & o.over_mask) == 0;
 
+    // Only in a match with chat on: elsewhere (menus, campaign, chat off) the engine's own messages are left alone
     const uint32_t array = hud + uint32_t(o.messages);
-    const uint32_t data = obj::Read32(array), num = obj::Read32(array + 4);
+    const uint32_t data = (match && REXCVAR_GET(cogbox_match_chat)) ? obj::Read32(array) : 0;
+    const uint32_t num = data ? obj::Read32(array + 4) : 0;
     if (data && num > 0 && num <= kMaxEntries && obj::Readable(data, num * kEntrySize)) {
       auto* sink = g_sink.load(std::memory_order_acquire);
       for (uint32_t i = 0; i < num; ++i) {
@@ -166,11 +169,14 @@ void Ue3ChatPump(PPCContext&, uint8_t*) {
         if (!ReadFString(entry, &line.raw) || line.raw.compare(0, name.size() + 2, name + ": ") != 0) continue;
         line.name_len = name.size();
         if (sink) sink(line);
+        // Taken: its text is made "" in place (count 1, first character 0), so the engine draws nothing for it and
+        // the next pump skips it (ReadFString wants count >= 2). The entry and its text buffer stay the engine's: it
+        // removes them itself (oldest first / when they expire) and frees the buffer with its own allocator, so
+        // nothing leaks (the earlier version emptied the array and lost one buffer per line).
+        const uint32_t text = obj::Read32(entry);
+        obj::Write32(text & ~3u, (text & 2) ? (obj::Read32(text & ~3u) & 0xFFFF0000u) : (obj::Read32(text & ~3u) & 0x0000FFFFu));
+        obj::Write32(entry + 4, 1);
       }
-      // Emptied (the allocation stays the engine's), so it never draws them itself. Each entry's text buffer is left
-      // behind (the engine overwrites the slot later without freeing it): a few dozen bytes of guest heap per line,
-      // accepted (second review) - freeing needs the engine's allocator.
-      obj::Write32(array + 4, 0);
     }
   }
   if (!match && g_match.load(std::memory_order_relaxed)) {   // the match ended: what was still waiting is not sent

@@ -49,6 +49,9 @@ void TeamMarkerTests() {
   // a name with ": " in it: the caller gives the name's length
   const auto odd = ParseReceived("Mr: X#0001: ~T hi", 2, 10);
   CHECK(odd.who == "Mr: X#0001" && odd.text == "hi" && odd.team);
+  // a received text longer than UE3's 128 is cut (after the team marker comes off)
+  const auto longer = ParseReceived("Cole#1: ~T " + std::string(400, 'x'), 2);
+  CHECK(longer.text.size() == kMaxReceived && longer.team);
 }
 
 void ParseTests() {

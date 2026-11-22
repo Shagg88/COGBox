@@ -1,6 +1,6 @@
 // Layer 0 (game-free): the in-match chat's logic - cleaning what the player typed, the received lines with their fade,
 // and word wrap. No drawing and no engine: xenos/chat_panel.h draws it, ue3/chat.h sends and receives
-// (docs/superpowers/specs/2026-11-21-match-chat-design.md). Tested by cogbox/test/chat_logic_test.cpp. Our code (MIT).
+// (PR #421). Tested by cogbox/test/chat_logic_test.cpp. Our code (MIT).
 #pragma once
 
 #include <cstddef>
@@ -14,6 +14,8 @@ namespace xenos::chat {
 
 constexpr size_t kMaxChars = 125;   // a message, after cleaning: with the team marker (3) it fits the 128 characters
                                     // UE3's PlayerController.Say / TeamSay keep (Left(Msg, 128))
+constexpr size_t kMaxReceived = 128;   // a received message's text is cut to this (UE3 keeps 128; another game
+                                      // or a modded host could send more)
 constexpr int kMaxLines = 5;        // messages kept on screen
 constexpr int kMaxWrap = 3;         // rows one message may wrap to
 constexpr double kFadeAfter = 8.0;  // seconds a line stays fully visible
@@ -38,7 +40,8 @@ struct Line {
 
 // "Name#1234: text" -> who / text (team when the text carries the team marker, which is removed). Without ": " who is
 // empty and the whole string is the text.
-// `name_len`: the sender's name length when the caller knows it (a name may hold ": " itself).
+// `name_len`: the sender's name length when the caller knows it (a name may hold ": " itself). The text is cut to
+// kMaxReceived characters (after the team marker is taken off).
 Line ParseReceived(std::string_view raw, double now, size_t name_len = 0);
 
 class Log {

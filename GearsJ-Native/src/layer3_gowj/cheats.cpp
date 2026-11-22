@@ -123,7 +123,7 @@ extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
   GowjPollLoadingMovie(ctx, base);
   __imp__sub_8255E200(ctx, base);
   Ue3ConsoleRunQueued(ctx, base);
-  Ue3ChatPump(ctx, base);   // in-match chat: the HUD's received lines, taken and emptied
+  Ue3ChatPump(ctx, base);   // in-match chat: the HUD's received lines, taken (in a match only)
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   GowjAdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   GowjFirstPersonTick();        // --gowj_first_person (first_person.cpp; off: one flag test)

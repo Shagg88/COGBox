@@ -563,7 +563,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("DeadBodies", "Dead bodies", Tab::Gameplay, PG, { "Game's own", "More", "Many" }, 0,
                "How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; "
                "this costs some performance and memory. Bodies are still cleared at cutscenes.", 0), "iniedit");
-    // In-match chat (docs/superpowers/specs/2026-11-21-match-chat-design.md): Y / U, the keys in KEYBOARD KEYS
+    // In-match chat (PR #421): Y / U, the keys in KEYBOARD KEYS
     add(make("MatchChat", "In-match chat", Tab::Gameplay, Kind::Bool, SH, 1,
              "In a match, Y opens chat to everyone and U chat to your team; messages show on the left of the screen. "
              "Off: the keys do nothing and no messages are shown.", 0));

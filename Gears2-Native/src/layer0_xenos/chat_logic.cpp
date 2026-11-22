@@ -47,6 +47,7 @@ Line ParseReceived(std::string_view raw, double now, size_t name_len) {
     line.text = std::string(raw.substr(colon + 2));
   }
   line.team = TakeTeamMarker(&line.text);
+  if (line.text.size() > kMaxReceived) line.text.resize(kMaxReceived);
   return line;
 }
 
