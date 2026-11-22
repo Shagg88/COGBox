@@ -26,6 +26,8 @@
 // GearGameWingman_Base: Wingman) }, with Assassination = GearGameContent.GearGameKTL (a TDM). GearGameSP_Base (the campaign,
 // co-op too), GearMenuGame and its lobby classes are not under GearGameMP_Base. Horde is the one PvE game type below it.
 #include <atomic>
+#include <chrono>
+#include <algorithm>
 
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
@@ -100,6 +102,82 @@ void Gow2InstallCheats() {
   }
 }
 
+// GitHub #420 / #422 (was #237): two-player split side by side. 0.6.x only wrote Default2PSplitType /
+// DesiredSplitscreenType into the engine ini (config_install.cpp); the game's level start-up sets the viewport client's
+// split type again, so the split went back to top / bottom. As Gears 3's Gow3SplitLayoutTick (#269 / #313): while two
+// players are in and GameViewportClient.DesiredSplitscreenType is not eSST_2P_VERTICAL, the same `set` is queued again
+// (rate-limited: a set that does not show within 3 s, or a reset within 10 s of holding, doubles the wait, 30 s at most).
+REXCVAR_DECLARE(bool, gow2_split_vertical);  // layer 2 config_install.cpp
+void Gow2SplitLayoutTick() {
+  if (!REXCVAR_GET(gow2_split_vertical)) return;
+  static uint32_t ticks = 0;
+  if (++ticks % 20) return;
+  namespace obj = ue3::obj;
+  if (!obj::Ready() && !OpenObjects()) return;
+  using Clock = std::chrono::steady_clock;
+  static Clock::time_point next_lookup{}, last_set{}, vertical_since{};
+  static int vp_off = -1, desired_off = -1, active_off = -1, players_off = -1, fails = 0, lines = 0;
+  static bool in_flight = false, warned = false;
+  const Clock::time_point now = Clock::now();
+  if (vp_off < 0 || desired_off < 0 || players_off < 0) {
+    if (now < next_lookup) return;
+    next_lookup = now + std::chrono::seconds(5);
+    const uint32_t engine_cls = obj::FindClass("Engine"), game_engine_cls = obj::FindClass("GameEngine");
+    const uint32_t vpc_cls = obj::FindClass("GameViewportClient");
+    if (!engine_cls || !game_engine_cls || !vpc_cls) return;
+    vp_off = obj::PropertyOffset(game_engine_cls, "GameViewport");
+    players_off = obj::PropertyOffset(engine_cls, "GamePlayers");
+    desired_off = obj::PropertyOffset(vpc_cls, "DesiredSplitscreenType");
+    active_off = obj::PropertyOffset(vpc_cls, "ActiveSplitscreenType");
+    REXLOG_INFO("gow2_split_vertical: GameViewport +0x{:X}, GamePlayers +0x{:X} (code: +0x32C), DesiredSplitscreenType "
+                "+0x{:X}, ActiveSplitscreenType +0x{:X}", vp_off, players_off, desired_off, active_off);
+    if (vp_off < 0 || desired_off < 0 || players_off < 0) {
+      REXLOG_WARN("gow2_split_vertical: viewport properties not found - only the ini default is used");
+      vp_off = desired_off = players_off = -1;
+      next_lookup = now + std::chrono::hours(24 * 365);
+      return;
+    }
+  }
+  const uint32_t engine = obj::Read32(gow2::addr::kGEngine);
+  if (!engine) return;
+  const uint32_t viewport = obj::Read32(engine + uint32_t(vp_off));
+  const uint32_t players = obj::Read32(engine + uint32_t(players_off) + 4);  // TArray: data, count, max
+  if (!viewport || players != 2) {
+    vertical_since = {}; in_flight = false; fails = 0; warned = false; last_set = {};
+    return;
+  }
+  auto read8 = [](uint32_t a) { return uint8_t(obj::Read32(a & ~3u) >> (8 * (3 - (a & 3u)))); };
+  constexpr uint8_t kVertical = 2;  // ESplitScreenType: NONE, 2P_HORIZONTAL, 2P_VERTICAL, ...
+  const uint8_t desired = read8(viewport + uint32_t(desired_off));
+  const uint8_t active = active_off >= 0 ? read8(viewport + uint32_t(active_off)) : 0xFF;
+  static uint8_t logged_desired = 0xFF, logged_active = 0xFF;
+  if ((desired != logged_desired || active != logged_active) && ++lines <= 300) {
+    REXLOG_INFO("gow2_split_vertical: split type desired {} active {} (2 = side by side)", desired, active);
+    logged_desired = desired; logged_active = active;
+  }
+  if (desired == kVertical) {
+    if (vertical_since == Clock::time_point{}) vertical_since = now;
+    in_flight = false;
+    if (fails && now - vertical_since >= std::chrono::seconds(10)) fails = 0;
+    return;
+  }
+  if (vertical_since != Clock::time_point{}) {
+    if (now - vertical_since < std::chrono::seconds(10)) ++fails;
+    vertical_since = {};
+  }
+  if (in_flight && now - last_set < std::chrono::seconds(3)) return;
+  if (in_flight) { in_flight = false; ++fails; }
+  if (fails >= 5 && !warned) {
+    warned = true;
+    REXLOG_WARN("gow2_split_vertical: the game keeps resetting the split here - setting it again only every 30 s");
+  }
+  const auto gap = std::chrono::seconds(fails <= 0 ? 0 : std::min(30, 1 << std::min(fails, 5)));
+  if (last_set != Clock::time_point{} && now - last_set < gap) return;
+  last_set = now;
+  in_flight = true;
+  Ue3ConsoleQueue("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL");
+}
+
 void Gow2AdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers, --pad_trigger_rumble)
 void Gow2FirstPersonTick();        // first_person.cpp (--gow2_first_person)
 
@@ -129,6 +207,7 @@ extern "C" void GOW2_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
   // No colour for now (Flippage / Shagg): the grey markup showed as text wherever the game draws a name as plain
   // text (kill feed, names over heads, TacCom), and not every such place is found yet - plain on every screen.
   Ue3NameTagsTick([] { return ue3::obj::Ready() || OpenObjects(); }, Ue3NameTagStyle{"", "", true});
+  Gow2SplitLayoutTick();         // GitHub #420 / #422 (before the queue runs: same frame)
   Ue3ConsoleRunQueued(ctx, base);
   Ue3ChatPump(ctx, base);   // in-match chat: the HUD's received lines, taken (in a match only)
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
