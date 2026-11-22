@@ -429,3 +429,49 @@ TEST_CASE("GitHub #223: with the game set, a style builds only that game's atlas
   compositor.SetGameTitle(0);  // unknown: every atlas again
   CHECK_FALSE(compositor.GetOverlay(kG2Saw, DeviceStyle::kPlayStation).empty());
 }
+
+TEST_CASE("A prompt sheet moved by a GPU copy keeps its overlay; uncompressed GPU-written reloads skip the hash",
+          "[layer0][prompt][compositor][texture_cache]") {
+  // The game moves its textures with GPU copies (Gears 3 level loads): a prompt sheet at its new address has every page
+  // GPU-written. Only uncompressed textures (the resolves the game samples every frame) may skip the hash.
+  ClearDynamicOverlays();
+  PromptOverlayCompositor& compositor = GlobalPromptCompositor();
+  compositor.ClearAtlasAliases();
+  REQUIRE(compositor.Initialize("assets/glyphs"));
+
+  constexpr uint32_t kBase = 0x4000;
+  constexpr uint32_t kWidth = 256, kHeight = 256;
+  constexpr uint32_t kBaseBytes = (kWidth / 4) * (kHeight / 4) * 16;  // DXT5: 65536 bytes
+  constexpr uint32_t kRgbaBase = 0x20000, kRgbaSize = 64, kRgbaBytes = kRgbaSize * kRgbaSize * 4;
+  std::vector<uint8_t> guest_mem(kRgbaBase + kRgbaBytes + 0x1000, 0x42);
+  compositor.RegisterAtlasAlias(XXH3_64bits(guest_mem.data() + kBase, kBaseBytes), 0xae5c68a9d7f7398cULL);
+
+  CompositorMockBackend backend;
+  GuestWatch watch(nullptr);
+  TextureCache cache(backend, guest_mem.data(), watch);
+  gpu::TextureView views[96] = {};
+  gpu::SamplerDesc samplers[32] = {};
+  compositor.SetActiveStyle(DeviceStyle::kPlayStation);
+
+  // The prompt sheet, every page GPU-written: hashed, so its 4x overlay is applied.
+  watch.MarkGpuWritten(kBase, kBaseBytes);
+  uint32_t fetch[192] = {};
+  MakeLinearDxt5Fetch(fetch, kBase, kWidth, kHeight);
+  REQUIRE(cache.Bind(fetch, 1u, 0u, 0u, 1, views, samplers) == 0);
+  REQUIRE(backend.created.size() == 1);
+  CHECK(backend.created[0].desc.width == 1024);
+  CHECK(backend.created[0].desc.height == 1024);
+  CHECK(cache.Stats().swap_hash_skipped_gpu == 0);
+
+  // An uncompressed texture (k_8_8_8_8), every page GPU-written: still skips the hash.
+  watch.MarkGpuWritten(kRgbaBase, kRgbaBytes);
+  uint32_t fetch_rgba[192] = {};
+  MakeLinearDxt5Fetch(fetch_rgba, kRgbaBase, kRgbaSize, kRgbaSize);
+  fetch_rgba[1] = (fetch_rgba[1] & ~0x3Fu) | 6u;
+  REQUIRE(cache.Bind(fetch_rgba, 1u, 0u, 0u, 2, views, samplers) == 0);
+  CHECK(cache.Stats().swap_hash_skipped_gpu == 1);
+
+  compositor.SetActiveStyle(DeviceStyle::kOriginal);
+  compositor.ClearAtlasAliases();
+  ClearDynamicOverlays();
+}

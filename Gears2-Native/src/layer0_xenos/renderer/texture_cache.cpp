@@ -1647,8 +1647,15 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   // pages ALL hold what our GPU wrote last (a resolve the game samples) is no replacement / overlay / pack / dump
   // candidate - its CPU bytes are not its content (r95 M2 below already says so for packs) - so its megabytes are not
   // hashed on every reload (1280x720x4 = 3.7 MB each time).
+  // Only uncompressed textures, though: the game moves its textures with GPU copies (Gears 3, every level load), so a
+  // button-prompt sheet reloaded at its new address is GPU-written too - yet its bytes are the texture, and skipping
+  // its hash left the game's Xbox 360 prompts on screen. The resolves the game samples every frame are uncompressed in
+  // practice; prompt sheets (DXT5) and other block-compressed textures (any compressed guest format, also the ones
+  // decoded on the CPU) are hashed. Their pack lookup stays off while their pages are GPU-current (r95 M2 below). A
+  // memexport read-back still in flight could leave stale bytes for this hash until the texture's next reload - as for
+  // every texture before 19 Nov.
   bool all_gpu_written = false;
-  if (g_swap.On() && !e.has_overlay && e.ov_scale <= 1 && e.overlay_variants.empty()) {
+  if (g_swap.On() && fb.block_width == 1 && !e.has_overlay && e.ov_scale <= 1 && e.overlay_variants.empty()) {
     const uint32_t len = std::max(layout.base.level_data_extent_bytes, 1u);
     all_gpu_written = true;
     for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + len - 1) >> GuestWatch::kPageShift && all_gpu_written; ++p)
