@@ -988,6 +988,21 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   if (v > 0) Gow3ExactLimit(f1, engine_loop);
 }
 
+// GitHub #420 / #422 (as Gears 2): the 22 Nov #422 log has "engine tick 681: GetMaxTickRate did NOT reach the limiter
+// hook (returned 0.0; limit asked 60; local players 2)" - in split screen the game can take a way through
+// GetMaxTickRate that skips the hook, and the limit is gone. extras.cpp's override calls this after the original for the
+// engine loop's call when the hook did not run: the same exact limiter waits here (the menu limit included).
+void Gow3MaxTickRateFallback(PPCRegister& f1) {
+  int32_t v = LiveMaxFps();
+  if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed))
+    v = (v <= 0 || v > m) ? m : v;
+  if (v <= 0) return;
+  GOW3_LOG_ONCE("gow3_max_fps: GetMaxTickRate returned {} without reaching the limiter hook - the limit {} is kept here",
+                f1.f64, v);
+  f1.f64 = double(v);
+  Gow3ExactLimit(f1, true);
+}
+
 // ---- Engine settings through the game's own config (layer 2 --ue3_ini_edits) ----------------------------------------
 // Added to --ue3_ini_edits before the bundle is edited (gow3_app.h), so layer 2 does the work: the edited
 // Coalesced_*.bin, its table-of-contents size and MD5, and the start-up SHA-1 table. Ideas from DryreL's multipatch
