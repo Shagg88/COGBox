@@ -2480,6 +2480,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         const double boost = mouseLook ? 4.0 : 1.0;
         a.insert(a.end(), { "--mnk_mode=true", "--mnk_mouse=true", "--mnk_sensitivity=" + fmt_double(s.f("Sens") * 2.0 / boost) });
         if (nativeMouse) a.insert(a.end(), { "--ue3_mouse_look=true", "--ue3_mouse_scale=" + fmt_double(s.f("Sens")) });
+        // GitHub #420: split screen with keyboard + mouse and a pad - the keyboard / mouse is player 1, pads from player 2
+        // (SDK patch 117; before, the first pad also drove player 1)
+        if (avail("Players") && s.i("Players") > 0 && cap_rt(env, "mnk_own_player")) a.push_back("--mnk_own_player=true");
         // GitHub #52: keep the turn speed per count the same whatever Field of view (%) is (UE3 scales the mouse by the
         // FOV). Only the FOV % here: the ultrawide patch (gow3_aspect) widens the projection, not FOVAngle, so
         // PlayerInput's FOVScale does not see it - check that in the aspect code before adding its factor.

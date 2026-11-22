@@ -1,0 +1,36 @@
+diff --git a/src/input/device_assignment.cpp b/src/input/device_assignment.cpp
+index 52e00737..ee789e30 100644
+--- a/src/input/device_assignment.cpp
++++ b/src/input/device_assignment.cpp
+@@ -11,6 +11,14 @@
+ 
+ #include <rex/input/device_assignment.h>
+ 
++#include <rex/cvar.h>
++
++// Gears2-Native SDK patch 117 (COGBox GitHub #420): keyboard + mouse and a pad both drove player 1 in split screen -
++// the keyboard / mouse device (synthetic) and the first pad (ordinal 0) were both given user 0. With
++// --mnk_own_player the keyboard / mouse keeps player 1 and every pad moves one slot on (pad 1 = player 2, ...).
++REXCVAR_DEFINE_BOOL(mnk_own_player, false, "Input",
++                    "Keyboard / mouse is player 1 on its own; pads are players 2, 3, 4 (split screen with keyboard + pad)");
++
+ namespace rex::input {
+ 
+ void SlotAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices) {
+@@ -20,11 +28,14 @@ void SlotAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices) {
+ 
+   // Key off the ordinal rather than list position, so unplugging pad one does
+   // not promote pad two to player one.
++  bool synthetic = false;
++  for (const auto& device : devices) synthetic = synthetic || device.synthetic;
++  const uint32_t shift = (synthetic && REXCVAR_GET(mnk_own_player)) ? 1u : 0u;
+   for (const auto& device : devices) {
+     if (device.synthetic) {
+       users_[0].push_back(device.id);
+-    } else if (device.ordinal < kMaxGuestUsers) {
+-      users_[device.ordinal].push_back(device.id);
++    } else if (device.ordinal + shift < kMaxGuestUsers) {
++      users_[device.ordinal + shift].push_back(device.id);
+     }
+   }
+ }
