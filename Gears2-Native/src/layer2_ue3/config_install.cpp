@@ -908,6 +908,20 @@ std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, s
         REXLOG_WARN("ue3_mods: {}: programs are not taken from mods - skipped", rex::path_to_utf8(it->path()));
         continue;
       }
+      // A mod's own table of contents (<top folder>\*TOC*.txt, e.g. a fonts mod's whole WarGame\Xbox360TOC.txt) is not
+      // used: it was made from the modder's copy of the game (other title update / DLC / language files), and every other
+      // line in it would replace this game's. The game's own table is the base and InstallModOverlay rewrites the lines
+      // of the files the mods replace or add (size + MD5 from the mod's files), which is all a mod's table could change.
+      {
+        const size_t cut = key.find('\\');
+        const std::string leaf = cut == std::string::npos ? key : key.substr(cut + 1);
+        if (cut != std::string::npos && leaf.find('\\') == std::string::npos && leaf.find("toc") != std::string::npos &&
+            leaf.size() > 4 && leaf.compare(leaf.size() - 4, 4, ".txt") == 0) {
+          REXLOG_INFO("ue3_mods: {}: its own table of contents is not used - the game's is, with this mod's files' lines updated",
+                      rex::path_to_utf8(it->path()));
+          continue;
+        }
+      }
       out[key] = it->path();
       ++n;
     }
