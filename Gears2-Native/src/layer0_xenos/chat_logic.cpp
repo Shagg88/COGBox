@@ -11,7 +11,8 @@ std::string CleanText(std::string_view typed) {
   for (const char ch : typed) {
     const unsigned char c = static_cast<unsigned char>(ch);
     // ';' and '|' split a console line into more commands; '"' would end the string argument
-    if (c >= 0x20 && c <= 0x7E && c != ';' && c != '|') out.push_back(c == '"' ? '\'' : ch);
+    // ('~' is the team marker's)
+    if (c >= 0x20 && c <= 0x7E && c != ';' && c != '|' && c != '~') out.push_back(c == '"' ? '\'' : ch);
   }
   const size_t first = out.find_first_not_of(' ');
   if (first == std::string::npos) return std::string();
@@ -21,6 +22,18 @@ std::string CleanText(std::string_view typed) {
     out.erase(out.find_last_not_of(' ') + 1);
   }
   return out;
+}
+
+namespace {
+constexpr std::string_view kTeamMarker = "~T ";
+}
+
+std::string MarkTeam(std::string_view text) { return std::string(kTeamMarker) + std::string(text); }
+
+bool TakeTeamMarker(std::string* text) {
+  if (text->compare(0, kTeamMarker.size(), kTeamMarker) != 0) return false;
+  text->erase(0, kTeamMarker.size());
+  return true;
 }
 
 Line ParseReceived(std::string_view raw, double now) {
@@ -33,6 +46,7 @@ Line ParseReceived(std::string_view raw, double now) {
     line.who = std::string(raw.substr(0, colon));
     line.text = std::string(raw.substr(colon + 2));
   }
+  line.team = TakeTeamMarker(&line.text);
   return line;
 }
 

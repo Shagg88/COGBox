@@ -34,11 +34,10 @@ std::atomic<bool> g_configured{false}, g_ready{false}, g_match{false};
 Offsets g_off;   // written once before g_ready
 std::atomic<void (*)(const Ue3ChatReceived&)> g_sink{nullptr};
 
-// This player's recent team messages (the approved fallback for the team tag), and the messages waiting to be sent:
+// The messages waiting to be sent:
 // the engine drops a message sent within 2 s of the last one (PlayerController.AllowTextMessage - Gears 1 even when
 // playing solo, the others online), so they go out one at a time, kSendGap apart, from Ue3ChatPump.
 std::mutex g_sent_mutex;
-std::deque<std::string> g_sent_team;
 std::deque<std::string> g_waiting;   // console commands, oldest first
 constexpr size_t kMaxWaiting = 5;
 constexpr double kSendGap = 2.1;     // seconds
@@ -97,21 +96,6 @@ bool ReadFString(uint32_t at, std::string* out) {
   return true;
 }
 
-// Is `raw` (sent by this player: `own`) one of this player's recent team messages? (Takes it off the list when it is.)
-// Another player's line is never tagged, even with the same text.
-bool OwnTeamLine(const std::string& raw, bool own) {
-  if (!own) return false;
-  const size_t colon = raw.find(": ");
-  if (colon == std::string::npos) return false;
-  const std::string text = raw.substr(colon + 2);
-  std::lock_guard<std::mutex> lock(g_sent_mutex);
-  for (auto it = g_sent_team.begin(); it != g_sent_team.end(); ++it)
-    if (*it == text) {
-      g_sent_team.erase(it);
-      return true;
-    }
-  return false;
-}
 }  // namespace
 
 void Ue3ChatConfigure(const Ue3ChatConfig& config) {
@@ -128,10 +112,7 @@ bool Ue3ChatSend(const std::string& typed, bool team) {
     REXLOG_INFO("chat: {} messages already waiting to be sent - this one was not sent", kMaxWaiting);
     return false;
   }
-  if (team) {   // remembered only once it is really going out
-    g_sent_team.push_back(text);
-    while (g_sent_team.size() > 8) g_sent_team.pop_front();
-  }
+  if (team) text = xenos::chat::MarkTeam(text);   // every player's game draws it as a team line
   // Gears 1 takes one word unless quoted (CleanText has already turned any '"' into '\'')
   if (g_config.quote_text) text = "\"" + text + "\"";
   g_waiting.push_back(std::string(team ? "TeamSay " : "Say ") + text);
@@ -183,7 +164,6 @@ void Ue3ChatPump(PPCContext&, uint8_t*) {
         std::string name;
         if (!pri || o.player_name < 0 || !ReadFString(pri + uint32_t(o.player_name), &name) || name.empty()) continue;
         if (!ReadFString(entry, &line.raw) || line.raw.compare(0, name.size() + 2, name + ": ") != 0) continue;
-        line.team = OwnTeamLine(line.raw, pri == obj::Read32(pc + uint32_t(o.pri)));
         if (sink) sink(line);
       }
       obj::Write32(array + 4, 0);   // emptied (the allocation stays the engine's): it never draws them itself

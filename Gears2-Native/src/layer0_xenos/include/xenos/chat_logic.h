@@ -23,13 +23,20 @@ constexpr double kFadeTime = 1.0;   // seconds it then takes to fade out
 // "" means there is nothing to send.
 std::string CleanText(std::string_view typed);
 
+// The game's received lines don't say Say from TeamSay, so a team message carries this marker in front of its text
+// ("~T go left"); every player's game takes it off and draws the line as a team line. CleanText drops '~', so it
+// can't be typed.
+std::string MarkTeam(std::string_view text);
+bool TakeTeamMarker(std::string* text);   // true (and the marker removed) when `text` starts with it
+
 struct Line {
   std::string who, text;   // "Name#1234", the message
   bool team = false;       // drawn as a team line
   double at = 0;           // when it arrived (seconds, any clock the caller keeps using)
 };
 
-// "Name#1234: text" -> who / text. Without ": " who is empty and the whole string is the text.
+// "Name#1234: text" -> who / text (team when the text carries the team marker, which is removed). Without ": " who is
+// empty and the whole string is the text.
 Line ParseReceived(std::string_view raw, double now);
 
 class Log {

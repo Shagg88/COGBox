@@ -6,8 +6,9 @@
 // Receiving: once a frame on the game thread, the local player's HUD's ConsoleMessages are taken and the array emptied,
 // so the engine never draws them itself (Gears 1 does in a match, the menus of Gears 3 / Judgment do). Entries without a
 // PlayerReplicationInfo are the engine's own debug text ("Open Main Menu"...) and are dropped.
-// The entries do not say Say from TeamSay: a line is marked team only when it is this player's own and matches a team
-// message this player just sent (approved fallback). Header kept identical in the four games. Our code (MIT).
+// The entries do not say Say from TeamSay, so a team message carries xenos/chat_logic.h's team marker in front of
+// its text (the overlay takes it off and draws the line as a team line). Header kept identical in the four games.
+// Our code (MIT).
 #pragma once
 
 #include <cstdint>
@@ -17,7 +18,7 @@ struct PPCContext;
 
 struct Ue3ChatReceived {
   std::string raw;   // "Name#1234: text"
-  bool team = false;
+  bool team = false;   // (the overlay reads the team marker in `raw`)
 };
 
 struct Ue3ChatConfig {

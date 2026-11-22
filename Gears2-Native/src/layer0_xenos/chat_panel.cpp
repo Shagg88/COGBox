@@ -175,7 +175,7 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       chat::Line line = chat::ParseReceived(raw, Now());
-      line.team = team;
+      line.team = line.team || team;   // the team marker (ParseReceived) or the caller's say
       log_.Add(std::move(line));
     }
     Attach();

@@ -33,6 +33,19 @@ void CleanTextTests() {
   CHECK(CleanText("hi; quit") == "hi quit");
   CHECK(CleanText("hi | quit") == "hi  quit");   // UE3's Exec runs each '|' part as its own command
   CHECK(CleanText("|") .empty());
+  CHECK(CleanText("~T fake team") == "T fake team");   // '~' is the team marker's: it can't be typed
+}
+
+void TeamMarkerTests() {
+  using namespace xenos::chat;
+  CHECK(MarkTeam("go left") == "~T go left");
+  std::string t = "~T go left";
+  CHECK(TakeTeamMarker(&t) && t == "go left");
+  t = "go left";
+  CHECK(!TakeTeamMarker(&t) && t == "go left");
+  const auto line = ParseReceived("Baird#7310: ~T flank", 2);
+  CHECK(line.who == "Baird#7310" && line.text == "flank" && line.team);
+  CHECK(!ParseReceived("Baird#7310: flank", 2).team);
 }
 
 void ParseTests() {
@@ -86,6 +99,7 @@ void WrapTests() {
 
 int main() {
   CleanTextTests();
+  TeamMarkerTests();
   ParseTests();
   LogTests();
   WrapTests();
