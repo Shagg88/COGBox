@@ -299,6 +299,26 @@ name = "Gow2PatchAniso16"
 registers = ["r5"]
 after_instruction = true
 
+# Performance option: dynamic shadow cap (--gow2_shadow_cap; game_patches.cpp has the why). After `mr r31,r22`.
+[[entrypoint.midasm_hook]]
+address = 0x8273C920
+name = "Gow2ShadowCap"
+registers = ["r31", "r22"]
+after_instruction = true
+
+# Performance option: per-light shadow default cap (--gow2_shadow_value_cap). After `lwz r11,560(r26)` / `(r25)`.
+[[entrypoint.midasm_hook]]
+address = 0x82748038
+name = "Gow2ShadowValueCapA"
+registers = ["r11"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x827485BC
+name = "Gow2ShadowValueCapB"
+registers = ["r11"]
+after_instruction = true
+
 [[entrypoint.midasm_hook]]
 address = 0x82AC3384  # TU6: base 0x82AA8904
 name = "Gow2PatchCoalescedResult"

@@ -61,6 +61,18 @@
 #include <cmath>
 
 REXCVAR_DEFINE_BOOL(gow2_patch_aniso16, false, "Gears2", "Force 16x anisotropic filtering (community patch, boma)");
+// Performance option (Shagg 22 Nov; idea from boma's Canary "Smart Shadow Cuts", made our own way): UE3's per-view
+// shadow pass (sub_8273C770) collects the lights that cast dynamic shadows into a list; each one costs game-thread time
+// (its own shadow view, culling, draws) and GPU time (its shadow map). 0x8273C920 `mr r31,r22` (r31 = this light's slot,
+// r22 = the count): with a cap N, a light past the N-th takes the last slot instead (the count stays N), so at most N
+// shadows are made a view. The game's own grow-the-list check after it is untouched. boma's value: 12.
+REXCVAR_DEFINE_INT32(gow2_shadow_cap, 0, "Gears2",
+                     "Most dynamic shadows per view (0 = the game's own, no limit; 12 = Canary's Smart Shadow Cuts). "
+                     "Fewer shadows = less game-thread and GPU work; some lights lose their shadow");
+// 0x82748038 / 0x827485BC `lwz r11,560(...)` (sub_82747DA8 / sub_82748540): the default value of a per-light shadow
+// setting, read when the light has no override of its own; boma's patch makes it 400. Capped here (never raised).
+REXCVAR_DEFINE_INT32(gow2_shadow_value_cap, 0, "Gears2",
+                     "Cap for the per-light shadow default read at 0x82748038 / 0x827485BC (0 = off; 400 = Smart Shadow Cuts)");
 REXCVAR_DEFINE_INT32(gow2_patch_query_poll_yield, 0, "Gears2",
                      "The render thread's GPU query poll: 0 as the title (spins), 1 pause per poll, 2 yield per poll "
                      "(job 178), 3 sleep until our GPU side writes guest memory after 64 quick polls (as gow2_patch_gpu_wait)");
@@ -821,6 +833,23 @@ bool Gow2HordeGuard(PPCRegister& r3, PPCRegister& r4) {
   return REXCVAR_GET(gow2_patch_horde_guard);
 }
 
+void Gow2ShadowCap(PPCRegister& r31, PPCRegister& r22) {   // after `mr r31,r22` at 0x8273C920
+  const int32_t cap = REXCVAR_GET(gow2_shadow_cap);
+  if (cap <= 0 || int32_t(r22.u32) < cap) return;
+  static std::atomic<bool> logged{false};
+  if (!logged.exchange(true)) REXLOG_INFO("gow2_shadow_cap: more than {} dynamic shadows in a view - the rest share the last slot", cap);
+  r31.u64 = uint32_t(cap - 1);
+  r22.u64 = uint32_t(cap - 1);
+}
+static void ShadowValueCap(PPCRegister& r11) {
+  const int32_t cap = REXCVAR_GET(gow2_shadow_value_cap);
+  if (cap <= 0 || int32_t(r11.u32) <= cap) return;
+  static std::atomic<bool> logged{false};
+  if (!logged.exchange(true)) REXLOG_INFO("gow2_shadow_value_cap: per-light shadow default {} -> {}", int32_t(r11.u32), cap);
+  r11.u64 = uint32_t(cap);
+}
+void Gow2ShadowValueCapA(PPCRegister& r11) { ShadowValueCap(r11); }   // after `lwz r11,560(r26)` at 0x82748038
+void Gow2ShadowValueCapB(PPCRegister& r11) { ShadowValueCap(r11); }   // after `lwz r11,560(r25)` at 0x827485BC
 void Gow2PatchAniso16(PPCRegister& r5) {
   if (!REXCVAR_GET(gow2_patch_aniso16)) return;
   static bool logged = false;
