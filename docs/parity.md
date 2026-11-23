@@ -23,15 +23,6 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `hook ShadowCap` | G2 G3 J | G1 | |
 | `option texture_stats_off` | G2 | G3 J (G1 n/a) | Canary's G2-only patch (RHIGetTextureMemoryStats -> FALSE); no leaf of its shape in J's code [V]; G3 / J need the streamer's budget call found first. G1 doesn't apply: Canary's G1 texture patch is only the pool size [S notes], no such leaf in G1 [V] |
 | `hook TextureStatsOff` | G2 | G3 J | |
-| `option ultrawide_fov_exact` | G2 G3 | G1 J | |
-| `option aspect_targets_720` | G3 J | G1 G2 | |
-| `option native_ui_layout720` | G1 G2 | G3 J | |
-| `option native_ui_show_all` | G3 J | G1 G2 | |
-| `option ultrawide_min_rows` | G2 | G1 G3 J | |
-| `option ultrawide_ui_centre` | G2 | G1 G3 J | |
-| `option ultrawide_ui_full_width` | G3 | G1 G2 J | |
-| `hook UltrawideSharedMemory` | G3 J | G1 G2 | |
-| `hook NativeSceneWidthMax` | G2 G3 | G1 J | |
 
 ## On hold (Shagg)
 
@@ -178,4 +169,13 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `hook UltrawideFov` | G2 G3 J | G1 does it in its own FOV hooks `ViewFov` / `ViewFovB` (the pi/360 load before the half-angle multiply; f0 on one path, f13 on the other - PC's generated code), exact Hor+ (`ue3/aspect.h`) |
 | `hook UltrawideNoConstrain` | G2 G3 J | G1: its `NoAspectLock` hook (the camera's constrain flag reads 0) |
 | `hook UltrawideSceneHeight` | G2 G3 J | G1: its `NativeSceneHeight` / `NativeDeviceHeight` hooks give the 1280 x H height |
+| `option ultrawide_fov_exact` | G2 G3 J | the exact Hor+ field of view against a fixed Canary factor (J since 23 Nov: its FOV load is followed by `fmuls f2,f31,f0`, so f31 is the FOV it applies to - PC's generated code). G1: its ultrawide is exact only - there is no fixed factor (no Canary G1 21:9 patch) to switch back to |
+| `option aspect_targets_720` | G3 J | a switch back to Canary's 1280x720 render targets after G3 #330 / J #396 sized them for the wider picture; G1's (new) and G2's ultrawide size the scene from the screen height already, with no such earlier behaviour to return to |
+| `hook UltrawideSharedMemory` | G3 J | (part of the same G3 / J target sizing: their scene shared-memory block 2 kept at its 16:9 size) |
+| `option native_ui_layout720` | G1 G2 | One job, two UI systems: with true 1080p (`native_lines`) the menus lay out in 1280x720 and are scaled up - G1 / G2's UE3 UI scenes through this option, G3 / J's Scaleform menus through `native_ui_show_all` [V code] |
+| `option native_ui_show_all` | G3 J | (see native_ui_layout720) |
+| `hook NativeSceneWidthMax` | G2 G3 | true 1080p's width clamp (`li r11,1280`); G1 does it in its `NativeSceneWidth` hook (the clamped width in r31), J in `NativeWidthCheck` (the stored width before its 1280 compare) |
+| `option ultrawide_min_rows` | G2 | G2's render-target pool trap below ~536 rows (GitHub #94 / #137); the other games have no such trap (their floor is a fixed 240) |
+| `option ultrawide_ui_centre` | G2 | GitHub #278 test switch for G2's UE3 UI scenes; G3 / J centre their Scaleform menus by default (G3's `ultrawide_ui_full_width` switches that back). G1 (same UI system as G2): to look at with its experimental ultrawide's first run |
+| `option ultrawide_ui_full_width` | G3 | the switch back to G3's pre-0.6.6 full-width Scaleform menus (GitHub #396); J's menus have their own `UltrawideUiScale` hook |
 | `hook ShaderCreatedVertex` | - | (all four since 23 Nov: patch 0066) |

@@ -924,6 +924,13 @@ template <typename T> void LogOnce(bool& done, const char* what, T before, T aft
 }  // namespace
 
 bool GowjUltrawideNoConstrain() { return REXCVAR_GET(gowj_ultrawide); }  // jump_address_on_true 0x82640588
+// 23 Nov parity pass (Gears 2 / 3's --*_ultrawide_fov_exact, GitHub #74): right after this load the game multiplies the
+// factor by f31 (`fmuls f2,f31,f0` at 0x82640590, PC's generated code) - the half angle - so the exact Hor+ factor can be
+// computed from that FOV (ue3/aspect.h HorPlusFactor), keeping 16:9's vertical view for every FOV (aiming, cameras).
+// false = the fixed factor (Canary's 0.010975, scaled for the shape) as before.
+REXCVAR_DEFINE_BOOL(gowj_ultrawide_fov_exact, true, "Judgment",
+                    "With --gowj_ultrawide: the wider view computed exactly from each camera's field of view, keeping "
+                    "16:9's vertical view (as Gears 2 / 3); false = the fixed factor used before");
 void GowjUltrawideFov(PPCRegister& f0, PPCRegister& f31) {
   {  // 0.5.0: the view FOV for aim / zoom sensitivity (logged once per change, the first 12, to check it is degrees)
     CogMouseLookNoteFov(f31.f64);
@@ -933,7 +940,11 @@ void GowjUltrawideFov(PPCRegister& f0, PPCRegister& f31) {
   }
   if (!REXCVAR_GET(gowj_ultrawide)) return;
   static bool l = false;
-  const double f = double(0.010975f) * uwshape::FovScale(GowjWideHeight());
+  double f = double(0.010975f) * uwshape::FovScale(GowjWideHeight());
+  if (REXCVAR_GET(gowj_ultrawide_fov_exact)) {
+    const double exact = ue3::aspect::HorPlusFactor(f31.f64, f0.f64, GowjWideHeight());
+    if (exact != f0.f64) f = exact;   // (an FOV outside 1..170 deg keeps the fixed factor)
+  }
   LogOnce(l, "field-of-view factor", f0.f64, f);
   f0.f64 = f;
 }
