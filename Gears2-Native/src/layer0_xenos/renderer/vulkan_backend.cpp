@@ -494,7 +494,7 @@ class VulkanBackend final : public Backend {
     if (t.bits_view) Defer(VK_NULL_HANDLE, t.bits_view, VK_NULL_HANDLE, VK_NULL_HANDLE);
     for (auto& [k, v] : t.views) Defer(VK_NULL_HANDLE, v, VK_NULL_HANDLE, VK_NULL_HANDLE);
     t = {};
-    view_sets_.clear();  // sets that named this texture's views
+    BumpTextureGen(h);  // perf 22 Nov: sets that named this texture's views can never match again (was: view_sets_.clear())
     // VKA4 (Judgment purple / wrong textures): the BOUND set may name this texture's old views too, and SetTextures
     // sees no change when a reused handle comes back in the same slot - so look the set up again (fresh views).
     dirty_views_ = true;
@@ -2600,7 +2600,7 @@ class VulkanBackend final : public Backend {
     for (auto& [k, v] : t.views) Defer(VK_NULL_HANDLE, v, VK_NULL_HANDLE, VK_NULL_HANDLE);
     n.live = true;
     t = std::move(n);
-    view_sets_.clear();  // sets that named the old image's views
+    BumpTextureGen(h);  // perf 22 Nov: sets that named the old image's views can never match again (was: view_sets_.clear())
     // VKA4 (Judgment purple / wrong textures): the BOUND set may name this texture's old views too, and SetTextures
     // sees no change when a reused handle comes back in the same slot - so look the set up again (fresh views).
     dirty_views_ = true;
@@ -2721,17 +2721,30 @@ class VulkanBackend final : public Backend {
       pools_.push_back(dp);
       pool_index_ = uint32_t(pools_.size() - 1);
     }
-    view_sets_.clear();
-    sampler_sets_.clear();
+    // perf 22 Nov: only the sets of the pool just reset are gone; the other pools' sets stay valid (was: clear all)
+    DropSetsOfPool(view_sets_, pool_index_);
+    DropSetsOfPool(sampler_sets_, pool_index_);
   }
   VkDescriptorSet ViewSet() {
+    // perf 22 Nov: the key holds each slot's texture generation (bumped when a texture is destroyed or remade) and is
+    // compared in full on a hit - the hash alone could hand back another table's set (D3D12 compares exactly).
+    view_key_.resize(size_t(kViewBindings) * 2);
     uint64_t h = 0xCBF29CE484222325ull;
     for (uint32_t i = 0; i < kViewBindings; ++i) {
       const TextureView& v = views_[i];
-      h = (h ^ (uint64_t(v.texture) | ViewKey(v) << 20 | uint64_t(v.zero) << 50)) * 0x100000001B3ull;
+      const uint64_t w = uint64_t(v.texture) | ViewKey(v) << 20 | uint64_t(v.zero) << 50;
+      const uint64_t g = TextureGen(v.texture);
+      view_key_[size_t(i) * 2] = w;
+      view_key_[size_t(i) * 2 + 1] = g;
+      h = (h ^ w) * 0x100000001B3ull;
+      h = (h ^ g) * 0x100000001B3ull;
     }
     auto it = view_sets_.find(h);
-    if (it != view_sets_.end()) return UseCached(it->second);
+    if (it != view_sets_.end()) {
+      if (it->second.key == view_key_) { ++stats_.texture_table_hits; return UseCached(it->second); }
+      ++stats_.texture_table_hash_clashes;
+      view_sets_.erase(it);  // a different table with the same hash: made fresh below
+    }
     VkDescriptorSet set = AllocateSet(1);
     if (!set) return VK_NULL_HANDLE;
     VkDescriptorImageInfo ii[kViewBindings];
@@ -2763,7 +2776,10 @@ class VulkanBackend final : public Backend {
         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 0, 0, kViewBindings, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, ii, nullptr, nullptr},
         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 96, 0, 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, bi, nullptr}};
     vk_.vkUpdateDescriptorSets(device_, 2, wr, 0, nullptr);
-    view_sets_[h] = {set, pool_index_};
+    CachedSet& made = view_sets_[h];
+    made.set = set;
+    made.pool = pool_index_;
+    made.key = view_key_;
     ++stats_.texture_table_misses;
     return set;
   }
@@ -4242,7 +4258,21 @@ class VulkanBackend final : public Backend {
   struct CachedSet {
     VkDescriptorSet set = VK_NULL_HANDLE;
     uint32_t pool = UINT32_MAX;
+    std::vector<uint64_t> key;  // perf 22 Nov: view sets only - the full table, compared on a hit
   };
+  // perf 22 Nov: per texture handle, bumped when the texture is destroyed or remade (part of every view-set key)
+  std::vector<uint32_t> tex_gen_;
+  std::vector<uint64_t> view_key_;
+  uint64_t TextureGen(TextureHandle h) const { return h < tex_gen_.size() ? tex_gen_[h] : 0u; }
+  void BumpTextureGen(TextureHandle h) {
+    if (h >= tex_gen_.size()) tex_gen_.resize(size_t(h) + 1, 0u);
+    ++tex_gen_[h];
+  }
+  static void DropSetsOfPool(std::unordered_map<uint64_t, CachedSet>& sets, uint32_t pool) {
+    for (auto it = sets.begin(); it != sets.end();) {
+      if (it->second.pool == pool) it = sets.erase(it); else ++it;
+    }
+  }
   VkDescriptorSet UseCached(const CachedSet& c) {
     if (c.pool < pools_.size()) pools_[c.pool].fence = UINT64_MAX;
     return c.set;

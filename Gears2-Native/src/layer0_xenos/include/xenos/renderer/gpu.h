@@ -480,6 +480,7 @@ struct BackendStats {
   uint64_t sampler_heap_switches = 0;  // patch 0034: a full sampler heap swapped for a free one instead of waiting
   uint64_t sampler_table_hits = 0;                         // upl-n109: sampler sets found in the heap's cache
   uint64_t texture_table_hits = 0, texture_table_misses = 0;  // upl-n109: texture descriptor tables reused / written
+  uint64_t texture_table_hash_clashes = 0;  // perf 22 Nov (Vulkan): a cached view set with the same hash but another table
   uint64_t index_buffers = 0, index_buffer_bytes = 0, index_buffer_draws = 0;  // persistent index buffers (live)
   // Record profile (upl-n108): CPU ms inside the draw calls' state application, and the two costly parts of it.
   double prepare_draw_ms = 0.0, apply_textures_ms = 0.0, upload_constants_ms = 0.0;
