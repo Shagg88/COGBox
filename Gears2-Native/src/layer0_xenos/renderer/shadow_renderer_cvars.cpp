@@ -422,7 +422,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_dyn_skip, true, "Gears2",
                     "Vulkan: a pipeline built from pipeline libraries sets only the dynamic state (cull, depth, "
                     "stencil, bias) that differs from what is already set (perf 23 Nov; false = all of it on every "
                     "pipeline bind, as before)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_record_thread, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_record_thread, true, "Gears2",
                     "Vulkan (default off): record the command buffers on a recording thread, as D3D12's "
                     "threaded_recording does - our vkCmd* calls, vkBegin/EndCommandBuffer and vkQueueSubmit2 are "
                     "encoded on the renderer thread and replayed in order on another core (job 2204: Vulkan record "
