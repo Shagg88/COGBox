@@ -1251,19 +1251,19 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     return a;
 }
 
-// --gowj_show_fps: its option's description (a long literal; a short name can be built a few letters at a time, cap_exe)
-static bool gowj_has_show_fps(const Environment& env) { return cap_exe(env, "(its own stat fps / stat unit)"); }
+// --gowj_show_fps / --gow1_show_fps: the option's description (a long literal; a short name can be built a few letters
+// at a time, cap_exe), the same text in both exes - searched in the game's own exe
+static bool own_show_fps(const Environment& env) { return cap_exe(env, "(its own stat fps / stat unit)"); }
 
 Availability fps_own_choice_available(Game g, int index, const Environment& env) {
     Availability a;
-    if (index == 3 && g == Game::Judgment && !gowj_has_show_fps(env)) { a.ok = false; a.why = not_yet(static_cast<int>(g), "game's own counter"); }
+    if (index == 3 && (g == Game::Judgment || g == Game::Gears1) && !own_show_fps(env)) { a.ok = false; a.why = not_yet(static_cast<int>(g), "game's own counter"); }
     return a;
 }
 
 Availability choice_available(const Option& o, Game g, int index) {
     Availability a;
-    // PS1 267, 475; 23 Nov: Judgment's is fps_own_choice_available (its exe decides)
-    if (o.id == "FpsMode" && index == 3 && g == Game::Gears1) { a.ok = false; a.why = not_yet(static_cast<int>(g), "game's own counter"); }
+    // PS1 267, 475; 23 Nov: Judgment's and Gears 1's are fps_own_choice_available (the exe decides)
     if (o.id == "Lang" && g == Game::Gears1 && !gears1_lang(index)) { a.ok = false; a.why = "Not in Gears 1 - it would show English."; }
     if (o.id == "AAMode" && index == 5 && g != Game::Gears2 && g != Game::Gears3) { a.ok = false; a.why = "Gears 2 and Gears 3 for now."; }   // notes/80 s.7
     return a;
@@ -1301,11 +1301,11 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         std::string gpu = gpu_main(env);
         base += "\nYour graphics card: " + (gpu.empty() ? std::string("not detected") : gpu);
     }
-    if (g == Game::Judgment && o.id == "FpsMode" && !gowj_has_show_fps(env)) return not_yet(2, "game's own counter") + " " + base;   // PS1 476
+    if (g == Game::Judgment && o.id == "FpsMode" && !own_show_fps(env)) return not_yet(2, "game's own counter") + " " + base;   // PS1 476
     if (g == Game::Judgment && o.id == "Players") return "Untested in Judgment. " + base;
     if (o.id == "SystemLink" && g != Game::Gears2 && a.ok)   // Shagg 16:07: all four games' title updates; Gears 2 tested
         return std::string("Untested in ") + (g == Game::Gears3 ? "Gears 3" : g == Game::Judgment ? "Judgment" : "Gears 1") + " - please tell us in #72. " + base;                 // PS1 477
-    if (g == Game::Gears1 && o.id == "FpsMode") return not_yet(3, "game's own counter") + " " + base;
+    if (g == Game::Gears1 && o.id == "FpsMode" && !own_show_fps(env)) return not_yet(3, "game's own counter") + " " + base;
     if (g == Game::Gears1 && o.id == "Players" && a.why.empty()) return "Untested in Gears 1. " + base;
     if (g == Game::Judgment && o.id == "FrameCap")   // GitHub #38: as on Xenia Canary, unlimited can leave a loading screen endless
         return base + "\nJudgment: Unlimited can leave the loading screen after some chapters (Monroe Commons) running for "
@@ -1553,7 +1553,7 @@ Settings Store::view(Game g, const Environment& env) const {
     // 0.6.6: Ambient occlusion was Default / On. 0.6.7 (GitHub #406, Shagg 21 Nov): Off (0) is offered again, so a
     // saved Off stays Off; a saved Ultra or CACAO still becomes On
     if (s.i("AO") >= 3) s.set("AO", 2);
-    if ((g == Game::Gears1 || (g == Game::Judgment && !gowj_has_show_fps(env))) && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
+    if ((g == Game::Gears1 || g == Game::Judgment) && !own_show_fps(env) && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
     if (g == Game::Gears1 && !gears1_lang(s.i("Lang"))) s.set("Lang", 0);   // a language Gears 1 has no text for
     return s;
 }
@@ -2496,8 +2496,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     case 1: a.push_back("--gow2_fps_bar=top"); break;
     case 2: a.push_back("--gow2_fps_bar=bottom"); break;
     case 3:
-        if (isGJ) { if (gowj_has_show_fps(env)) a.push_back("--gowj_show_fps=true"); }   // 23 Nov: the engine's stat fps
-        else if (!isG1) a.push_back(isG3 ? "--gow3_patch_show_fps=true" : "--gow2_patch_show_fps=true");
+        if (isGJ || isG1) { if (own_show_fps(env)) a.push_back(isGJ ? "--gowj_show_fps=true" : "--gow1_show_fps=true"); }   // 23 Nov: the engine's stat fps
+        else a.push_back(isG3 ? "--gow3_patch_show_fps=true" : "--gow2_patch_show_fps=true");
         break;
     default: break;
     }

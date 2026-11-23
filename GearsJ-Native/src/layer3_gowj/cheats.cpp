@@ -94,8 +94,8 @@ void GowjInstallCheats() {
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
   if (REXCVAR_GET(gowj_show_fps)) {
-    Ue3ConsoleQueueTrusted("stat fps");
-    Ue3ConsoleQueueTrusted("stat unit");
+    Ue3ConsoleQueueTrusted("stat fps", [] { REXLOG_INFO("gowj_show_fps: the engine ran 'stat fps'"); });
+    Ue3ConsoleQueueTrusted("stat unit", [] { REXLOG_INFO("gowj_show_fps: the engine ran 'stat unit'"); });
     REXLOG_INFO("gowj_show_fps: the engine's stat fps / stat unit queued (they run once a player exists)");
   }
   // GitHub #342: the launcher's cheats - also in a game this PC hosts (Judgment's own AllowCheats returns True)

@@ -58,6 +58,15 @@ bool OpenObjects() {
 constexpr const char* kDefaultHotkeys = "F9=Ghost|Walk;F10=PlayersOnly;F11=ToggleHUD";
 }  // namespace
 
+// The engine's own FPS and frame-time display (Gears 2 / 3's --gow*_patch_show_fps, Judgment's --gowj_show_fps; 23 Nov
+// parity pass, the launcher's FPS counter "game's own").
+// Gears 1's 2006 engine has a STAT handler of its own shape (sub_8255F318: a first name compare, then one compare and
+// `cntlzw / rlwinm 27,31,31` toggle (x = !x) per sub-command on fields of one global stats object, each returning 1) -
+// which name is which field is not readable from the generated code, so the engine's own parser decides: `stat fps` /
+// `stat unit` are queued and their result logged (handled or not).
+REXCVAR_DEFINE_BOOL(gow1_show_fps, false, "Gears 1",
+                    "Turn on the engine's FPS and frame-time display (its own stat fps / stat unit)");
+
 // OnPostSetup. Without --gow1_cheats only what --ue3_hotkeys / --ue3_exec name runs, and nothing enables cheats.
 void Gow1InstallCheats() {
   Ue3ConsoleTarget target;
@@ -77,6 +86,11 @@ void Gow1InstallCheats() {
   XenosChatSetHooks(&Ue3ChatMatchRunning, &Ue3ChatSend);
   target.gate = &ue3::cheats::GateLocalOnly;   // 0.6.3: not in a Versus match; #342: and only this PC's players
   Ue3ConsoleSetTarget(target);
+  if (REXCVAR_GET(gow1_show_fps)) {   // COGBox's own commands: no cheat, not gated; logged when the engine runs them
+    Ue3ConsoleQueueTrusted("stat fps", [] { REXLOG_INFO("gow1_show_fps: the engine ran 'stat fps'"); });
+    Ue3ConsoleQueueTrusted("stat unit", [] { REXLOG_INFO("gow1_show_fps: the engine ran 'stat unit'"); });
+    REXLOG_INFO("gow1_show_fps: the engine's stat fps / stat unit queued (they run once a player exists)");
+  }
   // GitHub #342: the launcher's cheats - only while every player is on this PC (Gears 1's AllowCheats: standalone games)
   ue3::cheats::Configure({"Gears 1", false, false, true, target.engine_global, target.players_data_offset,
                           target.players_num_offset, "WarPawn"});
