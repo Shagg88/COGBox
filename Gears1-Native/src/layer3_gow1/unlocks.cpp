@@ -83,7 +83,7 @@ void Hook(PPCContext& ctx, uint8_t* base) {
   const bool found = (ctx.r3.u32 & 1) != 0;
   if (!value_addr) return;
   g_p100.OnRead(base, self, id, value_addr, ctx.r3.u32, false);
-  g_audio.OnRead(base, self, id, value_addr, ctx.r3.u32);
+  if (g_audio.OnRead(base, self, id, value_addr, ctx.r3.u32)) ctx.r3.u64 = 1;   // 2378j: not in the profile
   if (g_unlock && id == g_id && found) {
     const uint32_t v = Load32(base, value_addr);
     if ((v & g_mask) != g_mask) {

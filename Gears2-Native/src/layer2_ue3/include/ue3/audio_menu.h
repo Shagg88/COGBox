@@ -53,6 +53,7 @@ class AudioMenu {
     std::vector<std::pair<int32_t, uint32_t>> write;
     for (int i = 0; i < kAudioMenuSliders; ++i) {
       known_ |= slider_[i].id >= 0;
+      values_[i] = values[i];
       if (values[i] >= 0 && slider_[i].id >= 0) write.emplace_back(slider_[i].id, uint32_t(values[i]));
       else if (values[i] >= 0)
         REXLOG_WARN("{}: {}={} not applied - this game's id for it is not known yet ({}_ids)", option_, slider_[i].key,
@@ -65,12 +66,25 @@ class AudioMenu {
   bool On() const { return known_; }   // something to read back (the getter hook is needed)
 
   // After the getter returned `found` (its r3) for (self, id, value_addr).
-  void OnRead(uint8_t* base, uint32_t self, int32_t id, uint32_t value_addr, uint32_t found) {
-    if (!known_ || !value_addr || !(found & 1)) return;
+  // Returns true when the caller must report the setting as found (its r3 = 1): job 2378j - Judgment / Gears 3 read 41-43
+  // from a profile that has no such entry yet (found = 0, the game's default used), so nothing could be written into it.
+  bool OnRead(uint8_t* base, uint32_t self, int32_t id, uint32_t value_addr, uint32_t found) {
+    if (!known_ || !value_addr) return false;
     int k = -1;
     for (int i = 0; i < kAudioMenuSliders; ++i)
       if (slider_[i].id >= 0 && slider_[i].id == id) k = i;
-    if (k < 0) return;
+    if (k < 0) return false;
+    if (!(found & 1)) {   // not in this profile: give the launcher's value (each read), the game's default otherwise
+      if (values_[k] < 0) return false;
+      ProfileStore32(base, value_addr, uint32_t(values_[k]));
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!missing_logged_[k]) {
+        missing_logged_[k] = true;
+        REXLOG_INFO("{}: {} (id {}) not in this profile - the launcher's {} given to the game", option_, slider_[k].key, id,
+                    values_[k]);
+      }
+      return true;
+    }
     bool first;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -81,11 +95,12 @@ class AudioMenu {
     const uint32_t value = ProfileLoad32(base, value_addr);
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (seen_[k] && last_[k] == value) return;
+      if (seen_[k] && last_[k] == value) return false;
       if (seen_[k]) writer_.Update(id, value);   // changed in the game's menu (or by the game): that value stays
       seen_[k] = true, last_[k] = value;
     }
     REXLOG_INFO("{}: now {}={} (id {})", option_, slider_[k].key, int32_t(value), id);
+    return false;
   }
 
  private:
@@ -96,6 +111,8 @@ class AudioMenu {
   std::mutex mutex_;
   bool seen_[kAudioMenuSliders] = {};
   uint32_t last_[kAudioMenuSliders] = {};
+  int32_t values_[kAudioMenuSliders] = {-1, -1, -1};
+  bool missing_logged_[kAudioMenuSliders] = {};
 };
 
 }  // namespace ue3

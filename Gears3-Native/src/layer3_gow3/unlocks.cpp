@@ -156,7 +156,7 @@ void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   g_get_int_orig(ctx, base);
   if (!value_addr) return;
   g_p100.OnRead(base, self, id, value_addr, ctx.r3.u32, false);
-  g_audio.OnRead(base, self, id, value_addr, ctx.r3.u32);
+  if (g_audio.OnRead(base, self, id, value_addr, ctx.r3.u32)) ctx.r3.u64 = 1;   // 2378j: not in the profile
   if (g_log) LogRead(base, self, id, Load32(base, value_addr), ctx.r3.u32, lr);
   for (const auto& [cid, mask] : g_chapter_masks) {
     if (cid != id || !IsGearProfileSettings(base, self)) continue;

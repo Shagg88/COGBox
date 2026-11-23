@@ -82,7 +82,7 @@ void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   const uint32_t lr = uint32_t(ctx.lr);
   g_orig(ctx, base);
   g_p100.OnRead(base, self, id, value_addr, ctx.r3.u32, false);   // g2-100 never overrode the read itself
-  g_audio.OnRead(base, self, id, value_addr, ctx.r3.u32);
+  if (g_audio.OnRead(base, self, id, value_addr, ctx.r3.u32)) ctx.r3.u64 = 1;   // 2378j: not in the profile
   if (g_log && value_addr) {
     const uint32_t value = Load32(base, value_addr);
     if (g_seen.First(lr, id, value))

@@ -106,7 +106,7 @@ void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   const uint32_t found = ctx.r3.u32;
   if (!value_addr) return;
   g_p100.OnRead(base, self, id, value_addr, found, true);   // gj100 also gives this read the listed value
-  g_audio.OnRead(base, self, id, value_addr, found);
+  if (g_audio.OnRead(base, self, id, value_addr, found)) ctx.r3.u64 = 1;   // 2378j: not in the profile - launcher value
   if (g_insane && id == kUnlockablesSetting) {
     const uint32_t v = Load32(base, value_addr);
     if (!(v & kInsaneUnlockBit)) {
