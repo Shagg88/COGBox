@@ -1,0 +1,64 @@
+diff --git a/src/system/xam/user_profile.cpp b/src/system/xam/user_profile.cpp
+index 969e3b40..b266f25b 100644
+--- a/src/system/xam/user_profile.cpp
++++ b/src/system/xam/user_profile.cpp
+@@ -13,10 +13,41 @@
+ 
+ #include <fmt/format.h>
+ 
++#include <rex/cvar.h>
+ #include <rex/logging.h>
++#include <filesystem>
++#include <system_error>
+ #include <rex/system/kernel_state.h>
+ #include <rex/system/xam/user_profile.h>
+ 
++// Gears2-Native SDK patch 119 (COGBox GitHub #416 / #424, Judgment stats / stars "lost after an update"): the
++// title-specific settings live in <content>/<title>/profile/<gamertag>/ (ContentManager::ResolveGameUserContentPath) -
++// keyed by the gamertag TEXT. A gamertag that changes (renamed in the launcher, a launcher update or a profile setting
++// that writes it differently, cleaning of a character) points at an empty folder: the game reads defaults and writes a
++// fresh profile there; the old one is still on disk under the old name [G: the cause for #416 / #424 - no logs yet].
++// Now a setting with no file for this name is taken from the newest copy of the same setting in another gamertag's
++// folder of the same title, copied in (the other folder is not changed), and logged with both names. Only for the
++// title-specific settings (the game's own profile blobs). Off: --xam_profile_follow_rename=false.
++REXCVAR_DEFINE_BOOL(xam_profile_follow_rename, true, "Kernel",
++                    "A gamertag with no saved game profile yet takes the newest one of this game saved under another "
++                    "gamertag in the same user folder (GitHub #416 / #424)");
++namespace {
++std::filesystem::path FindOtherNameSetting(const std::filesystem::path& content_dir, const std::string& setting_id) {
++  std::error_code ec;
++  const auto parent = content_dir.parent_path();
++  std::filesystem::path best;
++  std::filesystem::file_time_type best_time{};
++  for (const auto& e : std::filesystem::directory_iterator(parent, ec)) {
++    if (!e.is_directory(ec) || e.path() == content_dir) continue;
++    const auto f = e.path() / setting_id;
++    if (!std::filesystem::is_regular_file(f, ec)) continue;
++    const auto t = std::filesystem::last_write_time(f, ec);
++    if (ec) continue;
++    if (best.empty() || t > best_time) { best = f; best_time = t; }
++  }
++  return best;
++}
++}  // namespace
+ namespace rex {
+ namespace system {
+ namespace xam {
+@@ -136,6 +167,17 @@ void UserProfile::LoadSetting(UserProfile::Setting* setting) {
+     auto content_dir = kernel_state_->content_manager()->ResolveGameUserContentPath();
+     auto setting_id = fmt::format("{:08X}", setting->setting_id);
+     auto file_path = content_dir / setting_id;
++    std::error_code fec;
++    if (REXCVAR_GET(xam_profile_follow_rename) && !std::filesystem::exists(file_path, fec)) {   // SDK patch 119
++      const auto other = FindOtherNameSetting(content_dir, setting_id);
++      if (!other.empty()) {
++        std::filesystem::create_directories(content_dir, fec);
++        std::filesystem::copy_file(other, file_path, std::filesystem::copy_options::skip_existing, fec);
++        REXSYS_WARN("SDK patch 119: no profile setting {} for gamertag folder '{}' - copied from '{}' (the newest of this "
++                    "game's other gamertag folders){}", setting_id, content_dir.filename().string(),
++                    other.parent_path().filename().string(), fec ? " - copy FAILED: " + fec.message() : std::string());
++      }
++    }
+     auto file = rex::filesystem::OpenFile(file_path, "rb");
+     if (file) {
+       fseek(file, 0, SEEK_END);

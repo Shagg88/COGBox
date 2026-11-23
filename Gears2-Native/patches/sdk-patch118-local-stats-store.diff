@@ -1,0 +1,211 @@
+diff --git a/src/kernel/xam/apps/xgi_app.cpp b/src/kernel/xam/apps/xgi_app.cpp
+index 4fae00cf..7f73b6ad 100644
+--- a/src/kernel/xam/apps/xgi_app.cpp
++++ b/src/kernel/xam/apps/xgi_app.cpp
+@@ -12,6 +12,14 @@
+ #include <rex/kernel/xam/apps/xgi_app.h>
+ 
+ #include <array>
++#include <filesystem>
++#include <fstream>
++#include <map>
++#include <mutex>
++#include <set>
++#include <tuple>
++#include <rex/cvar.h>
++#include <rex/runtime.h>
+ #include <cstring>
+ #include <rex/kernel/xam/net/live_emulation.h>  // COGBox SDK patch 79: LIVE emulation
+ #include <rex/kernel/xam/net/identity.h>
+@@ -39,6 +47,165 @@ std::vector<uint64_t> ReadXuids(rex::memory::Memory* memory, uint32_t ptr, uint3
+ }
+ }  // namespace
+ 
++// ---- Gears2-Native SDK patch 118: a local Live stats store (COGBox: Gears 3 Horde ribbon / attribute-modifier progress
++// back at 0 after a restart - the stats calls below only logged, so whatever the title keeps in Live stats was lost).
++// XSessionWriteStats / XSessionFlushStats: XSESSION_VIEW_PROPERTIES {dwViewId, dwNumProperties, pProperties} (12 bytes)
++// each, XUSER_PROPERTY 24 bytes (id +0, XUSER_DATA type +8, value +16 - as session_marshal.h). Stored per title, XUID,
++// view and property id in <user_data_root>/stats/<title>.txt (text, one value a line), written at each flush.
++// XUserReadStats: for each XUSER_STATS_SPEC (136: view +0, column count +4, WORD column ids +8) one row per asked XUID
++// with the stored values; a column id is matched to a stored property by equal id, else by its low 16 bits [G: the
++// XLAST column ids are the properties' attribute ids - check with the log lines below]. Values written are kept as the
++// title sends them (last value wins, no server-side SUM / MAX) [G: verify with --xam_stats_log on a Horde run].
++// Off by default (the old behaviour: nothing kept, empty views); the COGBox launcher turns it on for Gears 3.
++REXCVAR_DEFINE_BOOL(xam_stats_store, false, "Kernel",
++                    "Keep the title's Live stats (XSessionWriteStats) on disk and return them to XUserReadStats");
++REXCVAR_DEFINE_BOOL(xam_stats_log, false, "Kernel", "Log every stats write and read with its views, ids and values");
++namespace stats_store {
++struct Value { uint8_t type = 0; uint64_t bits = 0; };
++using Key = std::tuple<uint32_t, uint64_t, uint32_t, uint32_t>;  // title, xuid, view, property
++std::mutex g_mu;
++std::map<Key, Value> g_values;
++std::set<uint32_t> g_loaded;
++bool g_dirty = false;
++std::filesystem::path FileFor(uint32_t title) {
++  std::filesystem::path root = REXCVAR_GET(user_data_root);
++  if (root.empty()) root = std::filesystem::current_path();
++  return root / "stats" / fmt::format("{:08X}.txt", title);
++}
++void Load(uint32_t title) {  // g_mu held
++  if (!g_loaded.insert(title).second) return;
++  std::ifstream in(FileFor(title));
++  std::string line;
++  int n = 0;
++  while (std::getline(in, line)) {
++    unsigned long long xuid = 0, bits = 0;
++    unsigned view = 0, prop = 0, type = 0;
++    if (std::sscanf(line.c_str(), "%llx %x %x %x %llx", &xuid, &view, &prop, &type, &bits) == 5) {
++      g_values[{title, uint64_t(xuid), view, prop}] = Value{uint8_t(type), uint64_t(bits)};
++      ++n;
++    }
++  }
++  REXKRNL_INFO("xam_stats_store: {} value(s) read for title {:08X} from {}", n, title, FileFor(title).string());
++}
++void Save(uint32_t title) {  // g_mu held
++  const auto path = FileFor(title);
++  std::error_code ec;
++  std::filesystem::create_directories(path.parent_path(), ec);
++  const auto tmp = path.string() + ".new";
++  {
++    std::ofstream out(tmp, std::ios::trunc);
++    for (const auto& [k, v] : g_values)
++      if (std::get<0>(k) == title)
++        out << fmt::format("{:016X} {:08X} {:08X} {:02X} {:016X}\n", std::get<1>(k), std::get<2>(k), std::get<3>(k), v.type, v.bits);
++  }
++  std::filesystem::rename(tmp, path, ec);   // replaces the old file in one step
++  if (ec) REXKRNL_WARN("xam_stats_store: could not write {}: {}", path.string(), ec.message());
++}
++uint32_t TitleId() { return rex::system::kernel_state() ? rex::system::kernel_state()->title_id() : 0; }
++void Write(rex::memory::Memory* mem, uint64_t xuid, uint32_t num_views, uint32_t views_ptr, bool flush) {
++  if (!REXCVAR_GET(xam_stats_store) && !REXCVAR_GET(xam_stats_log)) return;
++  const uint32_t title = TitleId();
++  std::lock_guard<std::mutex> lock(g_mu);
++  Load(title);
++  static int lines = 0;
++  for (uint32_t i = 0; views_ptr && i < num_views && i < 64; ++i) {
++    const uint8_t* v = mem->TranslateVirtual(views_ptr + 12 * i);
++    const uint32_t view = rex::memory::load_and_swap<uint32_t>(v), np = rex::memory::load_and_swap<uint32_t>(v + 4),
++                   pp = rex::memory::load_and_swap<uint32_t>(v + 8);
++    for (uint32_t j = 0; pp && j < np && j < 256; ++j) {
++      const uint8_t* p = mem->TranslateVirtual(pp + 24 * j);
++      const uint32_t id = rex::memory::load_and_swap<uint32_t>(p);
++      const uint8_t type = p[8];
++      uint64_t bits = 0;
++      switch (type) {
++        case 1: case 5: bits = rex::memory::load_and_swap<uint32_t>(p + 16); break;   // INT32, FLOAT
++        case 2: case 3: case 7: bits = rex::memory::load_and_swap<uint64_t>(p + 16); break;   // INT64, DOUBLE, DATETIME
++        default: continue;   // strings / binary / null: not stats values
++      }
++      if (REXCVAR_GET(xam_stats_log) && ++lines <= 2000)
++        REXKRNL_INFO("xam_stats: {} xuid {:016X} view {:08X} property {:08X} type {} value {:X}", flush ? "flush" : "write",
++                     xuid, view, id, type, bits);
++      if (REXCVAR_GET(xam_stats_store)) {
++        g_values[{title, xuid, view, id}] = Value{type, bits};
++        g_dirty = true;
++      }
++    }
++  }
++  if (g_dirty && REXCVAR_GET(xam_stats_store)) {   // each write is saved: a crash or a closed window loses nothing
++    Save(title);
++    g_dirty = false;
++  }
++}
++// Fills XUSER_STATS_READ_RESULTS with rows when they fit in the title's buffer; false = leave the empty views.
++bool Read(rex::memory::Memory* mem, uint32_t xuids_count, uint32_t xuids_ptr, uint32_t specs_count, uint32_t specs_ptr,
++          uint32_t results_size, uint32_t results_ptr) {
++  if (!REXCVAR_GET(xam_stats_store) || !results_ptr || !specs_ptr || !xuids_ptr || !xuids_count) return false;
++  const uint32_t title = TitleId();
++  std::lock_guard<std::mutex> lock(g_mu);
++  Load(title);
++  // the size: header 8, views 16 each, rows 48 each, columns 24 each
++  uint32_t need = 8 + 16 * specs_count;
++  for (uint32_t i = 0; i < specs_count; ++i) {
++    const uint32_t cols = std::min<uint32_t>(64, rex::memory::load_and_swap<uint32_t>(mem->TranslateVirtual(specs_ptr + 136 * i + 4)));
++    need += xuids_count * (48 + 24 * cols);
++  }
++  if (need > results_size) {
++    REXKRNL_INFO("xam_stats_store: read needs {} bytes, the title gave {} - empty views returned", need, results_size);
++    return false;
++  }
++  uint8_t* res = mem->TranslateVirtual(results_ptr);
++  rex::memory::store_and_swap<uint32_t>(res + 0, specs_count);
++  rex::memory::store_and_swap<uint32_t>(res + 4, specs_count ? results_ptr + 8 : 0);
++  uint32_t at = results_ptr + 8 + 16 * specs_count;   // rows, then columns, after the views
++  static int lines = 0;
++  for (uint32_t i = 0; i < specs_count; ++i) {
++    const uint8_t* spec = mem->TranslateVirtual(specs_ptr + 136 * i);
++    const uint32_t view = rex::memory::load_and_swap<uint32_t>(spec);
++    const uint32_t cols = std::min<uint32_t>(64, rex::memory::load_and_swap<uint32_t>(spec + 4));
++    uint8_t* vw = res + 8 + 16 * i;
++    const uint32_t rows_at = at;
++    at += 48 * xuids_count;
++    rex::memory::store_and_swap<uint32_t>(vw + 0, view);
++    rex::memory::store_and_swap<uint32_t>(vw + 4, xuids_count);
++    rex::memory::store_and_swap<uint32_t>(vw + 8, xuids_count);
++    rex::memory::store_and_swap<uint32_t>(vw + 12, rows_at);
++    for (uint32_t r = 0; r < xuids_count; ++r) {
++      const uint64_t xuid = rex::memory::load_and_swap<uint64_t>(mem->TranslateVirtual(xuids_ptr + 8 * r));
++      uint8_t* row = mem->TranslateVirtual(rows_at + 48 * r);
++      std::memset(row, 0, 48);
++      rex::memory::store_and_swap<uint64_t>(row + 0, xuid);
++      rex::memory::store_and_swap<uint32_t>(row + 8, r + 1);   // rank
++      rex::memory::store_and_swap<uint32_t>(row + 40, cols);
++      rex::memory::store_and_swap<uint32_t>(row + 44, at);
++      for (uint32_t c = 0; c < cols; ++c) {
++        const uint16_t cid = rex::memory::load_and_swap<uint16_t>(spec + 8 + 2 * c);
++        uint8_t* col = mem->TranslateVirtual(at + 24 * c);
++        std::memset(col, 0, 24);
++        rex::memory::store_and_swap<uint16_t>(col + 0, cid);
++        const Value* found = nullptr;
++        for (const auto& [k, v] : g_values) {
++          if (std::get<0>(k) != title || std::get<1>(k) != xuid || std::get<2>(k) != view) continue;
++          if (std::get<3>(k) == cid) { found = &v; break; }
++          if (!found && (std::get<3>(k) & 0xFFFFu) == cid) found = &v;
++        }
++        if (found) {
++          col[8] = found->type;
++          if (found->type == 1 || found->type == 5) rex::memory::store_and_swap<uint32_t>(col + 16, uint32_t(found->bits));
++          else rex::memory::store_and_swap<uint64_t>(col + 16, found->bits);
++        } else {
++          col[8] = 0xFF;   // XUSER_DATA_TYPE_NULL
++        }
++        if (REXCVAR_GET(xam_stats_log) && ++lines <= 2000)
++          REXKRNL_INFO("xam_stats: read xuid {:016X} view {:08X} column {:04X} -> {}", xuid, view, cid,
++                       found ? fmt::format("type {} value {:X}", found->type, found->bits) : std::string("none"));
++      }
++      at += 24 * cols;
++    }
++  }
++  return true;
++}
++}  // namespace stats_store
++
+ namespace rex::kernel::xam {
+ void CogboxKeepPrivatePartyJoinable();  // xam_msg.cpp
+ void CogboxHostBanCheck(bool searching);  // xam_msg.cpp
+@@ -558,6 +725,9 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       // reads XUSER_STATS_READ_RESULTS.pViews (Gears of War 2's Horde at the first wave) read through null.
+       // XUSER_STATS_READ_RESULTS { dwNumViews; pViews } then XUSER_STATS_VIEW { dwViewId; dwTotalViewRows;
+       // dwNumRows; pRows } per view; XUSER_STATS_SPEC is 136 bytes with dwViewId first.
++      if (stats_store::Read(memory_, xuids_count, xuids_ptr, specs_count, specs_ptr, results_size, results_ptr)) {
++        return X_E_SUCCESS;
++      }
+       if (results_ptr && results_size >= 8 + 16 * specs_count) {
+         uint8_t* results = memory_->TranslateVirtual(results_ptr);
+         const uint8_t* specs = specs_ptr ? memory_->TranslateVirtual(specs_ptr) : nullptr;
+@@ -584,6 +754,7 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+ 
+       REXKRNL_DEBUG("XSessionWriteStats({:08X}, {:016X}, {:08X}, {:08X})", obj_ptr, xuid, num_views,
+                     views_ptr);
++      stats_store::Write(memory_, xuid, num_views, views_ptr, false);
+ 
+       return X_E_SUCCESS;
+     }
+@@ -597,6 +768,7 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+ 
+       REXKRNL_DEBUG("XSessionFlushStats({:08X}, {:016X}, {:08X}, {:08X})", obj_ptr, xuid, num_views,
+                     views_ptr);
++      stats_store::Write(memory_, xuid, num_views, views_ptr, true);
+ 
+       return X_E_SUCCESS;
+     }
