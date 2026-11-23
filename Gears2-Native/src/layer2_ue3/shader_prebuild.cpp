@@ -473,7 +473,10 @@ class PackageScanner {
     for (uint32_t w = 3; w + 1 < off / 4; ++w) {
       if ((Be32(rec + w * 4) & 0xFFFF00FFu) != 0x10000000u) continue;
       const uint32_t consts = Be32(rec + (w - 2) * 4), code = Be32(rec + (w - 1) * 4);
-      if (consts && !(consts & 3) && code && consts + code == size) Offer(1, region + consts, code);
+      if (consts && !(consts & 3) && code && consts + code == size) {
+        Offer(1, region + consts, code);
+        DumpShader(false, region + consts, code);  // 23 Nov: the code-only form too (G1 / G3 / J draw this one)
+      }
       break;
     }
   }
