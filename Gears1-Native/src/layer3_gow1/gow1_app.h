@@ -11,6 +11,7 @@
 #include <xenos/utf8_paths.h>
 #include "mouse_look.h"
 #include "freeze_watchdog.h"
+void Gow1InstallFpsProbe();  // fps_probe.cpp (ported from Judgment, 23 Nov): --fps_probe, --kismet_min_delay
 
 namespace rex::ui {
 class WindowedAppContext;
@@ -78,6 +79,7 @@ class Gow1App : public rex::ReXApp {
   void OnPostSetup() override {
     CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
+    Gow1InstallFpsProbe();     // GitHub #405 / #414 tools for all four games: off unless --fps_probe / --kismet_min_delay
     Gow1StartFreezeWatchdog();  // 23 Nov: --gow1_freeze_watchdog_seconds (developer, log-only; off by default)
     // developer mode: --cogbox_input_script (ue3/script_input.h). The engine's tables are found in memory; its object
     // layout was (ue3/objects.h Discover, TU5 2026-11-11): the slot at +4, Outer +40, Name +44 (index, number), Class

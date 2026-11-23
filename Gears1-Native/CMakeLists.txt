@@ -105,6 +105,7 @@ set(GOW1_SOURCES
     src/layer3_gow1/game_patches.cpp
     src/layer3_gow1/mouse_look.cpp
     src/layer3_gow1/freeze_watchdog.cpp  # 23 Nov: --gow1_freeze_watchdog_seconds (developer)
+    src/layer3_gow1/fps_probe.cpp  # 23 Nov: --fps_probe, --kismet_min_delay (from Judgment)
     src/layer3_gow1/unlocks.cpp
     src/layer3_gow1/cheats.cpp  # GitHub #264: --gow1_cheats
     src/layer3_gow1/adaptive_triggers.cpp  # GitHub #245: DualSense trigger feel per weapon (--pad_adaptive_triggers)

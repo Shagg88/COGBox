@@ -8,6 +8,7 @@
 #include <xenos/utf8_paths.h>
 #include "mouse_look.h"
 #include "freeze_watchdog.h"
+void Gow2InstallFpsProbe();  // fps_probe.cpp (ported from Judgment, 23 Nov): --fps_probe, --kismet_min_delay
 #include "main_menu_exit.h"
 
 namespace rex::ui {
@@ -65,6 +66,7 @@ class Gow2App : public rex::ReXApp {
   void OnPostSetup() override {
     CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
+    Gow2InstallFpsProbe();     // GitHub #405 / #414 tools for all four games: off unless --fps_probe / --kismet_min_delay
     Gow2StartFreezeWatchdog();  // 23 Nov: --gow2_freeze_watchdog_seconds (developer, log-only; off by default)
     Gow2AddTestIniEdits();  // before the bundle is edited
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (notes/64): before the game reads its config
