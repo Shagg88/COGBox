@@ -18,7 +18,6 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 
 | Name | Has it | Missing | Note |
 |---|---|---|---|
-| `option fast_mip_fade` | G3 J | G2 (G1 n/a) | G2: its Coalesced_int.bin has no MipFadeInSpeed key (J's has) [V]; whether G2's engine reads the key if added is unknown (packages compressed) - an ini edit is harmless to try, needs a test run. G1 doesn't apply: its Coalesced.ini has no mip-fade or MipFilter keys [V] |
 | `option shadow_cap` | G2 G3 J | G1 | Smart Shadow Cuts (J since 23 Nov: G3's gather function, layer 2 `ue3/shadow_cap.h`). G1 has projected shadow maps too (its Engine script: LightComponent.ShadowProjectionTechnique / ModShadowColor, Engine.Min/MaxShadowResolution) but no shadow counter of the G2 or G3/J shape - its gather function needs its own trace. Side find: the launcher says G1 has no shadow-size setting, but Engine.MinShadowResolution exists in its script (an ini edit may give it Shadow detail) |
 | `hook ShadowCap` | G2 G3 J | G1 | |
 
@@ -42,6 +41,7 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 
 | Name | Game(s) | Why only there |
 |---|---|---|
+| `option fast_mip_fade` | G3 J | G2, G1 | G2: tested (job 2378g, 23 Nov) - an extreme MipFadeIn/OutSpeed 0/1 = 0.0005 ini edit left Gears 2's level start pixel-identical to the normal run, so its engine does not read the key [V]. G1: its Coalesced.ini has no mip-fade or MipFilter keys [V] |
 | `hook Aniso16` | G2 G3 | G1 / J do it with the game's own setting (`gow1_aniso16`, `gowj_aniso16`) |
 | `hook TexturePoolSize` | G2 G3 | G1 / J use the game's own [TextureStreaming] PoolSize (`*_texture_pool_mb`) |
 | `hook BootLockWait` | G1 | G1 start-up lock bug |
