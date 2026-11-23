@@ -390,10 +390,11 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
       [[fallthrough]];
     case kEventWrite:
     case kEventWriteShd:
+    case kEventWriteCfl:  // same as SHD; dropping it loses the fence write (Edge 28c265ed7)
     case kEventWriteExt: {  // the EVENT_WRITE family: initiator write-back, then each one's memory write
       const uint32_t initiator = r.Next();
       WriteRegister(kRegVgtEventInitiator, initiator & 0x3F);
-      if (opcode == kEventWriteShd && count >= 3) {  // ExecutePacketType3_EVENT_WRITE_SHD
+      if ((opcode == kEventWriteShd || opcode == kEventWriteCfl) && count >= 3) {  // ExecutePacketType3_EVENT_WRITE_SHD
         const uint32_t address = r.Next(), value = r.Next();
         const uint32_t data = (initiator >> 31) & 1 ? (env_.counter ? env_.counter() : 0u) : value;
         WriteMemory(address & ~3u, GpuSwap(data, address & 3));

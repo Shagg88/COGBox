@@ -35,6 +35,7 @@ enum Opcode : uint32_t {
   kCondWrite = 0x45,
   kEventWrite = 0x46,
   kEventWriteShd = 0x58,
+  kEventWriteCfl = 0x59,  // same layout as SHD (Xenia Edge 28c265ed7)
   kEventWriteExt = 0x5A,
   kEventWriteZpd = 0x5B,
   kDrawIndx = 0x22,
