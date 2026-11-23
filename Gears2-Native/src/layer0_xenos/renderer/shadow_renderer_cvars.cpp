@@ -1333,7 +1333,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_prepare_mirror, false, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_log_aliases, 20, "Gears2",
                      "Log at most this many distinct EDRAM alias pairs (a depth target reusing tiles another target "
                      "wrote last)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_query_box_fast, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_query_box_fast, true, "Gears2",
                     "Speed study (O6, layer0 sweep 22 Nov): an occlusion-query box (a non-indexed depth-test-only draw "
                     "inside an open query, no colour, no pixel shader, no textures) that directly follows another with "
                     "the same state registers and shaders is issued again with that box's pipeline, depth target and "
