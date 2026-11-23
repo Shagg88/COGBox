@@ -221,6 +221,7 @@ struct Shader {
   ShaderStage stage = ShaderStage::kVertex;
   VkShaderModule module = VK_NULL_HANDLE;
   uint64_t bytes = 0;  // patch 0079: SPIR-V size
+  uint64_t spv_hash = 0;  // warm libraries: FNV-1a of the SPIR-V words as given to the driver (after RemapBindings)
   // Compute (stage V4): its own one-set layout, from the descriptor types found in the SPIR-V (ComputeBinding below).
   VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
   VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -240,6 +241,7 @@ struct LinkedState {
 struct PipelineLib {  // one pipeline library; `done` under the backend's lib_mutex_
   VkPipeline pipeline = VK_NULL_HANDLE;
   bool done = false;
+  bool warm = false;  // built ahead by WarmPixelShader (not yet asked for by a draw)
 };
 
 struct Pipeline {
@@ -256,6 +258,7 @@ struct PipelineJob {
   PipelineHandle handle = 0;
   GraphicsPipelineDesc desc;
   VkShaderModule modules[3] = {};
+  uint64_t ps_hash = 0;  // warm libraries: Shader::spv_hash of the pixel shader (0 = none)
   uint64_t bytes = 0;  // patch 0079: SPIR-V size of its stages
   // 0.6.5: a whole (optimised) build of a pipeline that was linked from libraries: it goes into the pipeline cache for
   // the next start, and the recording thread swaps it in for the linked one (ApplyPipelineSwaps, after a submit).
@@ -776,6 +779,7 @@ class VulkanBackend final : public Backend {
     Shader sh = csh;
     sh.stage = stage;
     sh.bytes = size;
+    sh.spv_hash = SpvHash(words);
     const VkResult r = vk_.vkCreateShaderModule(device_, &mi, nullptr, &sh.module);
     if (r != VK_SUCCESS) { REXLOG_ERROR("gow2_renderer: Vulkan: {}", VkErr("vkCreateShaderModule", r)); return 0; }
     shaders_.push_back(sh);
@@ -839,6 +843,7 @@ class VulkanBackend final : public Backend {
       job.modules[i] = hs[i] && hs[i] < shaders_.size() ? shaders_[hs[i]].module : VK_NULL_HANDLE;
       if (job.modules[i]) job.bytes += shaders_[hs[i]].bytes;
     }
+    if (job.modules[1]) job.ps_hash = shaders_[hs[1]].spv_hash;
     if (!job.modules[0] || (d.ps && !job.modules[1]) || (d.gs && !job.modules[2])) {
       pipeline_cache_[HashPipelineDesc(d)].push_back({d, 0});
       return 0;
@@ -1849,6 +1854,37 @@ class VulkanBackend final : public Backend {
     --debug_depth_;
   }
   const BackendStats& Stats() const override { return stats_; }
+  // Patch 0068 on Vulkan (gpu.h SetWarmTemplate / WarmPixelShader): with pipeline libraries a pixel shader is built
+  // ahead as its fragment-shader library alone - no template pipeline is needed, and the library is kept, so the
+  // draw's pipeline later only builds its vertex-shader library and links (no cache needed: built while loading).
+  bool SetWarmTemplate(const GraphicsPipelineDesc& d) override {
+    (void)d;
+    if (!ready_ || lost_ || !gpl_ || pipeline_stats_ || !StartWorkers()) return false;
+    {
+      std::lock_guard<std::mutex> lock(job_mutex_);
+      warm_workers_ = std::max<uint64_t>(1, options_.warm_workers);
+    }
+    static std::atomic<bool> said{false};
+    if (!said.exchange(true)) REXLOG_INFO("gow2_renderer: Vulkan: pixel shaders built ahead as pipeline libraries");
+    return true;
+  }
+  bool WarmPixelShader(std::vector<uint8_t>&& spirv) override {
+    if (!gpl_ || spirv.size() < 20 || (spirv.size() & 3)) return false;
+    std::vector<uint32_t> words(spirv.size() / 4);
+    std::memcpy(words.data(), spirv.data(), spirv.size());
+    if (words[0] != 0x07230203u) return false;  // not SPIR-V
+    {
+      std::lock_guard<std::mutex> lock(job_mutex_);
+      if (stop_workers_ || workers_.empty()) return false;
+      warm_jobs_.push_back(std::move(words));
+    }
+    job_cv_.notify_one();
+    return true;
+  }
+  uint64_t WarmJobsLeft() override {
+    std::lock_guard<std::mutex> lock(job_mutex_);
+    return warm_jobs_.size() + warm_busy_;
+  }
   std::string PipelineLibraryReport() override {  // 0.6.2
     if (!gpl_) return "pipeline libraries: off";
     std::lock_guard<std::mutex> lock(lib_mutex_);
@@ -1860,7 +1896,10 @@ class VulkanBackend final : public Backend {
                        gpl_libs_ ? double(gpl_lib_us_) / 1000.0 / double(gpl_libs_) : 0.0, double(gpl_lib_us_) / 1000.0, links,
                        links ? double(gpl_link_us_.load()) / 1000.0 / double(links) : 0.0, double(gpl_link_us_.load()) / 1000.0,
                        gpl_fallbacks_.load(), gpl_cache_hits_.load(), gpl_fills_.load(), double(gpl_fill_us_.load()) / 1000.0, gpl_swaps_.load(),
-                       cache_control_ ? "" : " (no cache-only builds: pipelineCreationCacheControl not enabled)");
+                       cache_control_ ? "" : " (no cache-only builds: pipelineCreationCacheControl not enabled)") +
+           std::format("; built ahead: {} pixel-shader libraries ({:.1f} ms each), {} already there, {} failed, {} used by a draw",
+                       warm_built_.load(), warm_built_.load() ? double(warm_us_.load()) / 1000.0 / double(warm_built_.load()) : 0.0,
+                       warm_known_.load(), warm_failed_.load(), warm_used_);
   }
 
  private:
@@ -2054,8 +2093,21 @@ class VulkanBackend final : public Backend {
         const auto fill_ok = [this] {
           return !fill_jobs_.empty() && jobs_.empty() && backlog_jobs_.empty() && backlog_busy_ < std::max<size_t>(1, worker_count_ / 2);
         };
-        job_cv_.wait(lock, [&] { return stop_workers_ || !jobs_.empty() || backlog_ok() || fill_ok(); });
+        // Warm libraries: when no draw waits, on at most warm_workers_ workers, before the backlog.
+        const auto warm_ok = [this] { return !warm_jobs_.empty() && jobs_.empty() && warm_busy_ < warm_workers_; };
+        job_cv_.wait(lock, [&] { return stop_workers_ || !jobs_.empty() || warm_ok() || backlog_ok() || fill_ok(); });
         if (stop_workers_) return;
+        if (warm_ok()) {
+          std::vector<uint32_t> words = std::move(warm_jobs_.front());
+          warm_jobs_.pop_front();
+          ++warm_busy_;
+          lock.unlock();
+          BuildWarm(words);
+          lock.lock();
+          --warm_busy_;
+          job_cv_.notify_one();
+          continue;
+        }
         backlog = jobs_.empty();
         auto& q = !backlog ? jobs_ : !backlog_jobs_.empty() ? backlog_jobs_ : fill_jobs_;
         job = q.front();
@@ -2298,6 +2350,10 @@ class VulkanBackend final : public Backend {
     PipelineLib& e = it->second;  // (node-based maps: the reference stays valid while others insert)
     if (!fresh) {
       lib_cv_.wait(lock, [&e] { return e.done; });
+      if (e.warm) {  // the first draw to use a library built ahead
+        e.warm = false;
+        ++warm_used_;
+      }
       return e.pipeline;
     }
     lock.unlock();
@@ -2327,6 +2383,73 @@ class VulkanBackend final : public Backend {
       return VK_NULL_HANDLE;
     }
     return lib;
+  }
+  // The fragment-shader library of one pixel shader (none: a depth-only one) at one sample count.
+  VkPipeline FragmentLibrary(VkShaderModule module, const VkPipelineMultisampleStateCreateInfo& ms) {
+    VkPipelineRenderingCreateInfo no_formats{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+    const VkPipelineShaderStageCreateInfo st{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, module, "main", nullptr};
+    const bool has_ps = module != VK_NULL_HANDLE;  // 0.6.5: none for depth-only pipelines
+    VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE, VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+                                  VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+                                  VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE};
+    VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dy.dynamicStateCount = uint32_t(std::size(dyn));
+    dy.pDynamicStates = dyn;
+    VkGraphicsPipelineCreateInfo gi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    gi.stageCount = has_ps ? 1u : 0u;
+    gi.pStages = has_ps ? &st : nullptr;
+    gi.pDepthStencilState = &ds;
+    gi.pMultisampleState = &ms;
+    gi.pDynamicState = &dy;
+    return CreateLibrary(VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, gi, &no_formats);
+  }
+  static uint64_t SpvHash(const std::vector<uint32_t>& w) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (const uint32_t v : w) h = (h ^ v) * 0x100000001b3ull;
+    return h ^ w.size();
+  }
+  // A warm job (worker thread): the pixel shader's fragment-shader library at one sample (the draws' common case).
+  void BuildWarm(std::vector<uint32_t>& words) {
+    RemapBindings(words, ShaderStage::kPixel);
+    const std::tuple<uint64_t, uint32_t> key{SpvHash(words), uint32_t(VK_SAMPLE_COUNT_1_BIT)};
+    {
+      std::lock_guard<std::mutex> lock(lib_mutex_);
+      if (lib_fs_.count(key)) {
+        warm_known_.fetch_add(1, std::memory_order_relaxed);
+        return;
+      }
+    }
+    VkShaderModuleCreateInfo mi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    mi.codeSize = words.size() * 4;
+    mi.pCode = words.data();
+    VkShaderModule module = VK_NULL_HANDLE;
+    if (vk_.vkCreateShaderModule(device_, &mi, nullptr, &module) != VK_SUCCESS) {
+      warm_failed_.fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
+    VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;  // (the same struct the draws give: only the sample count set)
+    const auto t0 = std::chrono::steady_clock::now();
+    bool made = false;
+    LibraryFor(lib_fs_, key, [&] {
+      made = true;
+      return FragmentLibrary(module, ms);
+    });
+    vk_.vkDestroyShaderModule(device_, module, nullptr);  // (a library keeps its own compiled code)
+    if (!made) {
+      warm_known_.fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(lib_mutex_);
+      PipelineLib& e = lib_fs_[key];
+      if (e.pipeline) e.warm = true;
+      else warm_failed_.fetch_add(1, std::memory_order_relaxed);
+    }
+    warm_built_.fetch_add(1, std::memory_order_relaxed);
+    warm_us_.fetch_add(uint64_t(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
+                       std::memory_order_relaxed);
   }
   // The pipeline of `job`, linked from its four libraries (0 = one of them or the link failed).
   VkPipeline BuildLinked(const PipelineJob& job, const VkPipelineInputAssemblyStateCreateInfo& ia,
@@ -2373,24 +2496,11 @@ class VulkanBackend final : public Backend {
     // state is not part of it (dynamic rendering, no sample shading: review), so the sample count is not in the key.
     // 0.6.5 (review): the multisample state is given to the fragment-shader library too, the same as to the output
     // library (required where the shader reads the sample index - sample shading); the sample count is in the key.
-    const std::tuple<VkShaderModule, uint32_t> fs_key{job.modules[1], uint32_t(ms.rasterizationSamples)};
+    // Warm libraries: keyed by the SPIR-V's hash, not the module, so one built ahead from a package's pixel shader
+    // (WarmPixelShader, its own module, destroyed after) is found by the draw's own module of the same words.
+    const std::tuple<uint64_t, uint32_t> fs_key{job.modules[1] ? job.ps_hash : 0u, uint32_t(ms.rasterizationSamples)};
     const VkPipeline fs_lib = LibraryFor(lib_fs_, fs_key, [&] {
-      const VkPipelineShaderStageCreateInfo st{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, job.modules[1], "main", nullptr};
-      const bool has_ps = job.modules[1] != VK_NULL_HANDLE;  // 0.6.5: none for depth-only pipelines
-      VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-      const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE, VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
-                                    VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
-                                    VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE};
-      VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-      dy.dynamicStateCount = uint32_t(std::size(dyn));
-      dy.pDynamicStates = dyn;
-      VkGraphicsPipelineCreateInfo gi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-      gi.stageCount = has_ps ? 1u : 0u;
-      gi.pStages = has_ps ? &st : nullptr;
-      gi.pDepthStencilState = &ds;
-      gi.pMultisampleState = &ms;
-      gi.pDynamicState = &dy;
-      return CreateLibrary(VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, gi, &no_formats);
+      return FragmentLibrary(job.modules[1], ms);
     });
     if (!fs_lib) return VK_NULL_HANDLE;
     // 4. Fragment output interface: blending, the attachment formats, the sample count. No shader.
@@ -3490,6 +3600,7 @@ class VulkanBackend final : public Backend {
         jobs_.clear();
         backlog_jobs_.clear();
         fill_jobs_.clear();
+        warm_jobs_.clear();
         fills_left_ = 0;
       }
       job_cv_.notify_all();
@@ -4545,9 +4656,16 @@ class VulkanBackend final : public Backend {
   std::condition_variable lib_cv_;
   std::map<uint32_t, PipelineLib> lib_vi_;
   std::map<std::tuple<VkShaderModule, VkShaderModule, uint32_t>, PipelineLib> lib_pr_;
-  std::map<std::tuple<VkShaderModule, uint32_t>, PipelineLib> lib_fs_;
+  std::map<std::tuple<uint64_t, uint32_t>, PipelineLib> lib_fs_;  // (SPIR-V hash, samples)
   std::map<std::string, PipelineLib> lib_out_;
   uint64_t gpl_libs_ = 0, gpl_lib_us_ = 0;  // under lib_mutex_
+  uint64_t warm_used_ = 0;                  // under lib_mutex_: libraries built ahead that a draw then used
+  // Warm libraries (patch 0068 on Vulkan): pixel shaders from the game's packages, built ahead as fragment-shader
+  // libraries by the pipeline workers - after live requests, before the start-up backlog (as D3D12's warm-only pipelines).
+  std::deque<std::vector<uint32_t>> warm_jobs_;  // under job_mutex_: SPIR-V words
+  uint64_t warm_busy_ = 0;                       // under job_mutex_
+  uint64_t warm_workers_ = 3;                    // under job_mutex_ (options_.warm_workers)
+  std::atomic<uint64_t> warm_built_{0}, warm_known_{0}, warm_failed_{0}, warm_us_{0};
   std::atomic<uint64_t> gpl_links_{0}, gpl_link_us_{0}, gpl_fallbacks_{0};
   std::atomic<uint64_t> gpl_cache_hits_{0}, gpl_fills_{0}, gpl_fill_us_{0}, gpl_swaps_{0};
   std::mutex swap_mutex_;  // 0.6.5: optimised whole builds waiting for the recording thread

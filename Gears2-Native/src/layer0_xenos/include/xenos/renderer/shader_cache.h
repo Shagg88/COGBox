@@ -189,7 +189,8 @@ class ShaderCache {
   WarmResult WarmFromDisk();
   // Patch 0068 (first-start shader prebuild): the DXBC this cache would make for these dwords - same decode and
   // translation options, so the driver later sees identical bytes - without keeping, recording or creating anything.
-  // False when the DXBC back end is off or the shader is not translatable to DXBC.
+  // False when the DXBC back end is off or the shader is not translatable to DXBC. On Vulkan: the SPIR-V instead
+  // (converted, optimised and stored exactly as for a draw - warm pipeline libraries).
   bool TranslateDxbcOnly(const uint32_t* dwords, size_t dword_count, bool is_vertex, std::vector<uint8_t>& out);
   // Exact Gears 2 scene / Canvas profile, a DXBC twin for float HDR composition.
   // Does not replace the guest's normal shader or change its constant layout.

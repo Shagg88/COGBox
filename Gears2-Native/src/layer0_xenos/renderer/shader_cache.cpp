@@ -2034,10 +2034,29 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
 }
 bool ShaderCache::TranslateDxbcOnly(const uint32_t* dwords, size_t dword_count, bool is_vertex,
                                     std::vector<uint8_t>& out) {
-  if (!dxbc_ || backend_.GetShaderIL() != gpu::ShaderIL::kDxil || !dwords || !dword_count) return false;
+  const gpu::ShaderIL il = backend_.GetShaderIL();
+  if (!dxbc_ || (il != gpu::ShaderIL::kDxil && il != gpu::ShaderIL::kSpirv) || !dwords || !dword_count) return false;
   const ucode::Program program = ucode::Decode(dwords, dword_count, is_vertex, DecodeOptions());
-  dxbc_gen::DxbcTranslation dt = dxbc_gen::TranslateToDxbc(program, TranslateOptions(is_vertex, 0, dwords, dword_count));
+  const hlsl::HlslOptions options = TranslateOptions(is_vertex, 0, dwords, dword_count);
+  dxbc_gen::DxbcTranslation dt = dxbc_gen::TranslateToDxbc(program, options);
   if (!dt.ok) return false;
+  if (il == gpu::ShaderIL::kSpirv) {
+    // Vulkan (warm libraries): the SPIR-V a draw of this shader gets - the same store, key and optimiser as GetImpl,
+    // and put into the store, so the draw later finds exactly these words.
+    const uint64_t store_key = SpvKey(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise, g_spv_store.switches);
+    dxbc_spirv::SpirvResult sv;
+    if (SpvStoreGet(store_key, sv.words)) {
+      sv.ok = true;
+    } else {
+      sv = dxbc_spirv::ConvertDxbcToSpirv(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise);
+      if (!sv.ok || sv.words.empty()) return false;
+      OptimiseSpirv(sv.words);
+      SpvStorePut(store_key, sv.words);
+    }
+    out.resize(sv.words.size() * 4);
+    std::memcpy(out.data(), sv.words.data(), out.size());
+    return true;
+  }
   out = std::move(dt.bytecode);
   return true;
 }
