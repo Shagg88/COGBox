@@ -33,6 +33,7 @@
 #include <rex/runtime.h>
 
 #include <ue3/objects.h>
+#include <ue3/weapon_state_log.h>  // --gow3_log_weapon_state (shared with the other games)
 
 #include "gow3_addresses.h"
 
@@ -106,6 +107,13 @@ const Feel kOffFeel = {"", "off", Off(), Off(), NoKick()};
 
 // --pad_trigger_rumble (0.6.3), set by the tick before the first table search (and before the worker thread starts)
 bool g_impulseOn = false;
+// --gow3_log_weapon_state (Gears 1's co-op weapon log, 23 Nov parity pass; layer 2 ue3/weapon_state_log.h). Off by
+// default here (Gears 1: on): with it on, the object tables are opened and searched even without trigger effects -
+// to be turned on by default once a run shows no hitch.
+REXCVAR_DEFINE_BOOL(gow3_log_weapon_state, false, "Gears3",
+                    "Log one line when a local player's pawn, weapon, pending weapon switch or network role changes "
+                    "(co-op weapon / turret reports) - log only");
+bool g_weaponLogOn = false;   // read once with the trigger options, before the first table search
 
 struct Props {
   // classes (found a slice of the object table at a time - FindClassRange - so a class not loaded yet never costs a
@@ -141,9 +149,11 @@ struct Props {
     const bool optional = step({{&gearPawn, "GearPawn"}, {&lancer, "GearWeap_AssaultRifle"}});
     // 0.6.3 impulse triggers: their classes, only with the option on; waited for as the optional ones
     const bool impulse = !g_impulseOn || step({{&ammoClass, "GearWeapon"}, {&ffmClass, "ForceFeedbackManager"}});
+    // the weapon log's class, the same sliced lookup; waited for as the optional ones
+    const bool weaponLog_found = !g_weaponLogOn || step({{&weaponLog.invManagerClass, "InventoryManager"}});
     if (cursor + 16384 >= total) cursor = 0, passes++;
     else cursor += 16384;
-    if (!required || (!(optional && impulse) && passes < 2)) return false;
+    if (!required || (!(optional && impulse && weaponLog_found) && passes < 2)) return false;
     gamePlayers = obj::PropertyOffset(engine, "GamePlayers");
     actorOfPlayer = obj::PropertyOffset(player, "Actor");
     controllerId = obj::PropertyOffset(localPlayer, "ControllerId");
@@ -161,11 +171,13 @@ struct Props {
                 gamePlayers, actorOfPlayer, controllerId, pawnOfController, weapon, health, pauser, cinematic,
                 cinematicMask, meleeing, meleeingMask);
     if (g_impulseOn) FindImpulse();
+    if (g_weaponLogOn) ue3::WeaponLogFindProps("gow3", weaponLog, pawn, actor);
     done = true;
     return true;
   }
   // 0.6.3 impulse triggers (GitHub #245): the engine's per-shot signals on Pawn, the weapon's ammo count and the game's
   // vibration option (VibrationAllowed). -1 / 0: not found - that signal is not used.
+  ue3::WeaponLogProps weaponLog;   // --gow3_log_weapon_state (-1 / 0: not found - logged as "?")
   uint32_t ammoClass = 0, priClass = 0, ffmClass = 0;
   int flashCount = -1, flashLocation = -1, ammoUsed = -1, pri = -1, priVibration = -1, ffm = -1, ffmAllows = -1;
   uint32_t priVibrationMask = 0, ffmAllowsMask = 0;
@@ -401,10 +413,11 @@ void Gow3AdaptiveTriggersTick(bool in_front_end) {
     test = REXCVAR_GET(cogbox_test_state);
     adaptive = rex::input::InputSystem::AdaptiveTriggersEnabled() ? 1 : 0;
     impulse = g_impulseOn = rex::input::InputSystem::TriggerRumbleEnabled();
+    g_weaponLogOn = REXCVAR_GET(gow3_log_weapon_state);
     if (adaptive) REXLOG_INFO("adaptive triggers: Gears 3 weapon feel for DualSense pads on (GitHub #245)");
     if (impulse) REXLOG_INFO("impulse triggers: Gears 3 trigger pulses for Xbox pads on (GitHub #245)");
   }
-  if (!adaptive && !impulse && !test) return;
+  if (!adaptive && !impulse && !test && !g_weaponLogOn) return;
   const Clock::time_point now = Clock::now();
   static Clock::time_point next{};
   const bool step = now >= next;   // the DualSense feel's (and the table search's) 125 ms step
@@ -421,6 +434,10 @@ void Gow3AdaptiveTriggersTick(bool in_front_end) {
     return;
   }
   if (test) TestStateLine(now, in_front_end);
+  if (g_weaponLogOn && step)   // every 125 ms; logs changes only
+    ue3::WeaponStateLogTick("gow3", {gow3::addr::kGEngine, g_p.gamePlayers, g_p.actorOfPlayer, g_p.pawnOfController, g_p.weapon,
+                                   g_p.localPlayer, g_p.playerController, g_p.pawn},
+                            g_p.weaponLog);
   if (!step && !impulse) return;
   rex::input::InputSystem* input = Input();
   if (!input) return;

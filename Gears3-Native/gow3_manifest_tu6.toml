@@ -282,7 +282,7 @@ registers = []
 jump_address_on_true = 0x8262CE80
 
 # Performance option: per-object dynamic shadow cap (--gow3_shadow_cap; game_patches.cpp has the why). Before
-# `addi r11,r11,1` at 0x827E2AF0; true = skip this shadow (the game's own skip path at 0x827E2B4C).
+# `addi r11,r16,1` at 0x827E2AF0; true = skip this shadow (the game's own skip path at 0x827E2B4C).
 [[entrypoint.midasm_hook]]
 address = 0x827E2AF0
 name = "Gow3ShadowCap"

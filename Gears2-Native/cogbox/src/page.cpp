@@ -1108,6 +1108,7 @@ static void option_row(App &a, int g, const gs::Option &o)
             for (int i : ord) {
                 if (o.id == "FrameGen" && i != idx && gs::framegen_choice_hidden(i, a.env[g])) continue;   // NVIDIA DLSS FG: only with its DLLs
                 gs::Availability ca = gs::choice_available(o, G, i);
+                if (ca.ok && o.id == "FpsMode") ca = gs::fps_own_choice_available(G, i, a.env[g]);   // 23 Nov: Judgment's exe decides
                 if (ca.ok) ca = gs::wine_choice_available(o, i, a.env[g]);   // proton049: what can't work under Proton (ok on Windows)
                 if (ca.ok && o.id == "FrameGen") ca = gs::framegen_choice_available(i, a.env[g], gs::runs_vulkan(a.cur[g], a.env[g]));
                 // 0.6.6: a Scene resolution with no whole-number scene size here is greyed, with the reason (hover)

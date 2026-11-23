@@ -37,6 +37,9 @@
 #include <xenos/frame_limiter.h>
 
 #include "gow2_addresses.h"
+#include <ue3/tick_log.h>  // --gow2_tick_log (shared with Gears 3 / Judgment)
+#include <ue3/aspect.h>  // the ultrawide shape maths (shared)
+#include <ue3/menu_fps.h>  // GitHub #101 front-end cap (layer 2, shared with Judgment)
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/objects.h>  // GitHub #313 pace check: ue3::obj::Read32 (safe guest reads; no table lookup)
 #include "mouse_look.h"  // GitHub #52: CogMouseLookNoteFov
@@ -110,6 +113,25 @@ REXCVAR_DEFINE_INT32(gow2_max_fps, 0, "Gears2",
                      "Stage 7.4: the engine's frame-rate limit (UE3 MaxSmoothedFrameRate, 62 in the game's GearEngine.ini): "
                      "0 = the game's, N = N fps, -1 = none. Above 30 also needs --gow2_gpu_vsync=false (the game asks for "
                      "every second vertical blank)");
+// GitHub #101 (Gears 3's --gow3_menu_fps, 23 Nov parity pass): the title screen and its menus ran at the player's
+// limit - with none, hundreds of fps on a still menu. While GearStart.xxx is the last level package the game opened
+// (layer 2 ue3/menu_fps.h, the file-open signal only) the limit is held at this. Gears 2 does not open GearStart.xxx
+// again when a level returns to the main menu (main_menu_exit.cpp), so that menu keeps the player's limit: the menu
+// label signal Exit Game uses is not taken here, since a pause screen may look it up too and would cap gameplay.
+REXCVAR_DEFINE_INT32(gow2_menu_fps, 60, "Gears2",
+                     "GitHub #101: the engine's frame-rate limit on the title screen and its menus (0 = the player's)");
+// Gears 3's GitHub #55 #68 #79 #80 #120 (23 Nov parity pass): with no limit (--gow2_max_fps=-1) only the presents pace
+// the engine loop, so where nothing is presented (checkpoint saves, streaming) it can tick at sub-millisecond rates.
+REXCVAR_DEFINE_INT32(gow2_tick_floor_fps, 0, "Gears2",
+                     "With no frame-rate limit: the engine still ticks at most N times a second (no sub-millisecond ticks "
+                     "while nothing is presented, e.g. checkpoint saves). 0 = off");
+// --gow2_tick_log (Gears 3 / Judgment's, 23 Nov parity pass; layer 2 ue3/tick_log.h): the engine tick's rhythm every N
+// ticks, read-only, from the engine loop's GetMaxTickRate call (the hook below; not ServerTickClients' second call).
+REXCVAR_DEFINE_INT32(gow2_tick_log, 600, "Gears2",
+                     "Log the engine's tick rhythm every N ticks (median / p95 / max, slow ticks and their spacing). "
+                     "0 = off");
+void Gow2InstallMenuCap() { ue3::InstallMenuFpsCap("gow2_menu_fps", REXCVAR_GET(gow2_menu_fps)); }
+
 // Review 049: the in-game menu's live frame cap (an atomic from the UI thread), else the start-up cvar.
 static int32_t Gow2MaxFps() {
   int32_t v = 0;
@@ -340,18 +362,37 @@ static xenos::FrameLimiter& Gow2Limiter() {
 }
 void Gow2MaxTickRate(PPCRegister& f1) {
   const int32_t v = Gow2MaxFps();
-  if (g_gow2_tick_caller.load(std::memory_order_relaxed) != gow2::addr::kServerTickClientsTickRateRet)
+  const bool server_tick =
+      g_gow2_tick_caller.load(std::memory_order_relaxed) == gow2::addr::kServerTickClientsTickRateRet;
+  if (!server_tick) {
     g_gow2_frame_wait_ms = 0.0;  // GitHub #313 pace check: the hook ran in this engine frame (the wait, if any, below)
-  if (!v) return;
+    ue3::TickLog("gow2_tick_log", REXCVAR_GET(gow2_tick_log));  // once per engine loop (read-only)
+  }
+  // GitHub #101 (as Gears 3): the front end at --gow2_menu_fps at most. With a player's limit the exact limiter waits
+  // (as below); with the game's own limit the engine waits for the capped value itself.
+  if (const int32_t m = REXCVAR_GET(gow2_menu_fps); m > 0 && ue3::InMenuFront()) {
+    f1.f64 = ue3::MenuCappedLimit(v, f1.f64, m);
+    if (v == 0) return;
+    if (server_tick) { f1.f64 = 0.0; return; }  // ServerTickClients: no second wait (see below)
+    g_gow2_frame_wait_ms = Gow2Limiter().Wait(f1.f64);
+    f1.f64 = 0.0;
+    return;
+  }
+  const int32_t floor_fps = REXCVAR_GET(gow2_tick_floor_fps);
+  if (!v) {
+    if (floor_fps > 0 && !(f1.f64 > 0.0)) f1.f64 = double(floor_fps);  // the game's own "none" (0) gets the floor too
+    return;
+  }
   static bool logged = false;
   if (!logged) {
     logged = true;
-    REXLOG_INFO("gow2_max_fps: engine frame-rate limit {} -> {}", f1.f64, v < 0 ? std::string("none") : std::to_string(v));
+    REXLOG_INFO("gow2_max_fps: engine frame-rate limit {} -> {}{}", f1.f64, v < 0 ? std::string("none") : std::to_string(v),
+                v < 0 && floor_fps > 0 ? " (tick floor " + std::to_string(floor_fps) + "/s)" : std::string());
   }
-  if (v < 0) { f1.f64 = 0.0; return; }
+  if (v < 0) { f1.f64 = server_tick ? 0.0 : ue3::TickFloorLimit(floor_fps, 0.0); return; }
   // Exact cap: the engine's own wait sleeps whole milliseconds (N +- 2 fps), so the game thread waits here on the host
   // clock and the engine is told "no limit" (it measured the time before this call, so its wait would come on top).
-  if (g_gow2_tick_caller.load(std::memory_order_relaxed) == gow2::addr::kServerTickClientsTickRateRet) {
+  if (server_tick) {
     f1.f64 = 0.0;  // ServerTickClients: no second wait; 0 = what it got in 0.6.2 (review r62 M1: v would change its
                    // CPU-saturated test and the WorldInfo flags it clears); the engine loop's call did the waiting
     return;
@@ -367,7 +408,9 @@ void Gow2MaxTickRate(PPCRegister& f1) {
 // the hook did not run in this frame, the same limiter waits here (f1 = 0: no second wait by the engine).
 void Gow2MaxTickRateFallback(PPCRegister& f1) {
   if (g_gow2_frame_wait_ms >= 0.0) return;   // the hook ran in this frame
-  const int32_t v = Gow2MaxFps();
+  int32_t v = Gow2MaxFps();
+  if (const int32_t m = REXCVAR_GET(gow2_menu_fps); m > 0 && ue3::InMenuFront())
+    v = (v <= 0 || v > m) ? m : v;  // GitHub #101: the menu limit here too (as Gears 3's fallback)
   if (v <= 0) return;
   static std::atomic<int> told{0};
   if (told.fetch_add(1) == 0)
@@ -396,23 +439,13 @@ REXCVAR_DEFINE_BOOL(gow2_rt_pool_grow, true, "Gears2",
                     "GitHub #94: a render target too large for its pool (Gears 2 wider than ~2.39:1) gets memory of its "
                     "own instead of the game's trap");
 namespace uwshape {
-inline double ParseAspect(const std::string& v) {
-  double a = 0, b = 0;
-  if (std::sscanf(v.c_str(), "%lf:%lf", &a, &b) == 2 && a > 0 && b > 0) return a / b;
-  if (std::sscanf(v.c_str(), "%lf", &a) == 1 && a > 0) return a;
-  return 0.0;
-}
-inline double MonitorAspect() {
-  MONITORINFO mi{sizeof(mi)};
-  HMONITOR m = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
-  if (!m || !GetMonitorInfoW(m, &mi)) return 0.0;
-  const double w = double(mi.rcMonitor.right - mi.rcMonitor.left), h = double(mi.rcMonitor.bottom - mi.rcMonitor.top);
-  return h > 0 ? w / h : 0.0;
-}
+// Parse / Monitor / Widen / FovScale: layer 2 ue3/aspect.h (one copy for all four games, 23 Nov)
+using ue3::aspect::FovScale;
+using ue3::aspect::Widen;
 // 550 = Canary's shape; another height when --gow2_aspect asks for one
 inline uint32_t Height(const std::string& v, const char* tag) {
   if (v.empty()) return 550u;
-  const double aspect = v == "auto" ? MonitorAspect() : ParseAspect(v);
+  const double aspect = v == "auto" ? ue3::aspect::Monitor(tag) : ue3::aspect::Parse(v);
   if (!(aspect > 16.0 / 9.0 + 0.01)) {
     REXLOG_INFO("{}: aspect '{}' = {:.4f} is not wider than 16:9 - Canary's 21:9 is used", tag, v, aspect);
     return 550u;
@@ -427,13 +460,6 @@ inline uint32_t Height(const std::string& v, const char* tag) {
   if (h != want) REXLOG_INFO("{}: aspect {:.4f} wants {} rows; clamped to {} (pillarboxed)", tag, aspect, want, h);
   REXLOG_INFO("{}: aspect '{}' = {:.4f} -> scene 1280x{}", tag, v, aspect, h);
   return h;
-}
-inline double Widen(uint32_t h) { return (1280.0 / double(h)) / (16.0 / 9.0); }
-// how much a shape of height h widens the view, relative to Canary's 550
-inline double FovScale(uint32_t h) {
-  constexpr double kRef = 34.046711 * 3.14159265358979 / 180.0;
-  auto k = [&](double w) { return std::atan(std::tan(kRef) * w) / kRef; };
-  return k(Widen(h)) / k(Widen(550));
 }
 }  // namespace uwshape
 REXCVAR_DEFINE_STRING(gow2_aspect, "", "Gears2",

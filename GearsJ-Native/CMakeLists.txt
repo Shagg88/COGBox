@@ -96,13 +96,17 @@ target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_pre
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp  # GitHub #153
     ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/tick_log.cpp  # --gowj_tick_log (shared with Gears 2 / 3)
+    ${GN_LAYER0_HOME}/src/layer2_ue3/menu_fps.cpp  # GitHub #101 front-end cap (--gowj_menu_fps; shared with Gears 2)
     ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp  # GitHub #264: engine console commands (shared with Gears 2 / 3)
     ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp  # GitHub #245: Gears 2's ue3::obj reflection (Judgment has no other)
     ${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp  # GitHub #353: COGBox tags after the players' names
     ${GN_LAYER0_HOME}/src/layer2_ue3/chat.cpp)  # in-match chat
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/menu_fps.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/tick_log.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/chat.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)

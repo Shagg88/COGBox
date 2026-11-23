@@ -665,7 +665,8 @@ bool cap_exe(const Environment& e, const std::string& n) {
         if (n == h && e.cap.exe_has && e.cap.exe_has("gow1_tiling_off")) return true;   // any Gears 1 exe since job 697
     // 0.3.0 (job 733): --gow2_aspect / --gowj_aspect are short enough to be split the same way (job 730's gow2.exe: no
     // "gow2_aspect" text) - their description, a long literal, is searched instead
-    if ((n == "gow2_aspect" || n == "gowj_aspect") && e.cap.exe_has && e.cap.exe_has("the shape. Empty = 21:9")) return true;
+    if ((n == "gow2_aspect" || n == "gowj_aspect" || n == "gow1_aspect") && e.cap.exe_has &&
+        e.cap.exe_has("the shape. Empty = 21:9")) return true;
     // Discord 16 Nov (Horde bots greyed in Gears 2 on 0.6.3): 0.6.3's gow2.exe has no "gow2_horde_bots" text either - the
     // start of its description is searched (the 0.6.3 exe has it)
     if (n == "gow2_horde_bots" && e.cap.exe_has && e.cap.exe_has("GitHub #237 (francoissubke-blip's tip")) return true;
@@ -868,6 +869,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "ultrawide") {   // 0.2.0: Judgment too (--gowj_ultrawide, a new build); Gears 1 when gow1.exe has it
         if (g == Game::Judgment && !cap_exe(env, "gowj_ultrawide")) return no(not_yet(2));
         if (g == Game::Gears1 && !cap_exe(env, "gow1_ultrawide")) return no(not_yet(gi, "needs its next build"));
+        // 23 Nov parity pass: Gears 1's --gow1_ultrawide is written from the generated code and has not been run yet
+        // (its menus / HUD at a non-720 height are unknown) - greyed until a run has looked; it works from the command line
+        if (g == Game::Gears1) return no("Experimental in Gears 1 - not tested yet.");
     } else if (f == "aspect43") {   // 0.4.9: SDK patch 70; Gears 1's video-mode code is not checked yet
         // 0.6.5: Gears 1 letterboxed a 16:10 mode to 16:9 (job 1969) until --gow1_no_aspect_lock (its view's constrain flag)
         if (g == Game::Gears1 && !cap_exe(env, "gow1_no_aspect_lock")) return no(not_yet(gi, "needs its next build"));
@@ -1251,9 +1255,19 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     return a;
 }
 
+// --gowj_show_fps / --gow1_show_fps: the option's description (a long literal; a short name can be built a few letters
+// at a time, cap_exe), the same text in both exes - searched in the game's own exe
+static bool own_show_fps(const Environment& env) { return cap_exe(env, "(its own stat fps / stat unit)"); }
+
+Availability fps_own_choice_available(Game g, int index, const Environment& env) {
+    Availability a;
+    if (index == 3 && (g == Game::Judgment || g == Game::Gears1) && !own_show_fps(env)) { a.ok = false; a.why = not_yet(static_cast<int>(g), "game's own counter"); }
+    return a;
+}
+
 Availability choice_available(const Option& o, Game g, int index) {
     Availability a;
-    if (o.id == "FpsMode" && index == 3 && (g == Game::Judgment || g == Game::Gears1)) { a.ok = false; a.why = not_yet(static_cast<int>(g), "game's own counter"); }   // PS1 267, 475
+    // PS1 267, 475; 23 Nov: Judgment's and Gears 1's are fps_own_choice_available (the exe decides)
     if (o.id == "Lang" && g == Game::Gears1 && !gears1_lang(index)) { a.ok = false; a.why = "Not in Gears 1 - it would show English."; }
     if (o.id == "AAMode" && index == 5 && g != Game::Gears2 && g != Game::Gears3) { a.ok = false; a.why = "Gears 2 and Gears 3 for now."; }   // notes/80 s.7
     return a;
@@ -1291,11 +1305,11 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         std::string gpu = gpu_main(env);
         base += "\nYour graphics card: " + (gpu.empty() ? std::string("not detected") : gpu);
     }
-    if (g == Game::Judgment && o.id == "FpsMode") return not_yet(2, "game's own counter") + " " + base;   // PS1 476
+    if (g == Game::Judgment && o.id == "FpsMode" && !own_show_fps(env)) return not_yet(2, "game's own counter") + " " + base;   // PS1 476
     if (g == Game::Judgment && o.id == "Players") return "Untested in Judgment. " + base;
     if (o.id == "SystemLink" && g != Game::Gears2 && a.ok)   // Shagg 16:07: all four games' title updates; Gears 2 tested
         return std::string("Untested in ") + (g == Game::Gears3 ? "Gears 3" : g == Game::Judgment ? "Judgment" : "Gears 1") + " - please tell us in #72. " + base;                 // PS1 477
-    if (g == Game::Gears1 && o.id == "FpsMode") return not_yet(3, "game's own counter") + " " + base;
+    if (g == Game::Gears1 && o.id == "FpsMode" && !own_show_fps(env)) return not_yet(3, "game's own counter") + " " + base;
     if (g == Game::Gears1 && o.id == "Players" && a.why.empty()) return "Untested in Gears 1. " + base;
     if (g == Game::Judgment && o.id == "FrameCap")   // GitHub #38: as on Xenia Canary, unlimited can leave a loading screen endless
         return base + "\nJudgment: Unlimited can leave the loading screen after some chapters (Monroe Commons) running for "
@@ -1543,7 +1557,7 @@ Settings Store::view(Game g, const Environment& env) const {
     // 0.6.6: Ambient occlusion was Default / On. 0.6.7 (GitHub #406, Shagg 21 Nov): Off (0) is offered again, so a
     // saved Off stays Off; a saved Ultra or CACAO still becomes On
     if (s.i("AO") >= 3) s.set("AO", 2);
-    if ((g == Game::Judgment || g == Game::Gears1) && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
+    if ((g == Game::Gears1 || g == Game::Judgment) && !own_show_fps(env) && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
     if (g == Game::Gears1 && !gears1_lang(s.i("Lang"))) s.set("Lang", 0);   // a language Gears 1 has no text for
     return s;
 }
@@ -2485,7 +2499,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     switch (s.i("FpsMode")) {
     case 1: a.push_back("--gow2_fps_bar=top"); break;
     case 2: a.push_back("--gow2_fps_bar=bottom"); break;
-    case 3: if (!isGJ && !isG1) a.push_back(isG3 ? "--gow3_patch_show_fps=true" : "--gow2_patch_show_fps=true"); break;
+    case 3:
+        if (isGJ || isG1) { if (own_show_fps(env)) a.push_back(isGJ ? "--gowj_show_fps=true" : "--gow1_show_fps=true"); }   // 23 Nov: the engine's stat fps
+        else a.push_back(isG3 ? "--gow3_patch_show_fps=true" : "--gow2_patch_show_fps=true");
+        break;
     default: break;
     }
     // PS1 930-937: keyboard and mouse with the Gears layout

@@ -25,6 +25,9 @@
 #include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
 #include <ue3/name_tags.h>
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
+#include <ue3/tick_log.h>  // --gow3_tick_log (shared)
+#include <ue3/aspect.h>  // the ultrawide shape maths (shared)
+#include <ue3/shadow_cap.h>  // --gow3_shadow_cap (shared with Judgment)
 #include <iterator>   // std::size  // GitHub #353
 #include "mouse_look.h"
 #include "main_menu_exit.h"
@@ -155,33 +158,14 @@ namespace {
 // Canary's 21:9 scene height is 550; the game rounds its scene render targets up to 8 rows (sub_827D7AA8), so every
 // height here is a multiple of 8 and the targets match the picture exactly (GitHub #330): 550 -> 552.
 constexpr uint32_t kCanaryUltrawideHeight = 552;
-uint32_t SceneRows(double rows) { return std::clamp(uint32_t(std::lround(rows / 8.0)) * 8u, 240u, 720u); }
-
-double ParseAspect(const std::string& v) {  // "21:9", "3440:1440" or "2.4"; 0 when unreadable
-  char* end = nullptr;
-  const size_t colon = v.find(':');
-  if (colon == std::string::npos) {
-    const double x = std::strtod(v.c_str(), &end);
-    return end == v.c_str() ? 0.0 : x;
-  }
-  const double w = std::strtod(v.c_str(), &end), h = std::strtod(v.c_str() + colon + 1, nullptr);
-  return h > 0 ? w / h : 0.0;
-}
-double MonitorAspect() {  // layer 0 knows the monitor the game window is on (the primary one before the window exists)
-  uint32_t w = 0, h = 0;
-  if (!xenos::display::MonitorSize(w, h) || !h) {
-    REXLOG_INFO("gow3_aspect: monitor size unknown");
-    return 0.0;
-  }
-  REXLOG_INFO("gow3_aspect: monitor is {}x{}", w, h);
-  return double(w) / double(h);
-}
+// SceneRows / Parse / Monitor: layer 2 ue3/aspect.h (one copy for all four games, 23 Nov)
+using ue3::aspect::SceneRows;
 // The scene buffer height for the chosen shape, or 0 = the game's own 16:9. Worked out once.
 uint32_t WideHeight() {
   static const uint32_t height = [] {
     const std::string v = REXCVAR_GET(gow3_aspect);
     if (v.empty()) return REXCVAR_GET(gow3_ultrawide) ? kCanaryUltrawideHeight : 0u;
-    const double aspect = v == "auto" ? MonitorAspect() : ParseAspect(v);
+    const double aspect = v == "auto" ? ue3::aspect::Monitor("gow3_aspect") : ue3::aspect::Parse(v);
     if (!(aspect > 16.0 / 9.0 + 0.01)) {
       REXLOG_INFO("gow3_aspect: '{}' = {:.4f}, not wider than 16:9 - the game's 16:9 picture is kept", v, aspect);
       return 0u;
@@ -214,30 +198,21 @@ void Gow3UltrawideFov(PPCRegister& f0, PPCRegister& f31) {  // after `lfs f0,0x6
   f0.f64 = factor;
 }
 // Performance option (Shagg 22 Nov; idea from boma's Canary "Smart Shadow Cuts", made our own way): the projected-shadow
-// render gathers its draw lists one shadow at a time; at 0x827E2AF0 (`addi r11,r11,1`, r16 = shadow depth passes so
+// render gathers its draw lists one shadow at a time; at 0x827E2AF0 (`addi r11,r16,1`, r16 = shadow depth passes so
 // far this frame, r30 = the shadow's info, flags at +0x4E0) a per-object shadow (not whole-scene, not a preshadow: flag
 // bits 0x06000000 clear) past the cap is skipped to 0x827E2B4C, as the game skips one it doesn't draw. Whole-scene and
 // preshadows are never capped. Canary's value: 20. The instruction is checked once before the first use.
 REXCVAR_DEFINE_INT32(gow3_shadow_cap, 0, "Gears3",
                      "Most per-object dynamic shadows drawn a frame (0 = the game's own, no limit; 20 = Canary's Smart "
                      "Shadow Cuts). Fewer = less game-thread and GPU work; some objects lose their shadow");
-bool Gow3ShadowCap(PPCRegister& r16, PPCRegister& r30) {   // before `addi r11,r11,1` at 0x827E2AF0; true = skip
+bool Gow3ShadowCap(PPCRegister& r16, PPCRegister& r30) {   // at `addi r11,r16,1`, 0x827E2AF0; true = skip
   const int32_t cap = REXCVAR_GET(gow3_shadow_cap);
   if (cap <= 0 || int32_t(r16.u32) < cap) return false;
   const uint8_t* m = rex::Runtime::instance()->virtual_membase();
-  static const bool code_ok = [m] {
-    const uint8_t* q = m + 0x827E2AF0u;
-    const uint32_t w = (uint32_t(q[0]) << 24) | (uint32_t(q[1]) << 16) | (uint32_t(q[2]) << 8) | q[3];
-    if (w != 0x396B0001u) REXLOG_WARN("gow3_shadow_cap: the code at 0x827E2AF0 is {:08X}, not TU6's - left alone", w);
-    return w == 0x396B0001u;
-  }();
-  if (!code_ok || !r30.u32) return false;
-  const uint8_t* f = m + r30.u32 + 0x4E0u;
-  const uint32_t flags = (uint32_t(f[0]) << 24) | (uint32_t(f[1]) << 16) | (uint32_t(f[2]) << 8) | f[3];
-  if (flags & 0x06000000u) return false;  // whole-scene shadow or preshadow: always drawn
-  static std::atomic<bool> logged{false};
-  if (!logged.exchange(true)) REXLOG_INFO("gow3_shadow_cap: more than {} shadow depth passes in a frame - further per-object shadows skipped", cap);
-  return true;
+  // 23 Nov parity pass: the check was for `addi r11,r11,1` (0x396B0001); TU6 has `addi r11,r16,1` there (PC's generated
+  // code), so the cap logged "not TU6's" and never ran. Shared with Judgment (layer 2 ue3/shadow_cap.h).
+  static const bool code_ok = ue3::ShadowCapSiteOk("gow3_shadow_cap", m, 0x827E2AF0u);
+  return ue3::ShadowCapSkip("gow3_shadow_cap", cap, r16.u32, r30.u32, m, code_ok);
 }
 // GitHub #207 (gow3_manifest_tu6.toml): a voice callback whose object is already gone (no vtable) is not called
 bool Gow3VoiceCallbackGone(PPCRegister& r3) {
@@ -514,51 +489,7 @@ REXCVAR_DEFINE_INT32(gow3_tick_log, 600, "Gears3",
                      "0 = off");
 
 namespace {
-double Median(std::vector<double> v) {
-  std::sort(v.begin(), v.end());
-  return v[v.size() / 2];
-}
-void TickTimeline() {  // the game thread is the only caller
-#ifdef _WIN32
-  const int32_t n = REXCVAR_GET(gow3_tick_log);
-  if (n <= 0) return;
-  static uint64_t last = 0, ticks = 0;
-  static std::vector<double> iv;  // tick lengths, ms
-  const uint64_t t = QpcNow();
-  if (last) iv.push_back(double(t - last) * 1000.0 / double(QpcFrequency()));
-  last = t;
-  ++ticks;
-  if (int32_t(iv.size()) < n) return;
-  std::vector<double> sorted = iv;
-  std::sort(sorted.begin(), sorted.end());
-  const double med = sorted[sorted.size() / 2], p95 = sorted[sorted.size() * 95 / 100], mx = sorted.back();
-  const double slow_at = std::max(med * 1.5, med + 4.0);
-  std::vector<size_t> slow;
-  double slow_mean = 0;
-  for (size_t i = 0; i < iv.size(); ++i)
-    if (iv[i] > slow_at) slow.push_back(i), slow_mean += iv[i];
-  if (!slow.empty()) slow_mean /= double(slow.size());
-  std::string rhythm = "no slow ticks";
-  if (slow.size() >= 3) {
-    std::vector<double> gap_ms, gap_ticks;
-    for (size_t k = 1; k < slow.size(); ++k) {
-      double ms = 0;
-      for (size_t i = slow[k - 1] + 1; i <= slow[k]; ++i) ms += iv[i];
-      gap_ms.push_back(ms);
-      gap_ticks.push_back(double(slow[k] - slow[k - 1]));
-    }
-    const double gm = Median(gap_ms), gt = Median(gap_ticks);
-    std::vector<double> dev;
-    for (double g : gap_ms) dev.push_back(std::fabs(g - gm));
-    rhythm = std::format("every {:.0f} ms / {:.0f} ticks (spread {:.2f})", gm, gt, gm > 0 ? Median(dev) / gm : 0.0);
-  } else if (!slow.empty()) {
-    rhythm = std::format("{} slow tick(s)", slow.size());
-  }
-  REXLOG_INFO("gow3_tick_log: ticks {}-{}: median {:.2f} ms, p95 {:.2f}, max {:.1f} | slow (> {:.1f} ms): {} (mean {:.1f} ms), "
-              "{}", ticks - iv.size(), ticks - 1, med, p95, mx, slow_at, slow.size(), slow_mean, rhythm);
-  iv.clear();
-#endif
-}
+void TickTimeline() { ue3::TickLog("gow3_tick_log", REXCVAR_GET(gow3_tick_log)); }  // layer 2 ue3/tick_log.h
 }  // namespace
 
 // GitHub #101: the front end (title screen, its menus) ran at the player's limit - with none, hundreds of fps and the

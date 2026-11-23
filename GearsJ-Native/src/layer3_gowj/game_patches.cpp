@@ -18,7 +18,11 @@
 #include <xenos/dev_tools.h>
 #include <xenos/frame_limiter.h>
 #include <xenos/display_size.h>
+#include <ue3/shadow_cap.h>  // --gowj_shadow_cap (shared with Gears 3)
+#include <ue3/aspect.h>  // the ultrawide shape maths (shared)
+#include <ue3/menu_fps.h>  // GitHub #101 front-end cap (layer 2, shared with Gears 2)
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
+#include <ue3/tick_log.h>  // --gowj_tick_log (shared)
 #include <ue3/objects.h>
 #include "mouse_look.h"   // 0.5.0: CogMouseLookNoteFov (aim / zoom sensitivity)
 
@@ -125,51 +129,7 @@ REXCVAR_DEFINE_INT32(gowj_tick_log, 600, "Judgment",
                      "0 = off");
 
 namespace {
-double Median(std::vector<double> v) {
-  std::sort(v.begin(), v.end());
-  return v[v.size() / 2];
-}
-void TickTimeline() {  // the game thread is the only caller
-#ifdef _WIN32
-  const int32_t n = REXCVAR_GET(gowj_tick_log);
-  if (n <= 0) return;
-  static uint64_t last = 0, ticks = 0;
-  static std::vector<double> iv;  // tick lengths, ms
-  const uint64_t t = QpcNow();
-  if (last) iv.push_back(double(t - last) * 1000.0 / double(QpcFrequency()));
-  last = t;
-  ++ticks;
-  if (int32_t(iv.size()) < n) return;
-  std::vector<double> sorted = iv;
-  std::sort(sorted.begin(), sorted.end());
-  const double med = sorted[sorted.size() / 2], p95 = sorted[sorted.size() * 95 / 100], mx = sorted.back();
-  const double slow_at = std::max(med * 1.5, med + 4.0);
-  std::vector<size_t> slow;
-  double slow_mean = 0;
-  for (size_t i = 0; i < iv.size(); ++i)
-    if (iv[i] > slow_at) slow.push_back(i), slow_mean += iv[i];
-  if (!slow.empty()) slow_mean /= double(slow.size());
-  std::string rhythm = "no slow ticks";
-  if (slow.size() >= 3) {
-    std::vector<double> gap_ms, gap_ticks;
-    for (size_t k = 1; k < slow.size(); ++k) {
-      double ms = 0;
-      for (size_t i = slow[k - 1] + 1; i <= slow[k]; ++i) ms += iv[i];
-      gap_ms.push_back(ms);
-      gap_ticks.push_back(double(slow[k] - slow[k - 1]));
-    }
-    const double gm = Median(gap_ms), gt = Median(gap_ticks);
-    std::vector<double> dev;
-    for (double g : gap_ms) dev.push_back(std::fabs(g - gm));
-    rhythm = std::format("every {:.0f} ms / {:.0f} ticks (spread {:.2f})", gm, gt, gm > 0 ? Median(dev) / gm : 0.0);
-  } else if (!slow.empty()) {
-    rhythm = std::format("{} slow tick(s)", slow.size());
-  }
-  REXLOG_INFO("gowj_tick_log: ticks {}-{}: median {:.2f} ms, p95 {:.2f}, max {:.1f} | slow (> {:.1f} ms): {} (mean {:.1f} ms), "
-              "{}", ticks - iv.size(), ticks - 1, med, p95, mx, slow_at, slow.size(), slow_mean, rhythm);
-  iv.clear();
-#endif
-}
+void TickTimeline() { ue3::TickLog("gowj_tick_log", REXCVAR_GET(gowj_tick_log)); }  // layer 2 ue3/tick_log.h
 }  // namespace
 
 // ---- Loading screens at a safe frame rate (GitHub #38) -------------------------------------------------------------
@@ -557,6 +517,18 @@ static void GowjExactLimit(PPCRegister& f1) {
   f1.f64 = 0.0;
 }
 
+// GitHub #101 (Gears 3's --gow3_menu_fps, 23 Nov parity pass): the title screen and its menus ran at the player's limit
+// - with none, hundreds of fps on a still menu. While GearStart*.xxx (Judgment's front end too: GearStart.xxx /
+// GearStartTransition.xxx in CookedXbox360) is the last level package the game opened (layer 2 ue3/menu_fps.h, the
+// file-open signal only), the limit is held at this. The loading-screen cap above comes first.
+REXCVAR_DEFINE_INT32(gowj_menu_fps, 60, "Judgment",
+                     "GitHub #101: the engine's frame-rate limit on the title screen and its menus (0 = the player's)");
+// Gears 3's GitHub #55 #68 #79 #80 #120 (23 Nov parity pass): with no limit (--gowj_max_fps=-1, MaxSmoothedFrameRate
+// 1000 through the ini) the engine may tick up to 1000 times a second where nothing is presented (checkpoint saves).
+REXCVAR_DEFINE_INT32(gowj_tick_floor_fps, 0, "Judgment",
+                     "With no frame-rate limit: the engine still ticks at most N times a second (no sub-millisecond ticks "
+                     "while nothing is presented, e.g. checkpoint saves). 0 = off");
+
 void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E220: f1 = the engine's limit (fps)
   if (g_gowj_tick_caller.load(std::memory_order_relaxed) != kServerTickClientsTickRateRet) TickTimeline();  // once per frame
   const int32_t cap = REXCVAR_GET(gowj_loading_fps);
@@ -570,8 +542,13 @@ void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E2
     if (LiveMaxFps() != 0) GowjExactLimit(f1);
     return;
   }
-  // GitHub #77: outside a loading screen the game may lower its own limit (30) and keep it; the player's limit wins.
   const int32_t want = LiveMaxFps();
+  if (const int32_t m = REXCVAR_GET(gowj_menu_fps); m > 0 && ue3::InMenuFront()) {  // GitHub #101 (as Gears 3)
+    f1.f64 = ue3::MenuCappedLimit(want, f1.f64, m);
+    if (want != 0) GowjExactLimit(f1);
+    return;
+  }
+  // GitHub #77: outside a loading screen the game may lower its own limit (30) and keep it; the player's limit wins.
   if (want != 0 && f1.f64 > 0.0 && f1.f64 < (want < 0 ? 1000.0 : double(want)) - 0.5) {
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true))
@@ -584,7 +561,31 @@ void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E2
   if (want > 0) {
     f1.f64 = double(want);
     GowjExactLimit(f1);
+  } else if (const int32_t floor_fps = REXCVAR_GET(gowj_tick_floor_fps); floor_fps > 0 && (want < 0 || !(f1.f64 > 0.0))) {
+    // --gowj_tick_floor_fps (as Gears 3): "no limit" (the ini's 1000, or 0 after the game lowered it) and the game's own
+    // "none" tick at most N times a second. ServerTickClients only reads the value (0 -> DeltaSeconds): left as it is.
+    if (g_gowj_tick_caller.load(std::memory_order_relaxed) != kServerTickClientsTickRateRet) {
+      static std::atomic<bool> s_floor_logged{false};
+      if (!s_floor_logged.exchange(true))
+        REXLOG_INFO("gowj_max_fps: no limit - tick floor {}/s (--gowj_tick_floor_fps)", floor_fps);
+      f1.f64 = ue3::TickFloorLimit(floor_fps, f1.f64);
+    }
   }
+}
+
+// Performance option (as Gears 3's --gow3_shadow_cap, 23 Nov parity pass; layer 2 ue3/shadow_cap.h has the why): the
+// projected-shadow gather sub_827FD2F8 is Gears 3's sub_827E2848 (461 instructions, the same code); at 0x827FD5A0
+// `addi r11,r16,1` (r16 = shadow depth passes so far this frame, r30 = the shadow's info, flags `lwz r10,1248(r30)`) a
+// per-object shadow past the cap goes to the game's own skip path 0x827FD5FC. Checked in the PC's generated code.
+REXCVAR_DEFINE_INT32(gowj_shadow_cap, 0, "Judgment",
+                     "Most per-object dynamic shadows drawn a frame (0 = the game's own, no limit; 20 = Canary's Smart "
+                     "Shadow Cuts). Fewer = less game-thread and GPU work; some objects lose their shadow");
+bool GowjShadowCap(PPCRegister& r16, PPCRegister& r30) {   // at `addi r11,r16,1`, 0x827FD5A0; true = skip
+  const int32_t cap = REXCVAR_GET(gowj_shadow_cap);
+  if (cap <= 0 || int32_t(r16.u32) < cap) return false;
+  const uint8_t* m = rex::Runtime::instance()->virtual_membase();
+  static const bool code_ok = ue3::ShadowCapSiteOk("gowj_shadow_cap", m, 0x827FD5A0u);
+  return ue3::ShadowCapSkip("gowj_shadow_cap", cap, r16.u32, r30.u32, m, code_ok);
 }
 
 // ---- Engine settings through the game's own config (layer 2 --ue3_ini_edits) ----------------------------------------
@@ -674,6 +675,7 @@ static std::string GowjLevelSelectEdits() {
 
 void GowjAddBuiltInIniEdits() {
   GowjInstallLoadingClamp();  // GitHub #38 (runs once, at start-up, before the game opens any file)
+  ue3::InstallMenuFpsCap("gowj_menu_fps", REXCVAR_GET(gowj_menu_fps));  // GitHub #101 (as Gears 3)
   std::string add;
   if (REXCVAR_GET(gowj_level_select)) add += GowjLevelSelectEdits();
   if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xbox360-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;";
@@ -875,23 +877,13 @@ REXCVAR_DEFINE_BOOL(gowj_ultrawide, false, "Judgment",
 // The field-of-view factor is Canary's 21:9 value times how much more the shape widens than 21:9 does, at the half
 // angle (34.05 deg) where Canary's 21:9 factor is exact (the hooks don't see the game's own field of view).
 namespace uwshape {
-inline double ParseAspect(const std::string& v) {
-  double a = 0, b = 0;
-  if (std::sscanf(v.c_str(), "%lf:%lf", &a, &b) == 2 && a > 0 && b > 0) return a / b;
-  if (std::sscanf(v.c_str(), "%lf", &a) == 1 && a > 0) return a;
-  return 0.0;
-}
-inline double MonitorAspect() {
-  MONITORINFO mi{sizeof(mi)};
-  HMONITOR m = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
-  if (!m || !GetMonitorInfoW(m, &mi)) return 0.0;
-  const double w = double(mi.rcMonitor.right - mi.rcMonitor.left), h = double(mi.rcMonitor.bottom - mi.rcMonitor.top);
-  return h > 0 ? w / h : 0.0;
-}
+// Parse / Monitor / Widen / FovScale: layer 2 ue3/aspect.h (one copy for all four games, 23 Nov)
+using ue3::aspect::FovScale;
+using ue3::aspect::Widen;
 // 550 = Canary's shape; another height when --gowj_aspect asks for one
 inline uint32_t Height(const std::string& v, const char* tag) {
   if (v.empty()) return 550u;
-  const double aspect = v == "auto" ? MonitorAspect() : ParseAspect(v);
+  const double aspect = v == "auto" ? ue3::aspect::Monitor(tag) : ue3::aspect::Parse(v);
   if (!(aspect > 16.0 / 9.0 + 0.01)) {
     REXLOG_INFO("{}: aspect '{}' = {:.4f} is not wider than 16:9 - Canary's 21:9 is used", tag, v, aspect);
     return 550u;
@@ -900,13 +892,6 @@ inline uint32_t Height(const std::string& v, const char* tag) {
   const uint32_t h = std::clamp(uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u, 240u, 720u);
   REXLOG_INFO("{}: aspect '{}' = {:.4f} -> scene 1280x{}", tag, v, aspect, h);
   return h;
-}
-inline double Widen(uint32_t h) { return (1280.0 / double(h)) / (16.0 / 9.0); }
-// how much a shape of height h widens the view, relative to Canary's 550
-inline double FovScale(uint32_t h) {
-  constexpr double kRef = 34.046711 * 3.14159265358979 / 180.0;
-  auto k = [&](double w) { return std::atan(std::tan(kRef) * w) / kRef; };
-  return k(Widen(h)) / k(Widen(550));
 }
 }  // namespace uwshape
 // GitHub #396 (as Gears 3's #330, fixed there in 0.6.3): with the scene render targets kept at 1280x720 under a 1280xH
@@ -939,6 +924,13 @@ template <typename T> void LogOnce(bool& done, const char* what, T before, T aft
 }  // namespace
 
 bool GowjUltrawideNoConstrain() { return REXCVAR_GET(gowj_ultrawide); }  // jump_address_on_true 0x82640588
+// 23 Nov parity pass (Gears 2 / 3's --*_ultrawide_fov_exact, GitHub #74): right after this load the game multiplies the
+// factor by f31 (`fmuls f2,f31,f0` at 0x82640590, PC's generated code) - the half angle - so the exact Hor+ factor can be
+// computed from that FOV (ue3/aspect.h HorPlusFactor), keeping 16:9's vertical view for every FOV (aiming, cameras).
+// false = the fixed factor (Canary's 0.010975, scaled for the shape) as before.
+REXCVAR_DEFINE_BOOL(gowj_ultrawide_fov_exact, true, "Judgment",
+                    "With --gowj_ultrawide: the wider view computed exactly from each camera's field of view, keeping "
+                    "16:9's vertical view (as Gears 2 / 3); false = the fixed factor used before");
 void GowjUltrawideFov(PPCRegister& f0, PPCRegister& f31) {
   {  // 0.5.0: the view FOV for aim / zoom sensitivity (logged once per change, the first 12, to check it is degrees)
     CogMouseLookNoteFov(f31.f64);
@@ -948,7 +940,11 @@ void GowjUltrawideFov(PPCRegister& f0, PPCRegister& f31) {
   }
   if (!REXCVAR_GET(gowj_ultrawide)) return;
   static bool l = false;
-  const double f = double(0.010975f) * uwshape::FovScale(GowjWideHeight());
+  double f = double(0.010975f) * uwshape::FovScale(GowjWideHeight());
+  if (REXCVAR_GET(gowj_ultrawide_fov_exact)) {
+    const double exact = ue3::aspect::HorPlusFactor(f31.f64, f0.f64, GowjWideHeight());
+    if (exact != f0.f64) f = exact;   // (an FOV outside 1..170 deg keeps the fixed factor)
+  }
   LogOnce(l, "field-of-view factor", f0.f64, f);
   f0.f64 = f;
 }

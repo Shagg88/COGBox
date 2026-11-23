@@ -30,6 +30,7 @@
 #include <rex/ppc/func.h>
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
+#include <ue3/profile_tools.h>
 
 #include <atomic>
 #include <fstream>
@@ -84,64 +85,7 @@ uint32_t Load32(const uint8_t* base, uint32_t a) {
   return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
 }
 
-bool g_p100 = false;
-std::vector<std::pair<int32_t, uint32_t>> g_p100_values;
-struct P100Layout { uint32_t field = 0, stride = 0, id_off = 0, val_off = 0; bool ok = false, failed = false; };
-P100Layout g_lay;
-uint32_t g_p100_last_ptr = 0, g_p100_last_count = 0;
-
-bool GuestPtr(uint32_t p) { return p >= 0x40000000u && p < 0xA0000000u; }
-
-// Finds the settings TArray from a read of `id` that returned `value`; then writes every listed value.
-void Profile100Apply(uint8_t* base, uint32_t self, int32_t id, uint32_t value) {
-  if (!g_lay.ok && !g_lay.failed) {
-    for (uint32_t f = 0x20; f < 0x400 && !g_lay.ok; f += 4) {
-      const uint32_t ptr = Load32(base, self + f), cnt = Load32(base, self + f + 4), max = Load32(base, self + f + 8);
-      if (!GuestPtr(ptr) || cnt == 0 || cnt > 4096 || max < cnt) continue;
-      for (uint32_t st = 12; st <= 32 && !g_lay.ok; st += 4)
-        for (uint32_t io = 0; io <= 8 && !g_lay.ok; io += 4) {
-          bool sane = true;
-          for (uint32_t i = 0; i < cnt && sane; ++i) sane = Load32(base, ptr + i * st + io) < 0x10000u;
-          if (!sane) continue;
-          for (uint32_t i = 0; i < cnt && !g_lay.ok; ++i) {
-            if (Load32(base, ptr + i * st + io) != uint32_t(id)) continue;
-            for (uint32_t vo = io + 4; vo + 4 <= st && !g_lay.ok; vo += 4)
-              if (Load32(base, ptr + i * st + vo) == value) g_lay = {f, st, io, vo, true, false};
-          }
-        }
-    }
-    if (!g_lay.ok) {
-      g_lay.failed = true;
-      REXLOG_WARN("gowj_profile_100: settings array not found in object {:08X} (id {} value 0x{:X})", self, id, value);
-      return;
-    }
-    REXLOG_INFO("gowj_profile_100: settings array at object+0x{:X}, stride {}, id +{}, value +{}", g_lay.field,
-                g_lay.stride, g_lay.id_off, g_lay.val_off);
-  }
-  if (!g_lay.ok) return;
-  const uint32_t ptr = Load32(base, self + g_lay.field), cnt = Load32(base, self + g_lay.field + 4);
-  if (!GuestPtr(ptr) || cnt > 4096 || (ptr == g_p100_last_ptr && cnt == g_p100_last_count)) return;
-  g_p100_last_ptr = ptr, g_p100_last_count = cnt;
-  int written = 0, missing = 0;
-  for (auto& [want_id, want] : g_p100_values) {
-    bool hit = false;
-    for (uint32_t i = 0; i < cnt; ++i) {
-      const uint32_t e = ptr + i * g_lay.stride;
-      if (Load32(base, e + g_lay.id_off) != uint32_t(want_id)) continue;
-      const uint32_t old = Load32(base, e + g_lay.val_off);
-      Store32(base, e + g_lay.val_off, want);
-      REXLOG_INFO("gowj_profile_100: id {} 0x{:08X} -> 0x{:08X}", want_id, old, want);
-      hit = true, ++written;
-      break;
-    }
-    if (!hit) {
-      ++missing;
-      REXLOG_WARN("gowj_profile_100: id {} not in the settings array", want_id);
-    }
-  }
-  REXLOG_INFO("gowj_profile_100: {} written, {} missing (array {:08X} x{}); saved with the next profile save", written,
-              missing, ptr, cnt);
-}
+ue3::Profile100 g_p100;   // --gowj_profile_100 (layer 2 ue3/profile_tools.h, shared with the other games)
 
 PPCFunc* g_exec_orig = nullptr;
 PPCFunc* g_get_int_orig = nullptr;
@@ -153,14 +97,7 @@ void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   g_get_int_orig(ctx, base);
   const uint32_t found = ctx.r3.u32;
   if (!value_addr) return;
-  if (g_p100 && (found & 1)) {
-    static std::mutex p100_mutex;
-    std::lock_guard<std::mutex> lock(p100_mutex);
-    for (auto& [want_id, want] : g_p100_values)
-      if (want_id == id) { Profile100Apply(base, self, id, Load32(base, value_addr)); break; }
-    for (auto& [want_id, want] : g_p100_values)
-      if (want_id == id) { Store32(base, value_addr, want); break; }
-  }
+  g_p100.OnRead(base, self, id, value_addr, found, true);   // gj100 also gives this read the listed value
   if (g_insane && id == kUnlockablesSetting) {
     const uint32_t v = Load32(base, value_addr);
     if (!(v & kInsaneUnlockBit)) {
@@ -225,27 +162,8 @@ void GowjInstallProfileLog() {
     REXLOG_WARN("gowj_unlock_aftermath: off - set gowj_unlock_aftermath_setting (find it with gowj_profile_log)");
     g_unlock = false;
   }
-  g_p100 = REXCVAR_GET(gowj_profile_100);
-  if (g_p100) {
-    const std::string path = REXCVAR_GET(gowj_profile_100_file);
-    std::ifstream in{path};
-    std::string line;
-    while (std::getline(in, line)) {
-      line = line.substr(0, line.find('#'));
-      const auto eq = line.find('=');
-      if (eq == std::string::npos) continue;
-      try {
-        g_p100_values.emplace_back(int32_t(std::stol(line.substr(0, eq), nullptr, 0)),
-                                   uint32_t(std::stoul(line.substr(eq + 1), nullptr, 0)));
-      } catch (...) {
-      }
-    }
-    if (g_p100_values.empty()) {
-      REXLOG_WARN("gowj_profile_100: off - no id=value lines in gowj_profile_100_file");
-      g_p100 = false;
-    }
-  }
-  if (!g_log && !g_unlock && !g_p100 && !g_insane) return;
+  if (REXCVAR_GET(gowj_profile_100)) g_p100.Load("gowj_profile_100", REXCVAR_GET(gowj_profile_100_file));
+  if (!g_log && !g_unlock && !g_p100.On() && !g_insane) return;
   rex::Runtime* rt = rex::Runtime::instance();
   auto* d = rt ? rt->function_dispatcher() : nullptr;
   if (!d) return;
@@ -255,5 +173,5 @@ void GowjInstallProfileLog() {
     return;
   }
   REXLOG_INFO("gowj_profile_log: on (log={}, unlock_insane={}, unlock_aftermath={} setting={} mask=0x{:X}, profile_100={} "
-              "values)", g_log, g_insane, g_unlock, g_unlock_id, g_unlock_mask, g_p100 ? g_p100_values.size() : 0);
+              "values)", g_log, g_insane, g_unlock, g_unlock_id, g_unlock_mask, g_p100.Count());
 }

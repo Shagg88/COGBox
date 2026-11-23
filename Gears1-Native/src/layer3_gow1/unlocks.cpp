@@ -18,6 +18,7 @@
 #include <rex/ppc/func.h>
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
+#include <ue3/profile_tools.h>
 
 #include <atomic>
 #include <cstdint>
@@ -30,6 +31,12 @@ REXCVAR_DEFINE_BOOL(gow1_unlock_insane, false, "Gears1",
 REXCVAR_DEFINE_INT32(gow1_unlock_insane_setting, -1, "Gears1",
                      "insane050: the profile setting id that holds Gears 1's Insane unlock (-1 = not known yet)");
 REXCVAR_DEFINE_INT32(gow1_unlock_insane_mask, 1, "Gears1", "insane050: the bits gow1_unlock_insane sets in that setting");
+// 23 Nov parity pass (Shagg 10:42: the profile debugging tools in all four games): Gears 2 / Judgment's test-only
+// profile writer, through both getters (layer 2 ue3/profile_tools.h).
+REXCVAR_DEFINE_BOOL(gow1_profile_100, false, "Gears1",
+                    "Test only: write the profile values in gow1_profile_100_file into the in-memory profile, so the "
+                    "game saves them (100% campaign test profile). Changes the profile when it saves");
+REXCVAR_DEFINE_STRING(gow1_profile_100_file, "", "Gears1", "Text file of id=value lines for gow1_profile_100");
 REXCVAR_DEFINE_BOOL(gow1_profile_log, false, "Gears1",
                     "insane050 research: log each profile setting the game reads (id, value, getter, caller) once per "
                     "change - open the campaign difficulty screen to find the Insane unlock. Read-only");
@@ -47,6 +54,7 @@ PPCFunc* g_parent_activated = nullptr;
 PPCFunc* g_orig_activated = nullptr;   // 0.5.0 review: the game's own IsInsaneUnlocked::Activated
 PPCFunc* g_orig[2] = {nullptr, nullptr};
 bool g_log = false, g_unlock = false;
+ue3::Profile100 g_p100;   // --gow1_profile_100
 int32_t g_id = -1;
 uint32_t g_mask = 1;
 
@@ -66,6 +74,7 @@ void Hook(PPCContext& ctx, uint8_t* base) {
   g_orig[N](ctx, base);
   const bool found = (ctx.r3.u32 & 1) != 0;
   if (!value_addr) return;
+  g_p100.OnRead(base, self, id, value_addr, ctx.r3.u32, false);
   if (g_unlock && id == g_id && found) {
     const uint32_t v = Load32(base, value_addr);
     if ((v & g_mask) != g_mask) {
@@ -122,10 +131,12 @@ void Gow1InstallUnlocks() {
       REXLOG_INFO("gow1_unlock_insane: on (UIAction_IsInsaneUnlocked {:08X})", kIsInsaneUnlockedActivated);
     }
   }
-  if (!g_log && !g_unlock) return;
+  if (REXCVAR_GET(gow1_profile_100)) g_p100.Load("gow1_profile_100", REXCVAR_GET(gow1_profile_100_file));
+  if (!g_log && !g_unlock && !g_p100.On()) return;
   g_orig[0] = d->GetFunction(kGetters[0]);
   g_orig[1] = d->GetFunction(kGetters[1]);
   const bool ok = g_orig[0] && g_orig[1] && d->SetFunction(kGetters[0], &Hook<0>) && d->SetFunction(kGetters[1], &Hook<1>);
   if (!ok) { REXLOG_WARN("gow1_unlock_insane: off - the profile getters aren't there"); return; }
-  REXLOG_INFO("gow1_profile_log: getters hooked (log={}, extra setting {} mask=0x{:X})", g_log, g_unlock ? g_id : -1, g_mask);
+  REXLOG_INFO("gow1_profile_log: getters hooked (log={}, extra setting {} mask=0x{:X}, profile_100 {})", g_log,
+              g_unlock ? g_id : -1, g_mask, g_p100.Count());
 }

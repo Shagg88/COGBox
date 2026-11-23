@@ -13,6 +13,7 @@
 #include <rex/ppc/func.h>
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
+#include <ue3/profile_tools.h>
 
 #include <algorithm>
 #include <atomic>
@@ -35,6 +36,11 @@ REXCVAR_DEFINE_BOOL(gow2_profile_100, false, "Gears2",
                     "g2-100 (test only): write the profile values in gow2_profile_100_file into the in-memory profile, so "
                     "the game saves them (100% campaign test profile). Changes the profile when it saves");
 REXCVAR_DEFINE_STRING(gow2_profile_100_file, "", "Gears2", "g2-100: text file of id=value lines for gow2_profile_100");
+// 23 Nov parity pass (Shagg 10:42: the profile debugging tools in all four games): Gears 1 / 3 / Judgment's
+// --*_profile_log - each int setting read (id, value, object, caller) once per change. Read-only.
+REXCVAR_DEFINE_BOOL(gow2_profile_log, false, "Gears2",
+                    "Developers: log each profile setting the game reads (id, value, object, caller) once per change. "
+                    "Read-only");
 
 namespace {
 #if defined(GOW2_TU6) && GOW2_TU6
@@ -57,79 +63,21 @@ void Store32(uint8_t* base, uint32_t a, uint32_t v) {
 }
 
 PPCFunc* g_orig = nullptr;
-bool g_insane = false, g_p100 = false;
-std::vector<std::pair<int32_t, uint32_t>> g_p100_values;
-struct P100Layout { uint32_t field = 0, stride = 0, id_off = 0, val_off = 0; bool ok = false, failed = false; };
-P100Layout g_lay;
-uint32_t g_p100_last_ptr = 0, g_p100_last_count = 0;
-bool GuestPtr(uint32_t p) { return p >= 0x40000000u && p < 0xA0000000u; }
-
-void Profile100Apply(uint8_t* base, uint32_t self, int32_t id, uint32_t value) {
-  if (!g_lay.ok && !g_lay.failed) {
-    for (uint32_t f = 0x20; f < 0x400 && !g_lay.ok; f += 4) {
-      const uint32_t ptr = Load32(base, self + f), cnt = Load32(base, self + f + 4), max = Load32(base, self + f + 8);
-      if (!GuestPtr(ptr) || cnt == 0 || cnt > 4096 || max < cnt) continue;
-      for (uint32_t st = 12; st <= 32 && !g_lay.ok; st += 4)
-        for (uint32_t io = 0; io <= 8 && !g_lay.ok; io += 4) {
-          bool sane = true;
-          for (uint32_t i = 0; i < cnt && sane; ++i) sane = Load32(base, ptr + i * st + io) < 0x10000u;
-          if (!sane) continue;
-          for (uint32_t i = 0; i < cnt && !g_lay.ok; ++i) {
-            if (Load32(base, ptr + i * st + io) != uint32_t(id)) continue;
-            for (uint32_t vo = io + 4; vo + 4 <= st && !g_lay.ok; vo += 4)
-              if (Load32(base, ptr + i * st + vo) == value) {
-                // 0.5.0 review: a zero-padded struct can match one id + value by chance - trust the layout only when at
-                // least 3 of the listed ids (or all, if fewer are listed) are in this array with the same stride
-                size_t found_ids = 0;
-                for (auto& [want_id, want] : g_p100_values) {
-                  (void)want;
-                  for (uint32_t k = 0; k < cnt; ++k)
-                    if (Load32(base, ptr + k * st + io) == uint32_t(want_id)) { ++found_ids; break; }
-                }
-                if (found_ids >= std::min<size_t>(3, g_p100_values.size())) g_lay = {f, st, io, vo, true, false};
-              }
-          }
-        }
-    }
-    if (!g_lay.ok) {
-      g_lay.failed = true;
-      REXLOG_WARN("gow2_profile_100: settings array not found in object {:08X} (id {} value 0x{:X})", self, id, value);
-      return;
-    }
-    REXLOG_INFO("gow2_profile_100: settings array at object+0x{:X}, stride {}, id +{}, value +{}", g_lay.field,
-                g_lay.stride, g_lay.id_off, g_lay.val_off);
-  }
-  if (!g_lay.ok) return;
-  const uint32_t ptr = Load32(base, self + g_lay.field), cnt = Load32(base, self + g_lay.field + 4);
-  if (!GuestPtr(ptr) || cnt > 4096 || (ptr == g_p100_last_ptr && cnt == g_p100_last_count)) return;
-  g_p100_last_ptr = ptr, g_p100_last_count = cnt;
-  int written = 0, missing = 0;
-  for (auto& [want_id, want] : g_p100_values) {
-    bool hit = false;
-    for (uint32_t i = 0; i < cnt; ++i) {
-      const uint32_t e = ptr + i * g_lay.stride;
-      if (Load32(base, e + g_lay.id_off) != uint32_t(want_id)) continue;
-      const uint32_t old = Load32(base, e + g_lay.val_off);
-      Store32(base, e + g_lay.val_off, want);
-      REXLOG_INFO("gow2_profile_100: id {} 0x{:08X} -> 0x{:08X}", want_id, old, want);
-      hit = true, ++written;
-      break;
-    }
-    if (!hit) { ++missing; REXLOG_WARN("gow2_profile_100: id {} not in the settings array", want_id); }
-  }
-  REXLOG_INFO("gow2_profile_100: {} written, {} missing (array {:08X} x{}); saved with the next profile save", written,
-              missing, ptr, cnt);
-}
+bool g_insane = false, g_log = false;
+ue3::Profile100 g_p100;        // --gow2_profile_100 (layer 2 ue3/profile_tools.h)
+ue3::ProfileLogSeen g_seen;    // --gow2_profile_log
 
 void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   const int32_t id = ctx.r4.s32;
   const uint32_t value_addr = ctx.r5.u32, self = ctx.r3.u32;
+  const uint32_t lr = uint32_t(ctx.lr);
   g_orig(ctx, base);
-  if (g_p100 && value_addr && (ctx.r3.u32 & 1)) {
-    static std::mutex m;
-    std::lock_guard<std::mutex> lock(m);
-    for (auto& [want_id, want] : g_p100_values)
-      if (want_id == id) { Profile100Apply(base, self, id, Load32(base, value_addr)); break; }
+  g_p100.OnRead(base, self, id, value_addr, ctx.r3.u32, false);   // g2-100 never overrode the read itself
+  if (g_log && value_addr) {
+    const uint32_t value = Load32(base, value_addr);
+    if (g_seen.First(lr, id, value))
+      REXLOG_INFO("gow2_profile_log: get int id={} value={} (0x{:08X}) found={} object={:08X} vtable={:08X} from {:08X}",
+                  id, int32_t(value), value, ctx.r3.u32 & 1, self, Load32(base, self), lr);
   }
   if (!g_insane || id != kUnlockablesSetting || !value_addr || !(ctx.r3.u32 & 1)) return;
   const uint32_t v = Load32(base, value_addr);
@@ -144,23 +92,9 @@ void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
 
 void Gow2InstallUnlocks() {
   g_insane = REXCVAR_GET(gow2_unlock_insane);
-  g_p100 = REXCVAR_GET(gow2_profile_100);
-  if (g_p100) {
-    std::ifstream in(REXCVAR_GET(gow2_profile_100_file));
-    std::string line;
-    while (std::getline(in, line)) {
-      const size_t h = line.find('#');
-      if (h != std::string::npos) line.erase(h);
-      const size_t eq = line.find('=');
-      if (eq == std::string::npos) continue;
-      try {
-        g_p100_values.emplace_back(std::stoi(line.substr(0, eq)), uint32_t(std::stoul(line.substr(eq + 1), nullptr, 0)));
-      } catch (...) {}
-    }
-    REXLOG_INFO("gow2_profile_100: {} value(s) from '{}'", g_p100_values.size(), REXCVAR_GET(gow2_profile_100_file));
-    if (g_p100_values.empty()) g_p100 = false;
-  }
-  if (!g_insane && !g_p100) return;
+  g_log = REXCVAR_GET(gow2_profile_log);
+  if (REXCVAR_GET(gow2_profile_100)) g_p100.Load("gow2_profile_100", REXCVAR_GET(gow2_profile_100_file));
+  if (!g_insane && !g_p100.On() && !g_log) return;
   rex::Runtime* rt = rex::Runtime::instance();
   auto* d = rt ? rt->function_dispatcher() : nullptr;
   if (!d) return;
@@ -169,7 +103,7 @@ void Gow2InstallUnlocks() {
     REXLOG_WARN("gow2_unlock_insane: off - the profile getter {:08X} isn't there ({})", kGetProfileSettingValueInt, kBuild);
     return;
   }
-  REXLOG_INFO("gow2_unlock_insane / profile_100: hooked ({}, getter {:08X}; insane {}, profile_100 {})", kBuild,
-              kGetProfileSettingValueInt, g_insane, g_p100);
+  REXLOG_INFO("gow2_unlock_insane / profile_100 / profile_log: hooked ({}, getter {:08X}; insane {}, profile_100 {}, "
+              "profile_log {})", kBuild, kGetProfileSettingValueInt, g_insane, g_p100.Count(), g_log);
   if (g_insane) REXLOG_INFO("gow2_unlock_insane: on ({}, getter {:08X})", kBuild, kGetProfileSettingValueInt);
 }

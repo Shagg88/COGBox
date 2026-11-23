@@ -4597,21 +4597,24 @@ registers = ["r11", "r31"]
 after_instruction = true
 
 # 0.5.0: the view's field of view (degrees) for the mouse's aim / zoom sensitivity. Gears 1's projection set-up
-# (the Gears 2 Gow2UltrawideFov site's counterpart): `lfs f0,-0x19CC(r11)` (pi / 360) before `fmuls f1,f28,f0` on its
-# two paths; f28 = the camera FOV.
+# (the Gears 2 Gow2UltrawideFov site's counterpart): the pi / 360 load before the half-angle multiply on its two paths -
+# `lfs f0,-6604(r11)` / `fmuls f1,f28,f0` at 0x8239256C, `lfs f13,-6604(r11)` / `fmuls f1,f28,f13` at 0x82392660 (the
+# second path loads f13, not f0; PC's generated code, 23 Nov); f28 = the camera FOV. --gow1_ultrawide (23 Nov) widens
+# the loaded factor (f0 / f13) after the load.
 [[entrypoint.midasm_hook]]
 address = 0x8239256C
 name = "Gow1ViewFov"
-registers = ["f28"]
+registers = ["f28", "f0"]
 after_instruction = true
 
 [[entrypoint.midasm_hook]]
 address = 0x82392660
 name = "Gow1ViewFovB"
-registers = ["f28"]
+registers = ["f28", "f13"]
 after_instruction = true
 
-# Experiment --gow1_native_lines (game_patches.cpp): true 1080p - the screen size in sub_824BC3B0.
+# Experiment --gow1_native_lines (game_patches.cpp): true 1080p - the screen size in sub_824BC3B0. The two height hooks
+# also give --gow1_ultrawide's 1280 x H (23 Nov).
 [[entrypoint.midasm_hook]]
 address = 0x824BC444  # `li r11,720`: the screen height (after it)
 name = "Gow1NativeSceneHeight"

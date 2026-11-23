@@ -53,7 +53,7 @@ def listed(root):
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     found, doc = collect(root), listed(root)
-    gaps, unreviewed = [], []
+    gaps, unreviewed, on_hold = [], [], []
     for name, games in sorted(found.items()):
         if len(games) == len(GAMES):
             continue
@@ -63,8 +63,10 @@ def main():
             unreviewed.append(f"{name} ({where})")
         elif sec.startswith("Gaps"):
             gaps.append(f"{name} ({where})")
+        elif sec.startswith("On hold"):   # Shagg's call: reviewed, not an open gap
+            on_hold.append(f"{name} ({where})")
     print(f"parity: {len(found)} per-game options and hooks, {sum(1 for g in found.values() if len(g) < len(GAMES))} "
-          f"not in all four games; {len(gaps)} open gaps, {len(unreviewed)} unreviewed")
+          f"not in all four games; {len(gaps)} open gaps, {len(on_hold)} on hold, {len(unreviewed)} unreviewed")
     for g in gaps:
         print("  GAP:", g)
     for u in unreviewed:
