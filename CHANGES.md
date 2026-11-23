@@ -1,5 +1,14 @@
 # COGBox changes
 
+## Next (0.6.8, not released yet)
+
+- **Always start the games from COGBox.** COGBox is not just a menu - it is the machine that runs the four
+  recompiled games: it sets up the game files, renderer, settings, fixes, controllers and online play every time a
+  game starts. A game started any other way (another launcher, a shortcut to the exe, a script) may not work as
+  intended. The game now shows a warning for 30 seconds when it was started by something other than COGBox, and the
+  log's PC description says which program started it (`pc: started by: ...`). We can only support games started
+  from COGBox.
+
 ## 0.6.7
 
 Fixes for the reports against 0.6.6, and two pull requests.

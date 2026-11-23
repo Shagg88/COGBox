@@ -22,6 +22,22 @@ matchmaking - no Xbox Live needed. Off until you turn it on in the launcher's So
 COGBox is on RecompLauncher, the free home for recompiled PC games. Get it straight from its developer:
 https://recomplauncher.com/game/cogbox
 
+## Always start the games from COGBox
+
+**COGBox is not just a menu in front of the games - it is the machine that runs them.** The four games are recompiled
+from the Xbox 360 code, and they only work properly with the set-up COGBox gives them every time they start:
+
+- your game files, title update and save folders;
+- the renderer and its settings (DirectX 12 or Vulkan, resolution, frame-rate limit, occlusion, upscalers, AO ...);
+- the fixes and patches for each game, controllers, online play, achievements and mods.
+
+Starting a game's exe any other way (another launcher, a shortcut to the exe, a script) skips that set-up. The game
+may then not work as intended: wrong settings, crashes, missing features or broken online play. Since 0.6.8 the game
+shows a warning when it was started by something other than COGBox, and its log says which program started it.
+
+**Please always start the games from COGBox.** We can only support games started from COGBox. Getting COGBox itself
+from RecompLauncher is fine - just play through COGBox.
+
 > An unofficial fan project, not affiliated with Microsoft, Epic Games or The Coalition. "Gears of War", "Xbox" and
 > "Xbox 360" are trademarks of Microsoft.
 

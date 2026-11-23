@@ -10,6 +10,15 @@ Coalition.
 NO GAME FILES ARE INCLUDED. You need your own copy of each game.
 
 
+ALWAYS START THE GAMES FROM COGBOX
+----------------------------------
+COGBox is not just a menu - it is the machine that runs the four recompiled games. Every time a
+game starts, COGBox sets up its game files, renderer and settings, fixes, controllers, online play
+and achievements. Starting a game's exe any other way (another launcher, a shortcut, a script) skips
+that, and the game may not work as intended. The game warns you on screen when that happens. We can
+only support games started from COGBox.
+
+
 What you need
 -------------
 - Windows 10 or 11, 64-bit - or Linux / Steam Deck through Proton (see below, experimental).
