@@ -1102,7 +1102,8 @@ static void option_row(App &a, int g, const gs::Option &o)
             // 0.2.1: Render resolution lists 1080p in size order; the saved value is still the original index
             std::vector<int> ord;
             for (int i = 0; i < (int)items.size(); i++) ord.push_back(i);
-            if (o.id == "Resolution" && items.size() == 6) ord = { 0, 5, 1, 2, 3 };   // 0.6.6: Match my monitor (4) no longer offered
+            if (o.id == "Resolution" && items.size() == 8) ord = { 0, 6, 7, 5, 1, 2, 3 };   // 0.6.6: Match my monitor (4) no longer offered; #436: 768p / 900p by size
+            if (o.id == "WindowSize" && items.size() == 7) ord = { 0, 1, 6, 2, 3, 4, 5 };   // GitHub #436: 1366 x 768 by size
             if (o.id == "AO" && items.size() == 5) ord = { 0, 1, 2 };   // 0.6.7: Off / Default / On (GitHub #406; 0.6.6 had dropped Off)
             if (o.id == "AAMode" && items.size() == 6) ord = { 0, 1, 2, 3, 5 };       // 0.6.6: choice 4 dropped
             for (int i : ord) {

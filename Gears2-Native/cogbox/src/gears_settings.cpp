@@ -99,7 +99,7 @@ const int k_bodyCap[3] = { 0, 16, 32 }, k_bodyCapG2[3] = { 0, 12, 20 };   // Git
 const int k_bodyLife[3] = { 0, 60, 300 }, k_bodyUnseen[3] = { 0, 20, 60 };  // #306, seconds (game: 20 / 8; Gears 1 5)
 const char* const k_shakeValue[3] = { "", "*=0.5", "=0" };   // 0.2.0 (#12): the factor scales the shake - Less halves the game's own, Off is 0                                    // PS1 167
 const int k_poolMb[4] = { 0, -1, 256, 320 };                                                 // PS1 171
-const int k_winSizes[6][2] = { { 0, 0 }, { 1280, 720 }, { 1600, 900 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 } };   // PS1 174
+const int k_winSizes[7][2] = { { 0, 0 }, { 1280, 720 }, { 1600, 900 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 }, { 1366, 768 } };   // PS1 174
 const double k_deadValue[6] = { 0, 0.05, 0.10, 0.15, 0.20, 0.25 };                          // PS1 177
 
 std::string not_yet(int g, const std::string& what = "") {   // PS1 262
@@ -165,7 +165,7 @@ std::vector<Option> make_options(Game g) {
                "the whole screen (quick alt-tab). Exclusive fullscreen: real fullscreen mode (lower latency on some PCs; "
                "alt-tab is slower; on Steam Deck / Linux this is borderless).", 330));
     add(choice("WindowSize", "Window size", Tab::Display, PG,
-               { "Default", "1280 x 720", "1600 x 900", "1920 x 1080", "2560 x 1440", "3840 x 2160" }, 0,
+               { "Default", "1280 x 720", "1600 x 900", "1920 x 1080", "2560 x 1440", "3840 x 2160", "1366 x 768" }, 0,   /* GitHub #436: 1366 x 768 last (saved numbers keep their meaning) */
                "The window's size when not fullscreen. Default = the game's own.", 332), "", "!Fullscreen");
     // Monitor: no PS1 tooltip (59-how-to-play: "Which monitor fullscreen uses"). Entries 1..N: monitor_label().
     add(choice("Monitor", "Monitor", Tab::Display, SH, { "Default (main screen)" }, 0,
@@ -297,10 +297,11 @@ std::vector<Option> make_options(Game g) {
     // select their own resolution"): choice 4 stays in the list so saved numbers keep their meaning (5 = 1080p), but it
     // is no longer offered (page.cpp) and a saved 4 becomes the scale it used to pick (Store::view).
     add(choice("Resolution", "Render resolution", Tab::Graphics, PG,
-               { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p" }, 0,
+               { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p",
+                 "768p", "900p" }, 0,   /* GitHub #436: 768p / 900p (1366x768, 1600x900 screens) after the old choices */
                "How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), "
                "4x: 5120x2880. Real detail, not an upscale. A resolution above your screen's is shrunk to fit it "
-               "(supersampling): on a 1080p screen 2x draws four times the pixels of 720p (GitHub #388). 1080p: the game itself draws 1920x1080 - real detail, between 1x and 2x in cost. (In Judgment and Gears of War "
+               "(supersampling): on a 1080p screen 2x draws four times the pixels of 720p (GitHub #388). 1080p: the game itself draws 1920x1080 - real detail, between 1x and 2x in cost. 768p / 900p: the same for 1366x768 and 1600x900 screens. (In Judgment and Gears of War "
                "with Ultrawide on, 1080p is still 720p upscaled with sharpening.)", 340), "", "", true);
     // GitHub #59: the 1080p mode's RCAS sharpen made text and some textures look wrong under Wine / Proton (Linux,
     // NVIDIA). Automatic = on in Windows, off under Wine; On / Off override it everywhere.
@@ -1791,15 +1792,17 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // Job 2189 (20 Nov): at true 1080p the games' own menus (pause, front end) stayed 1280x720 in the top-left corner
     // in all four games. Only an exe that lays its menus out for the larger screen gets true 1080p - it carries the
     // log text "_native_lines: UI scene viewport" (Gears 2 since 5010144); the others keep the upscaled 1080p.
-    const bool true1080 = scale == 6 && cap_exe(env, k_nativeLines[gi]) && cap_exe(env, "gow2_renderer_edram_extended") &&
+    // GitHub #436: 768p (choice 6) and 900p (choice 7) take the same true-lines path at their own height
+    const int lines = scale == 6 ? 1080 : scale == 7 ? 768 : scale == 8 ? 900 : 0;
+    const bool true1080 = lines > 0 && cap_exe(env, k_nativeLines[gi]) && cap_exe(env, "gow2_renderer_edram_extended") &&
                           cap_exe(env, "_native_lines: UI scene viewport") &&
                           (!(avail("Ultrawide") && on("Ultrawide")) || cap_exe(env, "the wide picture is scaled the same way"));
     if (true1080) {
-        a.insert(a.end(), { "--gow2_renderer_resolution_scale=1", std::string("--") + k_nativeLines[gi] + "=1080",
+        a.insert(a.end(), { "--gow2_renderer_resolution_scale=1", std::string("--") + k_nativeLines[gi] + "=" + std::to_string(lines),
                             "--gow2_renderer_edram_extended=true", "--gow2_present_native_size=true" });
-        notes.push_back("launcher: 1080p - the game draws 1920x1080 itself");
+        notes.push_back("launcher: " + std::to_string(lines) + "p - the game draws it itself");
         scale = 1;
-    } else if (scale == 6) {   // 0.2.0 "1080p": 720p drawn, upscaled to the window (Lanczos) and sharpened (RCAS)
+    } else if (lines > 0) {   // 0.2.0 "1080p" (#436: also 768p / 900p without true lines): 720p drawn, upscaled to the window (Lanczos) and sharpened (RCAS)
         a.insert(a.end(), { "--gow2_renderer_resolution_scale=1", "--gow2_present_native_size=true",
                             "--gow2_present_upscale_filter=lanczos" });
         // GitHub #59: Automatic sharpens except under Wine; On / Off are the player's
@@ -1829,7 +1832,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // GitHub #105: the depth-of-field chain's half-size targets (pitch 640) follow the scale despite the threshold
         if (scale > 1 && avail("DofScale") && on("DofScale")) a.push_back("--gow2_renderer_resolution_scale_pitches=640");
         a.push_back("--gow2_renderer_memexport=true");
-        if (s.i("Resolution") >= 4 && !s.b("Ultrawide") && !true1080) {   // (not with true 1080p: --gow3_native_lines excludes it)
+        if (s.i("Resolution") >= 4 && s.i("Resolution") <= 5 && !s.b("Ultrawide") && !true1080) {   // (not with true 1080p: --gow3_native_lines excludes it)
             if (cap_exe(env, "gow3_aspect")) a.push_back("--gow3_aspect=auto");
             else notes.push_back("launcher: this Gears 3 build has no --gow3_aspect yet - the picture stays 16:9");
         }
@@ -2303,7 +2306,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (s.i("Fullscreen") >= 1) { a.push_back("--fullscreen=true"); if (s.i("Fullscreen") == 2 && !env.wine) a.push_back("--fullscreen_exclusive=true"); }
     else {
         a.push_back("--fullscreen=false");   // GitHub #81/#67: the ports default to full screen; windowed must say so
-        int w = std::max(0, std::min(5, s.i("WindowSize")));
+        int w = std::max(0, std::min(6, s.i("WindowSize")));
         if (w > 0) { a.push_back("--window_width=" + std::to_string(k_winSizes[w][0])); a.push_back("--window_height=" + std::to_string(k_winSizes[w][1])); }
     }
     // PS1 904-908: stick dead zone, vibration
