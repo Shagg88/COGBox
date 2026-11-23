@@ -23,8 +23,6 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `hook ShadowCap` | G2 G3 J | G1 | |
 | `option texture_stats_off` | G2 | G3 J (G1 n/a) | Canary's G2-only patch (RHIGetTextureMemoryStats -> FALSE); no leaf of its shape in J's code [V]; G3 / J need the streamer's budget call found first. G1 doesn't apply: Canary's G1 texture patch is only the pool size [S notes], no such leaf in G1 [V] |
 | `hook TextureStatsOff` | G2 | G3 J | |
-| `option ultrawide` | G2 G3 J | G1 | G1 has its own: no_aspect_lock, ViewFov (check what is missing) |
-| `option aspect` | G2 G3 J | G1 | |
 | `option ultrawide_fov_exact` | G2 G3 | G1 J | |
 | `option aspect_targets_720` | G3 J | G1 G2 | |
 | `option native_ui_layout720` | G1 G2 | G3 J | |
@@ -32,9 +30,6 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `option ultrawide_min_rows` | G2 | G1 G3 J | |
 | `option ultrawide_ui_centre` | G2 | G1 G3 J | |
 | `option ultrawide_ui_full_width` | G3 | G1 G2 J | |
-| `hook UltrawideFov` | G2 G3 J | G1 | |
-| `hook UltrawideNoConstrain` | G2 G3 J | G1 | |
-| `hook UltrawideSceneHeight` | G2 G3 J | G1 | |
 | `hook UltrawideSharedMemory` | G3 J | G1 G2 | |
 | `hook NativeSceneWidthMax` | G2 G3 | G1 J | |
 
@@ -156,6 +151,8 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `option profile_100` | - | (all four since 23 Nov, Shagg 10:42: profile debugging tools; one layer 2 copy, `ue3/profile_tools.h`, off by default) |
 | `option profile_100_file` | - | (with profile_100) |
 | `option profile_log` | - | (all four since 23 Nov) |
+| `option ultrawide` | - | (all four since 23 Nov; G1's is experimental and greyed in the launcher until a run - see the hooks below) |
+| `option aspect` | - | (with ultrawide) |
 | `option menu_fps` | - | (all four since 23 Nov: G1 / G2 / J share layer 2 `ue3/menu_fps.h`; G3 keeps its own listener) |
 | `hook MaxTickRate` | G2 G3 J | G1's 2006 engine has no GetMaxTickRate (no frame smoothing; no function of that shape in its code [V], J's matches at 0x8255E200); G1 limits in `PresentInterval` |
 | `option tick_floor_fps` | G2 G3 J | G1: no engine tick-rate read to floor (no GetMaxTickRate, see above); its limiter is the render thread's present interval |
@@ -178,4 +175,7 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `hook CoalescedSkip` | G1 G2 | (with CoalescedResult) |
 | `option skip_coalesced_check` | G2 | (with CoalescedResult; G1 turns its hooks on whenever config edits are applied, gow1_app.h, so it has no option) |
 | `option tick_log` | G2 G3 J | the engine tick rhythm, timed at the engine loop's GetMaxTickRate call (one layer 2 copy, `ue3/tick_log.h`, since 23 Nov; G2 added). G1: no engine-tick hook (no GetMaxTickRate, see MaxTickRate); its frames are timed by the renderer's frame-time line |
+| `hook UltrawideFov` | G2 G3 J | G1 does it in its own FOV hooks `ViewFov` / `ViewFovB` (the pi/360 load before the half-angle multiply; f0 on one path, f13 on the other - PC's generated code), exact Hor+ (`ue3/aspect.h`) |
+| `hook UltrawideNoConstrain` | G2 G3 J | G1: its `NoAspectLock` hook (the camera's constrain flag reads 0) |
+| `hook UltrawideSceneHeight` | G2 G3 J | G1: its `NativeSceneHeight` / `NativeDeviceHeight` hooks give the 1280 x H height |
 | `hook ShaderCreatedVertex` | - | (all four since 23 Nov: patch 0066) |

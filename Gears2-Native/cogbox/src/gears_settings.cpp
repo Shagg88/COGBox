@@ -665,7 +665,8 @@ bool cap_exe(const Environment& e, const std::string& n) {
         if (n == h && e.cap.exe_has && e.cap.exe_has("gow1_tiling_off")) return true;   // any Gears 1 exe since job 697
     // 0.3.0 (job 733): --gow2_aspect / --gowj_aspect are short enough to be split the same way (job 730's gow2.exe: no
     // "gow2_aspect" text) - their description, a long literal, is searched instead
-    if ((n == "gow2_aspect" || n == "gowj_aspect") && e.cap.exe_has && e.cap.exe_has("the shape. Empty = 21:9")) return true;
+    if ((n == "gow2_aspect" || n == "gowj_aspect" || n == "gow1_aspect") && e.cap.exe_has &&
+        e.cap.exe_has("the shape. Empty = 21:9")) return true;
     // Discord 16 Nov (Horde bots greyed in Gears 2 on 0.6.3): 0.6.3's gow2.exe has no "gow2_horde_bots" text either - the
     // start of its description is searched (the 0.6.3 exe has it)
     if (n == "gow2_horde_bots" && e.cap.exe_has && e.cap.exe_has("GitHub #237 (francoissubke-blip's tip")) return true;
@@ -868,6 +869,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "ultrawide") {   // 0.2.0: Judgment too (--gowj_ultrawide, a new build); Gears 1 when gow1.exe has it
         if (g == Game::Judgment && !cap_exe(env, "gowj_ultrawide")) return no(not_yet(2));
         if (g == Game::Gears1 && !cap_exe(env, "gow1_ultrawide")) return no(not_yet(gi, "needs its next build"));
+        // 23 Nov parity pass: Gears 1's --gow1_ultrawide is written from the generated code and has not been run yet
+        // (its menus / HUD at a non-720 height are unknown) - greyed until a run has looked; it works from the command line
+        if (g == Game::Gears1) return no("Experimental in Gears 1 - not tested yet.");
     } else if (f == "aspect43") {   // 0.4.9: SDK patch 70; Gears 1's video-mode code is not checked yet
         // 0.6.5: Gears 1 letterboxed a 16:10 mode to 16:9 (job 1969) until --gow1_no_aspect_lock (its view's constrain flag)
         if (g == Game::Gears1 && !cap_exe(env, "gow1_no_aspect_lock")) return no(not_yet(gi, "needs its next build"));

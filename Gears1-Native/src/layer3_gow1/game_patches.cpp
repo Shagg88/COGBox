@@ -26,6 +26,7 @@
 #include <xenos/dev_tools.h>
 #include <xenos/frame_limiter.h>
 #include <ue3/config_bundle.h>
+#include <ue3/aspect.h>  // --gow1_ultrawide
 #include <ue3/menu_fps.h>  // GitHub #101 front-end cap (layer 2, shared with Gears 2 / Judgment)
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/objects.h>
@@ -132,7 +133,44 @@ uint32_t Gow1NativeLines() {
 // The game's own width times lines / 720 (a multiple of 8): the 16:10 and 4:3 video modes keep their shape.
 uint32_t Gow1NativeWidth(uint32_t game_width) { return (game_width * Gow1NativeLines() / 720u + 7u) / 8u * 8u; }
 }  // namespace
+// ---- Ultrawide (23 Nov parity pass: Gears 2 / 3 / Judgment's --*_ultrawide / --*_aspect, made from Gears 1's own
+// pieces; EXPERIMENTAL, NOT RUN YET - written from the PC's generated code, to be proven by a gameplay run) ----------
+// The other games draw a 1280 x H scene (H = 1280 / shape, a multiple of 8) with a wider field of view, and the window
+// shows it at that shape (--gow2_present_frame_aspect). Gears 1 already has each piece:
+//  - the screen height: sub_824BC3B0's two `li r11,720` (0x824BC444 the screen height, 0x824BC490 the device's, beside
+//    the 1280 width in 16:9) - the --gow1_native_lines hooks below, which give H here; the width stays the game's 1280;
+//  - the view's aspect lock: --gow1_no_aspect_lock's flag test (0x82392528) reads 0, so the view fills 1280 x H;
+//  - the field of view: the projection's `lfs f0,-6604(r11)` (0x8239256C) / `lfs f13,-6604(r11)` (0x82392660) - the
+//    pi / 360 that `fmuls f1,f28,f0` / `fmuls f1,f28,f13` turn into the half angle (f28 = the camera's horizontal FOV,
+//    degrees) - become the exact Hor+ factor (ue3/aspect.h), so the vertical view stays the 16:9 one.
+// All five sites checked in the PC's generated code (23 Nov). Not done: Gears 2's separate UI-height site (its menus /
+// HUD keep 720 rows there) - how Gears 1's UI lays out at H rows is not known; the launcher keeps the option greyed
+// until a run has looked. Not with --gow1_native_lines (which uses the same height sites).
+REXCVAR_DEFINE_BOOL(gow1_ultrawide, false, "Gears 1",
+                    "Experimental: a wider view (21:9 by default) - a 1280 x H picture with a wider field of view, shown at "
+                    "its own shape; not with --gow1_native_lines");
+REXCVAR_DEFINE_STRING(gow1_aspect, "", "Gears 1",
+                      "With --gow1_ultrawide: the shape. Empty = 21:9 (1280x552); auto = the monitor's; or e.g. '21:9', "
+                      "'32:9', '3440:1440'");
+uint32_t Gow1WideRows() {   // 0 = off. Worked out once.
+  static const uint32_t rows = [] {
+    if (!REXCVAR_GET(gow1_ultrawide)) return 0u;
+    if (Gow1NativeLines()) {
+      REXLOG_WARN("gow1_ultrawide: off - not with --gow1_native_lines (the same screen-height sites)");
+      return 0u;
+    }
+    return ue3::aspect::Rows("gow1_aspect", true, REXCVAR_GET(gow1_aspect));
+  }();
+  return rows;
+}
+
 void Gow1NativeSceneHeight(PPCRegister& r11) {  // after `li r11,720` at 0x824BC444
+  if (const uint32_t rows = Gow1WideRows()) {   // --gow1_ultrawide (above)
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true)) REXLOG_INFO("gow1_ultrawide: screen height {} -> {}", r11.u32, rows);
+    r11.u64 = rows;
+    return;
+  }
   if (!Gow1NativeLines()) return;
   static std::atomic<bool> logged{false};
   if (!logged.exchange(true)) REXLOG_INFO("gow1_native_lines: screen height {} -> {}", r11.u32, Gow1NativeLines());
@@ -146,6 +184,7 @@ void Gow1NativeSceneWidth(PPCRegister& r31) {  // before `li r5,120` at 0x824BC4
   r31.u64 = width;
 }
 void Gow1NativeDeviceHeight(PPCRegister& r11) {  // after `li r11,720` at 0x824BC490: the height beside that width
+  if (const uint32_t rows = Gow1WideRows()) { r11.u64 = rows; return; }   // --gow1_ultrawide
   if (Gow1NativeLines()) r11.u64 = Gow1NativeLines();
 }
 // 0.6.6 (job 2189: at true 1080p the pause menu sat in the top-left 1280x720 of the 1920x1080 picture): the game's
@@ -379,6 +418,7 @@ namespace {
 std::atomic<bool> g_films_wide{false};
 std::atomic<bool> g_no_gaussian{false};
 std::atomic<bool> g_no_aspect_lock{false};
+std::atomic<bool> g_wide_ok{false};   // --gow1_ultrawide: the code checked at start-up
 uint32_t GuestWord(const uint8_t* m, uint32_t a) {
   const uint8_t* p = m + a;
   return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
@@ -404,6 +444,18 @@ void Gow1InstallPostFxSwitches(rex::Runtime* runtime) {
     } else {
       g_no_gaussian.store(true);
       REXLOG_INFO("gow1_no_gaussian_blur: on (depth of field off, softer bloom)");
+    }
+  }
+  if (Gow1WideRows()) {   // --gow1_ultrawide: the view fills 1280 x H (the aspect lock off), shown at its own shape
+    if (GuestWord(m, 0x82392528) != 0x556B0042u || GuestWord(m, 0x82392530) != 0x419A009Cu ||
+        GuestWord(m, 0x824BC444) != 0x396002D0u || GuestWord(m, 0x824BC490) != 0x396002D0u) {   // li r11,720 (x2)
+      REXLOG_WARN("gow1_ultrawide: the code at 0x82392528 / 0x824BC444 / 0x824BC490 is not TU5's - left alone");
+    } else {
+      g_no_aspect_lock.store(true);
+      g_wide_ok.store(true);
+      const bool shape = rex::cvar::SetFlagByName("gow2_present_frame_aspect", "true");
+      REXLOG_INFO("gow1_ultrawide: on - 1280x{}, aspect lock off, present at the picture's own shape {}", Gow1WideRows(),
+                  shape);
     }
   }
   if (REXCVAR_GET(gow1_no_aspect_lock)) {
@@ -702,7 +754,18 @@ void Gow1InstallBootLockWait(rex::Runtime* runtime) {
   REXLOG_INFO("gow1_boot_lock_wait: on");
 }
 // 0.5.0: the camera FOV for the mouse's aim / zoom sensitivity (gow1_manifest.toml, two projection paths).
-void Gow1ViewFov(PPCRegister& f28) {
+// --gow1_ultrawide: `pi` = the pi / 360 the `lfs` just loaded (f0 / f13), widened to the exact Hor+ factor.
+static void Gow1WideFov(double fov, PPCRegister& pi) {
+  if (!g_wide_ok.load(std::memory_order_relaxed)) return;
+  const double game = pi.f64, f = ue3::aspect::HorPlusFactor(fov, game, Gow1WideRows());
+  static std::atomic<int> logged{0};
+  if (f != game && logged.fetch_add(1) < 8)
+    REXLOG_INFO("gow1_ultrawide: field of view {:.2f} deg: factor {} -> {} (half angle {:.2f} -> {:.2f} deg)", fov, game,
+                f, fov * game * 57.29578, fov * f * 57.29578);
+  pi.f64 = f;
+}
+void Gow1ViewFov(PPCRegister& f28, PPCRegister& f0) {   // after `lfs f0,-6604(r11)` at 0x8239256C
+  Gow1WideFov(f28.f64, f0);
   CogMouseLookNoteFov(f28.f64);
   static std::atomic<int> logged{0};
   static double last = -1.0;
@@ -713,7 +776,10 @@ void Gow1ViewFov(PPCRegister& f28) {
   }
 }
 
-void Gow1ViewFovB(PPCRegister& f28) { Gow1ViewFov(f28); }   // the second projection path
+void Gow1ViewFovB(PPCRegister& f28, PPCRegister& f13) {   // after `lfs f13,-6604(r11)` at 0x82392660 (the second path)
+  Gow1WideFov(f28.f64, f13);
+  CogMouseLookNoteFov(f28.f64);
+}
 
 void Gow1BootLockWait(PPCRegister& r11, PPCRegister& r31) {   // after lwz r11,8(r31) at 0x8243F3D8
   if (r11.u32 != 0 || !g_lock_membase) return;
