@@ -322,6 +322,10 @@ void Gow2NoteTickCall(uint32_t caller) {  // after the original returned; read-o
   g_gow2_frame_wait_ms = -1.0;
 }
 
+static xenos::FrameLimiter& Gow2Limiter() {
+  static xenos::FrameLimiter limiter;
+  return limiter;
+}
 void Gow2MaxTickRate(PPCRegister& f1) {
   const int32_t v = Gow2MaxFps();
   if (g_gow2_tick_caller.load(std::memory_order_relaxed) != gow2::addr::kServerTickClientsTickRateRet)
@@ -340,8 +344,24 @@ void Gow2MaxTickRate(PPCRegister& f1) {
                    // CPU-saturated test and the WorldInfo flags it clears); the engine loop's call did the waiting
     return;
   }
-  static xenos::FrameLimiter limiter;
-  g_gow2_frame_wait_ms = limiter.Wait(double(v));
+  g_gow2_frame_wait_ms = Gow2Limiter().Wait(double(v));
+  f1.f64 = 0.0;
+}
+
+// GitHub #420 (and #313's "120 stops working in split screen"): job log 20261122-035851 - two local players, 144 asked:
+// "the limiter waited in 0% of frames ... did not run in 1808 of 1808" at 187 fps. Once the split-screen level runs as a
+// listen server, UGameEngine::GetMaxTickRate takes its net-driver branch and returns without reaching the smoothing
+// load the hook above sits on. The override (cheats.cpp) calls this after the original for the engine loop's call: when
+// the hook did not run in this frame, the same limiter waits here (f1 = 0: no second wait by the engine).
+void Gow2MaxTickRateFallback(PPCRegister& f1) {
+  if (g_gow2_frame_wait_ms >= 0.0) return;   // the hook ran in this frame
+  const int32_t v = Gow2MaxFps();
+  if (v <= 0) return;
+  static std::atomic<int> told{0};
+  if (told.fetch_add(1) == 0)
+    REXLOG_INFO("gow2_max_fps: GetMaxTickRate returned {} without reaching the limiter hook (split screen / listen server) - "
+                "the limit {} is kept from here", f1.f64, v);
+  g_gow2_frame_wait_ms = Gow2Limiter().Wait(double(v));
   f1.f64 = 0.0;
 }
 
