@@ -1,4 +1,7 @@
-// COGBox 0.2.1: native mouse look for the Unreal Engine 3 ports (Gears of War 2, 3 and Judgment).
+// COGBox 0.2.1: native mouse look for the Unreal Engine 3 ports (Gears of War 1, 2, 3 and Judgment).
+// Layer 2 (Unreal Engine 3): ONE copy, here, for all four games (23 Nov 2026; until then each game had its own
+// layer3 ue3_mouse_look.h and they had drifted). Each game's layer3 mouse_look.cpp keeps only its build table
+// (addresses) and the per-game choices below (Build::scaling, Build::diag), each with its reason.
 //
 // The console games still carry Unreal Engine 3's PC mouse path: the input config binds MouseX to
 // "Count bXAxis | Axis aMouseX" and MouseY to "Count bYAxis | Axis aMouseY" (MouseSensitivity 60), and
@@ -15,6 +18,13 @@
 //  - Gears 2: hooks the viewport's ProcessInput (this r3, DeltaTime f1) and calls the viewport client's InputAxis
 //    (vtable +24) before it runs; keeps the "using a gamepad" flag across mouse events (axis accumulate hook) and
 //    takes the aim friction off while the mouse was used last.
+//  - Gears 1 (UE3 2006): the Gears 2 way with its own layout - viewport client at ProcessInput's this +56, the viewport
+//    argument is this +4, InputAxis has no bGamepad. Gears 1's ProcessInput is only reached by a direct `bl`, and a
+//    direct call goes to the weak sub_ symbol, not through the dispatcher, so SetFunction never sees it (v1's bug).
+//    So entry_fn is the client's Tick (reached through its vtable), which walks Viewports (this +viewports_off) and
+//    calls ProcessInput on each: the hook sends the motion to Viewports[0]'s client first. Gears 1 has no "using a
+//    gamepad" flag; "pad used last" comes from hooking the viewport client's InputAxis (vtable +24, reached by bctrl)
+//    when it is first found, and the friction native is AWarPC::execGetFrictionTarget (its result is cleared).
 //
 // Method and the Gears 3 base-disc / Gears 2 base-disc addresses from the BSD-3-Clause projects gow3-recomp
 // (Copyright (c) 2026, Flippage and the gow3-recomp contributors) and gears-of-war-2-pc-port / gow2-recomp
@@ -76,20 +86,26 @@ REXCVAR_DEFINE_BOOL(ue3_mouse_look, false, "COGBox",
                     "dead zone, cap or acceleration). Off: the mouse drives the right stick");
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_scale, 1.0, "COGBox", "Native mouse look: multiplier on the mouse counts")
     .range(0.01, 20.0);
-// GitHub #52 for Gears 2 (as Gears 3's ue3_mouse_look.h): UE3's PlayerInput multiplies the mouse axes by FOVScale
+// GitHub #52 (Gears 2 / 3, Build::scaling kFovEven): UE3's PlayerInput multiplies the mouse axes by FOVScale
 // (FOVAngle / 90), so a wider camera turns faster per count - roadie run ~50% faster (jojobear69, 2 Nov). The launcher's
-// Field of view (%) widens every camera by that factor; it sends 100 / FOV % here. 1 = as before.
+// Field of view (%) widens every camera by that factor (GearCamera.ini FOVAngle*=k); it sends 100 / FOV % here. The
+// ultrawide patch widens the projection, not FOVAngle, so it is not in here. 1 = as before. Not read by Gears 1 /
+// Judgment (kAimZoomOnly).
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_fov_comp, 1.0, "COGBox",
-                      "Native mouse look: multiplier that undoes the launcher's FOV widening (GitHub #52)")
+                      "Native mouse look: multiplier that undoes the launcher's FOV widening (GitHub #52; Gears 2 / 3)")
     .range(0.25, 4.0);
 // The view's field of view (degrees, before the ultrawide widening) is noted once per view at the projection set-up
-// (Gow2UltrawideFov's hook, which runs whether or not ultrawide is on). The mouse is scaled by reference / FOV, so every
-// camera turns as the walking camera does. The reference, 80, is GameplayCam_Default's FOVAngle in the Gears 1 / Gears 3
-// coalesced ini (roadie run 105, cover 95, aiming 50); Gears 2's own value was not read yet - check it with
-// --ue3_mouse_log / the FOV noted here before shipping. 0 = off.
+// (each game's ultrawide / view FOV hook, which runs whether or not ultrawide is on) - the value
+// PlayerController.GetFOVAngle gives PlayerInput. The reference, 80, is GameplayCam_Default's FOVAngle in the Gears 1 /
+// Gears 3 coalesced ini (cover 95, roadie run 105, DBNO 110, aiming 50).
+//  - Gears 2 / 3 (kFovEven, GitHub #114 / #52): the mouse is scaled by reference / FOV, so every camera turns as the
+//    walking camera does (with --ue3_mouse_fov_constant=false only the wider ones). 0 = off.
+//  - every game: the aim / zoom thresholds below are measured from it (Judgment and Gears 1 use it only for that; Gears
+//    1 had 80 written in its own copy before 23 Nov - the same default, and the launcher never sends this option).
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_wide_fov_ref, 80.0, "COGBox",
-                      "Native mouse look (GitHub #52): cameras wider than this FOV (degrees, x the launcher's FOV %) "
-                      "turn as fast per count as this one (roadie run, DBNO). 0 = off")
+                      "Native mouse look: the walking camera's FOV (degrees). Gears 2 / 3 (GitHub #52/#114): cameras "
+                      "wider than this (x the launcher's FOV %) turn as fast per count as this one; every game: the aim "
+                      "/ zoom thresholds are measured from it. 0 = off")
     .range(0.0, 170.0);
 // 0.5.0 (Reddit: the Longshot's zoom turns too fast): extra multipliers while aiming (camera narrower than 80% of the
 // walking camera) and while zoomed through a scope (narrower than 40%). 1 = as before. The launcher's "Aim sensitivity"
@@ -99,6 +115,10 @@ REXCVAR_DEFINE_DOUBLE(ue3_mouse_aim_scale, 1.0, "COGBox", "Native mouse look: ex
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_zoom_scale, 1.0, "COGBox",
                       "Native mouse look: extra multiplier while zoomed through a scope (1 = as before)")
     .range(0.1, 2.0);
+// GitHub #52 (still uneven after 0.3.5; Gears 2 / 3 only - kFovEven): each camera mode has its own FOV in
+// GearCamera.ini and UE3 scales the mouse by FOV / 90, so the same motion turned a different angle in each mode. On
+// (default): every camera turns the same angle per count as the reference one, aiming and zoom too. Off: only cameras
+// wider than the reference are evened out, and aiming / zoom keep the console's slower turn.
 REXCVAR_DEFINE_BOOL(ue3_mouse_fov_constant, true, "COGBox",
                     "Native mouse look (GitHub #52): every camera mode turns the same angle per mouse count (aiming and "
                     "zoom included); off = aiming / zoom keep the game's slower turn");
@@ -111,7 +131,7 @@ REXCVAR_DEFINE_DOUBLE(ue3_mouse_step_units, 2.0, "COGBox",
     .range(0.0, 50.0);
 REXCVAR_DEFINE_BOOL(ue3_mouse_invert_y, false, "COGBox", "Native mouse look: invert up / down");
 REXCVAR_DEFINE_BOOL(ue3_mouse_aim_assist, false, "COGBox",
-                    "Native mouse look (Gears 2): keep the aim friction for the mouse too");
+                    "Native mouse look (Gears 1 / 2): keep the aim friction for the mouse too");
 REXCVAR_DEFINE_BOOL(ue3_mouse_log, false, "COGBox", "Native mouse look: log what was sent, once a second");
 
 namespace ue3_mouse {
@@ -129,6 +149,22 @@ struct Build {
   uint32_t right_y_name;
   uint32_t check_slot;       // a vtable / native table entry that must point at check_fn (same-disc checks)
   uint32_t check_fn;
+  // Gears 1 additions (defaults = the Gears 2 layout, so the other games' tables are unchanged).
+  uint32_t client_off = 52;        // ProcessInput this -> viewport client pointer
+  uint32_t viewport_arg_off = 0;   // InputAxis r4 = ProcessInput this + this offset
+  uint32_t viewports_off = 0;      // Gears 1: entry_fn is the client Tick (this r3, DeltaTime f1); its Viewports TArray
+                                   // (data, count) is at this + viewports_off. The pad-used-last signal then comes from hooking
+                                   // the viewport client's InputAxis at first use (no player_axis_fn needed).
+  // How the mouse counts are scaled per camera (23 Nov 2026 unification: the four copies had two ways):
+  //  kFovEven     (Gears 2, 3): x --ue3_mouse_fov_comp x WideCameraComp (GitHub #52 / #114 - every camera turns the
+  //               same angle per count, aim / zoom multipliers on top); the step carry estimates units from the FOV.
+  //  kAimZoomOnly (Gears 1, Judgment): only the 0.5.0 aim / zoom multipliers; the carry assumes the narrowest FOV.
+  //               #52 / #114 were never ported to these two (not tested there), so they keep the console's per-camera
+  //               mouse speed; switching them is a separate, tested change.
+  enum class Scaling : uint8_t { kFovEven, kAimZoomOnly };
+  Scaling scaling = Scaling::kFovEven;
+  bool diag = false;               // Gears 1: six "ue3_mouse_look diag" lines in the first half minute (GitHub #82's
+                                   // bring-up; kept as it was)
 };
 
 namespace detail {
@@ -150,6 +186,13 @@ inline rex::runtime::FunctionDispatcher* g_dispatcher = nullptr;
 inline PPCFunc* g_entry_orig = nullptr;
 inline PPCFunc* g_axis_orig = nullptr;
 inline PPCFunc* g_friction_orig = nullptr;
+inline PPCFunc* g_client_axis_orig = nullptr;   // Gears 1: the viewport client's InputAxis (unhooked original)
+inline uint32_t g_client_axis_addr = 0;
+// One-shot diagnostics (logged a few times in the first minute, whatever ue3_mouse_log says).
+inline std::atomic<uint64_t> g_d_moves{0}, g_d_no_window{0}, g_d_no_capture{0}, g_d_not_look{0}, g_d_banked{0};
+inline std::atomic<uint64_t> g_d_entry_calls{0}, g_d_taken{0}, g_d_names_wait{0}, g_d_sent{0}, g_d_no_fn{0};
+inline std::atomic<uint64_t> g_d_pad_axis{0};
+inline uint32_t g_d_viewport = 0, g_d_count = 0, g_d_client = 0, g_d_vt = 0, g_d_fn = 0;
 inline std::atomic<bool> g_on{false};
 inline std::atomic<bool> g_names_bad{false};
 inline thread_local bool g_injecting = false;
@@ -157,20 +200,6 @@ inline std::mutex g_bank_mutex;
 inline double g_bank_dx = 0, g_bank_dy = 0;
 inline ue3::MouseCarry g_carry_x, g_carry_y;  // GitHub #228: turn under one step, sent later (bank mutex)
 inline std::atomic<int64_t> g_last_mouse{0}, g_last_pad{0};
-inline std::atomic<float> g_view_fov{0.0f};  // GitHub #52: the latest view's field of view, degrees (0 = none yet)
-
-// GitHub #52: reference / FOV (fov_constant) or, off, only for cameras wider than the reference; 1 otherwise.
-inline double WideCameraComp() {
-  const double ref = REXCVAR_GET(ue3_mouse_wide_fov_ref);
-  const double fov = g_view_fov.load(std::memory_order_relaxed);
-  if (ref <= 0 || !(fov > 1.0 && fov < 170.0)) return 1.0;
-  const double widened_ref = ref / REXCVAR_GET(ue3_mouse_fov_comp);  // fov_comp = 100 / launcher FOV %
-  // 0.5.0: the player's aim / zoom multipliers (scoped < 40 % of the walking camera, aiming < 80 %)
-  const double aimzoom = fov < widened_ref * 0.4 ? REXCVAR_GET(ue3_mouse_zoom_scale)
-                         : fov < widened_ref * 0.8 ? REXCVAR_GET(ue3_mouse_aim_scale) : 1.0;
-  if (REXCVAR_GET(ue3_mouse_fov_constant)) return aimzoom * widened_ref / fov;
-  return aimzoom * (fov > widened_ref ? widened_ref / fov : 1.0);
-}
 
 inline void Drain(double* dx, double* dy) {
   std::lock_guard<std::mutex> l(g_bank_mutex);
@@ -214,7 +243,14 @@ class Listener : public rex::ui::WindowInputListener {
       return;
     }
     rex::ui::Window* w = e.target();
-    if (!w || !w->IsMouseCaptureRequested() || !rex::input::mnk::IsMouseLookActive()) {
+    g_d_moves.fetch_add(1, std::memory_order_relaxed);
+    const bool no_window = !w;
+    const bool no_capture = !no_window && !w->IsMouseCaptureRequested();
+    const bool not_look = !rex::input::mnk::IsMouseLookActive();
+    if (no_window) g_d_no_window.fetch_add(1, std::memory_order_relaxed);
+    if (no_capture) g_d_no_capture.fetch_add(1, std::memory_order_relaxed);
+    if (not_look) g_d_not_look.fetch_add(1, std::memory_order_relaxed);
+    if (no_window || no_capture || not_look) {
       double x, y;
       Drain(&x, &y);  // menus / the in-game menu: nothing banked turns the camera afterwards
       return;
@@ -225,6 +261,7 @@ class Listener : public rex::ui::WindowInputListener {
       g_bank_dx += e.dx();
       g_bank_dy += e.dy();
     }
+    g_d_banked.fetch_add(1, std::memory_order_relaxed);
     g_last_mouse.store(Now(), std::memory_order_relaxed);
   }
 };
@@ -245,11 +282,36 @@ inline bool SafeCall(PPCFunc* fn, PPCContext* c, uint8_t* base) {
 // a dead zone. GitHub #228: the fix for that held small motion back until it reached 2 / sensitivity mouse counts
 // (#175), so the smallest move was the same angle at every sensitivity and, with "Mouse turn when aiming: Same",
 // 50+ pixels in the Longshot's 10 degree zoom. Now the turn goes out in steps of --ue3_mouse_step_units rotation
-// units (estimated from the camera FOV, ue3/mouse_carry.h) and only the part under a step is carried to the next frame.
+// units (ue3/mouse_carry.h) and only the part under a step is carried to the next frame.
+inline std::atomic<float> g_view_fov{0.0f};  // the latest view's field of view, degrees (0 = none yet; NoteViewFov)
+
+// kFovEven (GitHub #52 / #114): reference / FOV (fov_constant) or, off, only for cameras wider than the reference; times
+// the player's aim / zoom multipliers (scoped < 40 % of the walking camera, aiming < 80 %); 1 otherwise.
+inline double WideCameraComp() {
+  const double ref = REXCVAR_GET(ue3_mouse_wide_fov_ref);
+  const double fov = g_view_fov.load(std::memory_order_relaxed);
+  if (ref <= 0 || !(fov > 1.0 && fov < 170.0)) return 1.0;
+  const double widened_ref = ref / REXCVAR_GET(ue3_mouse_fov_comp);  // fov_comp = 100 / launcher FOV %
+  const double aimzoom = fov < widened_ref * 0.4 ? REXCVAR_GET(ue3_mouse_zoom_scale)
+                         : fov < widened_ref * 0.8 ? REXCVAR_GET(ue3_mouse_aim_scale) : 1.0;
+  if (REXCVAR_GET(ue3_mouse_fov_constant)) return aimzoom * widened_ref / fov;  // the same angle per count everywhere
+  return aimzoom * (fov > widened_ref ? widened_ref / fov : 1.0);
+}
+// kAimZoomOnly (0.5.0): only the aim / zoom multipliers - aiming = narrower than 80% of the walking camera, scoped (the
+// Longshot, 10 deg) = narrower than 40%. Walking / other cameras are unchanged.
+inline double AimZoomComp() {
+  const double ref = REXCVAR_GET(ue3_mouse_wide_fov_ref), fov = g_view_fov.load(std::memory_order_relaxed);
+  if (!(fov > 1.0 && fov < 170.0) || ref <= 0) return 1.0;
+  return fov < ref * 0.4 ? REXCVAR_GET(ue3_mouse_zoom_scale) : fov < ref * 0.8 ? REXCVAR_GET(ue3_mouse_aim_scale) : 1.0;
+}
+
 inline bool Take(double* x, double* y) {
-  const double s = REXCVAR_GET(ue3_mouse_scale) * REXCVAR_GET(ue3_mouse_fov_comp)  // GitHub #52
-                   * WideCameraComp();                                                  // GitHub #114
-  const double upv = ue3::MouseUnitsPerValue(g_view_fov.load(std::memory_order_relaxed));
+  const bool even = g_build->scaling == Build::Scaling::kFovEven;
+  const double s = even ? REXCVAR_GET(ue3_mouse_scale) * REXCVAR_GET(ue3_mouse_fov_comp)  // GitHub #52
+                              * WideCameraComp()                                              // GitHub #114
+                        : REXCVAR_GET(ue3_mouse_scale) * AimZoomComp();                     // 0.5.0
+  // kAimZoomOnly: the narrowest FOV is assumed for the step estimate (as these two games' copies always did)
+  const double upv = ue3::MouseUnitsPerValue(even ? g_view_fov.load(std::memory_order_relaxed) : 0.0);
   const double step = REXCVAR_GET(ue3_mouse_step_units);
   const double sy = REXCVAR_GET(ue3_mouse_invert_y) ? s : -s;
   {
@@ -268,7 +330,7 @@ inline bool NamesOk(const uint8_t* base, uint64_t* mx, uint64_t* my) {
   *mx = LoadName(base, g_build->mouse_x_name);
   *my = LoadName(base, g_build->mouse_y_name);
   const uint32_t ix = uint32_t(*mx >> 32), iy = uint32_t(*my >> 32);
-  if (ix == 0 || iy == 0) return false;  // not made yet
+  if (ix == 0 || iy == 0) { g_d_names_wait.fetch_add(1, std::memory_order_relaxed); return false; }  // not made yet
   bool ok = ix != iy && ix < 0x400000 && iy < 0x400000;
   if (ok && g_build->right_x_name) {
     const uint32_t rx = Load32(base, g_build->right_x_name), ry = Load32(base, g_build->right_y_name);
@@ -322,7 +384,6 @@ inline void ViewportAxisHook(PPCContext& ctx, uint8_t* base) {
 }
 
 // ---- Gears 2 ---------------------------------------------------------------------------------------------------------
-constexpr uint32_t kViewportClientOff = 52;
 constexpr uint32_t kClientInputAxisSlot = 24;
 constexpr uint32_t kUsingGamepadBit = 0x80000000;
 
@@ -338,23 +399,61 @@ inline bool SendClient(PPCContext& ctx, uint8_t* base, PPCFunc* fn, uint32_t cli
   c.f2.f64 = dt;
   return SafeCall(fn, &c, base);
 }
-inline void ProcessInputHook(PPCContext& ctx, uint8_t* base) {
-  const double dt = ctx.f1.f64;
-  const uint32_t viewport = ctx.r3.u32;
+inline void ClientAxisHook(PPCContext& ctx, uint8_t* base);
+// Sends this frame's banked motion to one viewport's client (its InputAxis, vtable +24), as ProcessInput does for sticks.
+inline void InjectViewport(PPCContext& ctx, uint8_t* base, uint32_t viewport, double dt) {
+  const uint32_t client = viewport ? Load32(base, viewport + g_build->client_off) : 0;
+  const uint32_t vt = client ? Load32(base, client) : 0;
+  const uint32_t fa = vt ? Load32(base, vt + kClientInputAxisSlot) : 0;
+  g_d_viewport = viewport; g_d_client = client; g_d_vt = vt; g_d_fn = fa;
+  // Gears 1: the first time the client's InputAxis is known, hook it for the pad-used-last signal.
+  if (g_build->viewports_off && fa && !g_client_axis_addr) {
+    if (PPCFunc* orig = g_dispatcher->GetFunction(fa)) {
+      g_client_axis_orig = orig;
+      g_client_axis_addr = fa;
+      const bool ok = g_dispatcher->SetFunction(fa, &ClientAxisHook);
+      REXLOG_INFO("ue3_mouse_look: viewport {:08X} client {:08X} vtable {:08X} InputAxis {:08X} - pad hook {}", viewport,
+                  client, vt, fa, ok ? "on" : "FAILED");
+    }
+  }
   double x = 0, y = 0;
   uint64_t mx, my;
-  if (viewport && NamesOk(base, &mx, &my) && Take(&x, &y)) {
-    bool sent = false;
-    const uint32_t client = Load32(base, viewport + kViewportClientOff);
-    const uint32_t vt = client ? Load32(base, client) : 0;
-    const uint32_t fa = vt ? Load32(base, vt + kClientInputAxisSlot) : 0;
-    if (PPCFunc* fn = fa ? g_dispatcher->GetFunction(fa) : nullptr) {
-      sent = true;
-      if (x != 0) sent &= SendClient(ctx, base, fn, client, viewport, mx, x, dt);
-      if (y != 0) sent &= SendClient(ctx, base, fn, client, viewport, my, y, dt);
-    }
-    MaybeLog(x, y, sent);
+  // 0.6.6 (review #30): the names first - movement banked before UE3 has made MouseX / MouseY is kept, not dropped
+  if (!viewport || !NamesOk(base, &mx, &my) || !Take(&x, &y)) return;
+  g_d_taken.fetch_add(1, std::memory_order_relaxed);
+  bool sent = false;
+  PPCFunc* fn = nullptr;
+  if (fa) fn = (fa == g_client_axis_addr && g_client_axis_orig) ? g_client_axis_orig : g_dispatcher->GetFunction(fa);
+  const uint32_t vparg = viewport + g_build->viewport_arg_off;
+  if (fn) {
+    sent = true;
+    if (x != 0) sent &= SendClient(ctx, base, fn, client, vparg, mx, x, dt);
+    if (y != 0) sent &= SendClient(ctx, base, fn, client, vparg, my, y, dt);
+    if (sent) g_d_sent.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    g_d_no_fn.fetch_add(1, std::memory_order_relaxed);
   }
+  MaybeLog(x, y, sent);
+}
+inline void Diag();
+inline void ProcessInputHook(PPCContext& ctx, uint8_t* base) {
+  g_d_entry_calls.fetch_add(1, std::memory_order_relaxed);
+  InjectViewport(ctx, base, ctx.r3.u32, ctx.f1.f64);
+  Diag();
+  g_entry_orig(ctx, base);
+}
+// Gears 1: the client's Tick (this r3, DeltaTime f1); it calls ProcessInput on each of Viewports (data, count at
+// this + viewports_off) with the same DeltaTime. The motion goes to Viewports[0] before the original runs.
+inline void ClientTickHook(PPCContext& ctx, uint8_t* base) {
+  g_d_entry_calls.fetch_add(1, std::memory_order_relaxed);
+  const uint32_t self = ctx.r3.u32;
+  const uint32_t data = self ? Load32(base, self + g_build->viewports_off) : 0;
+  const uint32_t count = self ? Load32(base, self + g_build->viewports_off + 4) : 0;
+  g_d_count = count;
+  const uint32_t viewport = (data && count > 0 && count < 64) ? Load32(base, data) : 0;
+  if (viewport) InjectViewport(ctx, base, viewport, ctx.f1.f64);
+  else { double x, y; Drain(&x, &y); }
+  Diag();
   g_entry_orig(ctx, base);
 }
 inline bool MouseLast() {
@@ -383,9 +482,43 @@ inline void AxisHook(PPCContext& ctx, uint8_t* base) {
   }
 }
 
+// Gears 1: the viewport client's InputAxis (client r3, viewport r4, ControllerId r5, Key r6 as an FName, Delta f1 -
+// the stick in -1..1, DeltaTime f2). A right stick past the XInput right dead zone marks the pad as used last.
+constexpr double kPadDeadZone = 8689.0 / 32767.0;
+inline void ClientAxisHook(PPCContext& ctx, uint8_t* base) {
+  const uint32_t key = uint32_t(ctx.r6.u64 >> 32);
+  const double v = ctx.f1.f64;
+  if (key && std::fabs(v) > kPadDeadZone &&
+      (key == Load32(base, g_build->right_x_name) || key == Load32(base, g_build->right_y_name))) {
+    g_last_pad.store(Now(), std::memory_order_relaxed);
+    g_d_pad_axis.fetch_add(1, std::memory_order_relaxed);
+  }
+  g_client_axis_orig(ctx, base);
+}
+
+// One-shot diagnostics (Build::diag - Gears 1): 6 lines at about 5 s intervals after the first entry call, whatever ue3_mouse_log says.
+inline void Diag() {
+  if (!g_build->diag) return;
+  static int64_t next = 0;
+  static int left = 6;
+  if (left <= 0) return;
+  const int64_t now = Now();
+  const int64_t step = std::chrono::steady_clock::duration(std::chrono::seconds(5)).count();
+  if (!next) { next = now + step; return; }
+  if (now < next) return;
+  next = now + step;
+  --left;
+  REXLOG_INFO("ue3_mouse_look diag: entry calls {} viewports {} viewport {:08X} client {:08X} vtable {:08X} fn {:08X} | "
+              "mouse moves {} banked {} no-window {} no-capture {} not-mouse-look {} | taken {} names-not-made {} "
+              "sent {} no-fn {} | pad-axis {} names-bad {}",
+              g_d_entry_calls.load(), g_d_count, g_d_viewport, g_d_client, g_d_vt, g_d_fn, g_d_moves.load(),
+              g_d_banked.load(), g_d_no_window.load(), g_d_no_capture.load(), g_d_not_look.load(), g_d_taken.load(),
+              g_d_names_wait.load(), g_d_sent.load(), g_d_no_fn.load(), g_d_pad_axis.load(), g_names_bad.load());
+}
+
 }  // namespace detail
 
-// GitHub #52: each view's field of view in degrees (the projection set-up calls this once per view).
+// GitHub #52 / 0.5.0: each view's field of view in degrees (the projection set-up calls this once per view).
 inline void NoteViewFov(double fov) {
   if (fov > 1.0 && fov < 170.0) detail::g_view_fov.store(float(fov), std::memory_order_relaxed);
 }
@@ -408,7 +541,9 @@ inline void Install(const Build& b, rex::ui::Window* window) {
     entry = d->GetFunction(b.entry_fn);
     axis = b.player_axis_fn ? d->GetFunction(b.player_axis_fn) : nullptr;
     friction = b.friction_fn ? d->GetFunction(b.friction_fn) : nullptr;
-    if (!entry || (b.gears2 && (!axis || !friction))) why = "a game function is missing";
+    // Gears 2 needs the axis accumulate hook; Gears 1 (viewports_off) hooks the client's InputAxis later instead.
+    const bool pad_ok = b.viewports_off ? true : axis != nullptr;
+    if (!entry || (b.gears2 && (!pad_ok || !friction))) why = "a game function is missing";
   }
   if (!why) {
     g_build = &b;
@@ -416,8 +551,14 @@ inline void Install(const Build& b, rex::ui::Window* window) {
     g_entry_orig = entry;
     g_axis_orig = axis;
     g_friction_orig = friction;
-    bool ok = d->SetFunction(b.entry_fn, b.gears2 ? &ProcessInputHook : &ViewportAxisHook);
-    if (ok && b.gears2) ok = d->SetFunction(b.player_axis_fn, &AxisHook) && d->SetFunction(b.friction_fn, &FrictionHook);
+    PPCFunc* hook = !b.gears2 ? &ViewportAxisHook : b.viewports_off ? &ClientTickHook : &ProcessInputHook;
+    bool ok = d->SetFunction(b.entry_fn, hook);
+    if (ok && b.gears2) {
+      if (axis) ok = d->SetFunction(b.player_axis_fn, &AxisHook);
+      ok = ok && d->SetFunction(b.friction_fn, &FrictionHook);
+    }
+    // The hook must be what an indirect call to entry_fn now finds (v1's Gears 1 entry was only called directly).
+    if (ok && d->GetFunction(b.entry_fn) != hook) REXLOG_WARN("ue3_mouse_look: entry {:08X} does not resolve to the hook", b.entry_fn);
     if (!ok) {
       d->SetFunction(b.entry_fn, entry);
       if (axis) d->SetFunction(b.player_axis_fn, axis);

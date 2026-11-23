@@ -1,7 +1,7 @@
-// COGBox 0.2.1: native mouse look for this game - its build's addresses (see ue3_mouse_look.h).
+// COGBox 0.2.1: native mouse look for this game - its build's addresses (the logic: layer 2's ue3/mouse_look.h).
 // {name, gears2, entry function, player axis / axis accumulate, friction, MouseX name, MouseY name, RightX name,
 //  RightY name, check slot, check function}
-#include "ue3_mouse_look.h"
+#include <ue3/mouse_look.h>   // the shared logic (layer 2); this file: the build table
 #include "mouse_look.h"
 
 namespace {
