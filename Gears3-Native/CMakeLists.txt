@@ -87,6 +87,8 @@ target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 target_include_directories(gn_layer2_ue3 PUBLIC ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 # The freeze watchdog: ONE copy (ue3/freeze_watchdog.h); layer 3 freeze_watchdog.cpp keeps only this game's option.
 target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/freeze_watchdog.cpp)
+# The frame-rate probe (--fps_probe, --kismet_min_delay): ONE copy (ue3/fps_probe.h); layer 3 keeps the options.
+target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/fps_probe.cpp)
 # modcore (MIT, from KiltedKernel's Gears 3 port): mod.ini rules, config fragments, bare-file mods (ue3/mod_extras.h)
 target_include_directories(gn_layer2_ue3 PRIVATE src/layer2_ue3)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer0_xenos)
