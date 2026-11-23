@@ -1336,6 +1336,9 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_query_box_fast, false, "Gears2",
                     "the same state registers and shaders is issued again with that box's pipeline, depth target and "
                     "viewport, skipping the lookups and ownership work (same GPU commands; the query counts must not "
                     "change). Off until checked on the PC: query counts and screenshots on D3D12 and Vulkan");
+REXCVAR_DEFINE_BOOL(gow2_present_gamma_to_smaa_vulkan, true, "Gears2",
+                    "Speed study (O7): --gow2_present_gamma_to_smaa on Vulkan too (the same shader variant; same values "
+                    "as the unpack pass it replaces)");
 REXCVAR_DEFINE_BOOL(gow2_present_fold_unpack, true, "Gears2",
                     "Speed study (O7, D3D12): the shown frame's last present pass (gamma, resample or sharpening) also "
                     "writes the presenter's image, so the full-screen pass that unpacked its words into it is left out "

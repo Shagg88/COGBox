@@ -1176,7 +1176,10 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         // 19 Nov (speed study, job 2116: the present chain is 0.93 ms of our GPU's 4.3 ms a frame at 1440p): with SMAA
         // the gamma pass's packed words were unpacked into SMAA's colour image by a second full-screen pass. This
         // variant writes that image too (u1, the same n / 1023 values), so the unpack pass is not needed.
-        gamma_to_smaa_ = REXCVAR_GET(gow2_present_gamma_to_smaa) && backend_->GetShaderIL() == gpu::ShaderIL::kDxil;
+        // O7 (layer0 sweep 22 Nov): Vulkan too (--gow2_present_gamma_to_smaa_vulkan) - its SMAA pass already writes the
+        // same R10G10B10A2 storage image with the same unpack shader, so the variant's u1 write is the same values.
+        gamma_to_smaa_ = REXCVAR_GET(gow2_present_gamma_to_smaa) &&
+                         (backend_->GetShaderIL() == gpu::ShaderIL::kDxil || REXCVAR_GET(gow2_present_gamma_to_smaa_vulkan));
         gamma_to_smaa_from_ = uint64_t(std::max(REXCVAR_GET(gow2_present_gamma_to_smaa_from_swap), 0));
         if (gamma_to_smaa_) {
           std::string src = rr::builtin::kPresentGammaCs;

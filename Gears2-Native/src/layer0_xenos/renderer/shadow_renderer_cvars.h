@@ -341,4 +341,5 @@ REXCVAR_DECLARE(int32_t, gow2_renderer_resolve_readback_max_kb);
 REXCVAR_DECLARE(bool, gow2_renderer_resolve_prepare_mirror);
 REXCVAR_DECLARE(int32_t, gow2_renderer_log_aliases);
 REXCVAR_DECLARE(bool, gow2_renderer_query_box_fast);
+REXCVAR_DECLARE(bool, gow2_present_gamma_to_smaa_vulkan);
 REXCVAR_DECLARE(bool, gow2_present_fold_unpack);
