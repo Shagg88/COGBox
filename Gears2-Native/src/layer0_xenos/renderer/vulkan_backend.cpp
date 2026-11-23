@@ -1367,6 +1367,78 @@ class VulkanBackend final : public Backend {
     if (samples) *samples = sum;
     return true;
   }
+#ifdef _WIN32
+  // perf 22 Nov (code sweep; job 2204: 4.4 ms of query waits a frame on Vulkan): D3D12 hands the renderer thread a
+  // Win32 event that fires when the GPU finishes the oldest pending query's work, so the idle renderer sleeps until
+  // then; Vulkan had none and polled every 1 ms. A small waiter thread waits on the timeline semaphore for that value
+  // and sets an auto-reset event - the same contract as D3D12's SetEventOnCompletion (re-armed when the value moves).
+  void* OcclusionCompletionEvent(OcclusionHandle h) override {
+    if (!h || h >= gq_queries_.size() || !ready_ || lost_ || !timeline_) return nullptr;
+    const GameQuery& q = gq_queries_[h];
+    if (!q.in_use || !q.ended || q.broken || q.parts.empty()) return nullptr;
+    uint64_t value = 0;
+    for (const GameQueryPart& part : q.parts) value = std::max(value, part.fence);
+    if (!value || value > submitted_) return nullptr;  // not sent yet: the caller polls (and submits)
+    if (!occ_waiter_.joinable()) {
+      occ_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+      if (!occ_event_) return nullptr;
+      occ_waiter_ = std::thread([this] { OccWaiterLoop(); });
+    }
+    {
+      std::lock_guard<std::mutex> lock(occ_wait_mutex_);
+      if (value != occ_wait_value_) {
+        occ_wait_value_ = value;
+        occ_wait_cv_.notify_one();
+      }
+    }
+    return occ_event_;
+  }
+  void OccWaiterLoop() {
+    uint64_t done_value = 0;
+    for (;;) {
+      uint64_t target = 0;
+      {
+        std::unique_lock<std::mutex> lock(occ_wait_mutex_);
+        occ_wait_cv_.wait(lock, [&] { return occ_wait_stop_ || occ_wait_value_ != done_value; });
+        if (occ_wait_stop_) return;
+        target = occ_wait_value_;
+      }
+      VkSemaphoreWaitInfo wi{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+      wi.semaphoreCount = 1;
+      wi.pSemaphores = &timeline_;
+      wi.pValues = &target;
+      const VkResult r = vk_.vkWaitSemaphores(device_, &wi, 100ull * 1000 * 1000);  // 100 ms, then look again
+      if (r == VK_SUCCESS) {
+        done_value = target;
+        SetEvent(occ_event_);
+        ++occ_event_fires_;
+      } else if (r != VK_TIMEOUT) {
+        done_value = target;  // device lost or an error: wake the renderer (it polls and notices) and wait for a new value
+        SetEvent(occ_event_);
+      }
+    }
+  }
+  void StopOccWaiter() {
+    if (!occ_waiter_.joinable()) return;
+    {
+      std::lock_guard<std::mutex> lock(occ_wait_mutex_);
+      occ_wait_stop_ = true;
+    }
+    occ_wait_cv_.notify_one();
+    occ_waiter_.join();
+    if (occ_event_) CloseHandle(occ_event_);
+    occ_event_ = nullptr;
+  }
+  std::thread occ_waiter_;
+  std::mutex occ_wait_mutex_;
+  std::condition_variable occ_wait_cv_;
+  uint64_t occ_wait_value_ = 0;
+  bool occ_wait_stop_ = false;
+  HANDLE occ_event_ = nullptr;
+  std::atomic<uint64_t> occ_event_fires_{0};
+#else
+  void StopOccWaiter() {}
+#endif
   void ReleaseOcclusionQuery(OcclusionHandle h) override {
     if (!h || h >= gq_queries_.size() || !gq_queries_[h].in_use) return;
     if (h == gq_open_) EndOcclusionQuery(h);
@@ -3239,6 +3311,7 @@ class VulkanBackend final : public Backend {
     return true;
   }
   void Shutdown() {
+    StopOccWaiter();  // perf 22 Nov: before anything it waits on is destroyed
     if (device_) {
       if (cmd_) Submit();
       {
