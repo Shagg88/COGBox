@@ -1192,6 +1192,17 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           REXLOG_INFO("gow2_present: gamma pass writes SMAA's colour image directly: {}",
                       present_gamma_smaa_ ? "on" : "SHADER MISSING (off)");
         }
+        // O7: the last pass of the shown frame's chain also writes the presenter's image (D3D12; see FoldDispatch).
+        present_fold_ = present_ours_ && REXCVAR_GET(gow2_present_fold_unpack) &&
+                         backend_->GetShaderIL() == gpu::ShaderIL::kDxil;
+        if (present_fold_) {
+          present_gamma_fold_ = MakeFoldPipeline("present_gamma_fold_cs", rr::builtin::kPresentGammaCs);
+          if (present_resample_) present_resample_fold_ = MakeFoldPipeline("present_resample_fold_cs", rr::builtin::kPresentResampleCs);
+          if (present_sharpen_) present_sharpen_fold_ = MakeFoldPipeline("sharpen_fold_cs", rr::builtin::kSharpenCs);
+          REXLOG_INFO("gow2_present: last pass writes the presenter's image (no unpack pass): gamma {} resample {} sharpen {}",
+                      present_gamma_fold_ ? "on" : "off", present_resample_fold_ ? "on" : present_resample_ ? "SHADER MISSING" : "-",
+                      present_sharpen_fold_ ? "on" : present_sharpen_ ? "SHADER MISSING" : "-");
+        }
         gpu::TextureDesc rd;
         rd.width = 256 + 128 * 3;
         rd.format = gpu::Format::kR32Uint;
@@ -2635,7 +2646,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       gamma_fed_smaa_ = true;
       return true;
     }
-    backend_->Dispatch(present_gamma_, b, (w + 7) / 8, (h + 7) / 8, 1);
+    FoldDispatch(present_gamma_, present_gamma_fold_, b, (w + 7) / 8, (h + 7) / 8);
     return true;
   }
   void PresentShadow(const RegisterFile& regs, const DisplaySource& src, uint32_t fb_width, uint32_t fb_height) {
@@ -2681,9 +2692,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     gamma_feed_smaa_now_ = true;  // only this call: the reference / HUD-less chains keep their own unpack
+    // O7: D3D12 with our presenter, no HDR encode and no frame generation (its HUD-less chain runs between): the last
+    // pass that makes the shown image is held back and run in the presenter's refresh, writing its image too.
+    fold_frame_ = present_fold_ && presenter_ && !presenter_vulkan_ && !native_frame && !fg_wanted_ &&
+                  !(hdr_ && (hdr_legacy_ ? hdr_encode_legacy_ : hdr_encode_));
     const bool gamma_ok = GammaPass(regs, src, fb_width, fb_height, w, h, table, native_frame);
     gamma_feed_smaa_now_ = false;
     if (!gamma_ok) {
+      FlushFold();
+      fold_frame_ = false;
       gamma_fed_smaa_ = false;
       ++ours_stats_.not_presented;
       return;
@@ -2747,7 +2764,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           b.uav_texture = present_scaled_;
           // Native HDR writes this entire destination from the float image.
           // Resampling the SDR reference here would be overwritten unused.
-          if (!native_frame) backend_->Dispatch(present_resample_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+          if (!native_frame) FoldDispatch(present_resample_, present_resample_fold_, b, (ow + 7) / 8, (oh + 7) / 8);
           out_tex = present_scaled_;
           dw = ow;
           dh = oh;
@@ -2778,24 +2795,29 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         b.constant_count = 8;
         b.srv[0] = out_tex;
         b.uav_texture = present_sharp_;
-        backend_->Dispatch(present_sharpen_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+        FoldDispatch(present_sharpen_, present_sharpen_fold_, b, (ow + 7) / 8, (oh + 7) / 8);
         out_tex = present_sharp_;
       }
     }
     if (hdr_ && hdr_legacy_ && hdr_encode_legacy_) {  // Stage 7.3, as 0.6.0 (see hdr_legacy_)
+      FlushFold();  // O7: never held with an encode (fold_frame_); kept safe
       EncodeLegacyHdr(out_tex, ow, oh);
       table = false;  // 10 bits per channel to the window
     } else if (hdr_ && !hdr_legacy_ && hdr_encode_) {
+      FlushFold();
       EncodeNativeHdr(out_tex, ow, oh, native_frame);
       table = false;  // 10 bits per channel to the window
     }
     // Patch 0148: the HUD-less image through the same passes, at the same size (0 = none this frame).
+    if (hl_present_has_ && fg_wanted_) FlushFold();  // O7: never held with frame generation (fold_frame_); kept safe
     const gpu::TextureHandle hl_image =
         hl_present_has_ && fg_wanted_ ? HudlessChain(regs, w, h, ow, oh) : gpu::TextureHandle(0);  // notes/83: Vulkan too
     const uint32_t hl_image_w = hl_fit_w_, hl_image_h = hl_fit_h_;  // its size (the generation rectangle's, when known)
     hl_present_has_ = false;
     bool wrote = false;
     if (!presenter_) {  // notes/68: Vulkan without a presenter yet - the image is made, nothing is shown
+      FlushFold();
+      fold_frame_ = false;
       backend_->Submit();
       ++ours_stats_.presented;
       if (presented_shots_ && !shot_.readback && XenosTakeScreenshotRequest()) TakeShot(present_out_, w, h);  // to-do 8 (nothing shown)
@@ -2823,6 +2845,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
             t.width = ow;
             t.height = oh;
             t.first_write = !v.image_ever_written_previously();
+            FlushFold();  // O7 is D3D12 only (this is a draw into the presenter's image)
             if (!backend_->PresentPacked(out_tex, ow, oh, &t)) return false;
             if (fg_wanted_) FgHandOver(reinterpret_cast<void*>(v.image()), hl_image, hl_image_w, hl_image_h);  // notes/83: frame generation's inputs, in the Submit below
             backend_->Submit();  // on the presenter's queue, before the refresher returns
@@ -2836,19 +2859,33 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
               c.resource_uav_capable(), gpu::Format::kR10G10B10A2Unorm,
               uint32_t(rex::ui::d3d12::D3D12Presenter::kGuestOutputInternalState));
           if (!out) return false;
-          gpu::ComputeBindings b;
-          b.constants[0] = ow;
-          b.constants[1] = oh;
-          b.constant_count = 4;
-          b.srv[0] = out_tex;
-          b.uav_texture = out;
-          backend_->Dispatch(present_unpack_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+          if (fold_pending_.plain && fold_pending_.b.uav_texture == out_tex && fold_pending_.gx == (ow + 7) / 8 &&
+              fold_pending_.gy == (oh + 7) / 8) {
+            // O7: the held last pass writes its words (out_tex, still read by screenshots and frame images) and the
+            // presenter's image (u1, n / 1023 as the unpack pass wrote them) - one full-screen pass fewer.
+            FoldPending fp = fold_pending_;
+            fold_pending_ = FoldPending{};
+            fp.b.uav2_texture = out;
+            backend_->Dispatch(fp.folded, fp.b, fp.gx, fp.gy, 1);
+            ++present_folds_;
+          } else {
+            FlushFold();
+            gpu::ComputeBindings b;
+            b.constants[0] = ow;
+            b.constants[1] = oh;
+            b.constant_count = 4;
+            b.srv[0] = out_tex;
+            b.uav_texture = out;
+            backend_->Dispatch(present_unpack_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+          }
           backend_->ReleaseImport(out, uint32_t(rex::ui::d3d12::D3D12Presenter::kGuestOutputInternalState));
           if (fg_wanted_) FgHandOver(c.resource_uav_capable(), hl_image, hl_image_w, hl_image_h);  // patch 0147: before the Submit that carries the copies
           backend_->Submit();
           wrote = true;
           return true;
         });
+    FlushFold();  // O7: the refresh did not run (or failed before it): the held pass writes its words as before
+    fold_frame_ = false;
     if (refreshed && wrote) ++ours_stats_.presented; else ++ours_stats_.refresh_failed;
     // Shagg's to-do 8 (--gow2_screenshot_presented): the screenshot key's image as presented - resized to the window and
     // sharpened - read back on its own, for the screenshot alone (frame shots keep the game's size). HDR10 output is
@@ -2910,6 +2947,66 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool present_ours_ = false;
   gpu::PipelineHandle present_unpack_ = 0;
   gpu::PipelineHandle present_gamma_smaa_ = 0;  // --gow2_present_gamma_to_smaa
+  // O7 (--gow2_present_fold_unpack, D3D12): the shown frame's last chain pass (gamma, resample or sharpen, whichever
+  // comes last) is held back until the presenter's refresh, where its variant also writes the presenter's
+  // R10G10B10A2 image through u1 with the unpack pass's exact maths, so that pass is left out.
+  gpu::PipelineHandle present_gamma_fold_ = 0, present_resample_fold_ = 0, present_sharpen_fold_ = 0;
+  bool present_fold_ = false, fold_frame_ = false;
+  uint64_t present_folds_ = 0;
+  struct FoldPending {
+    gpu::PipelineHandle plain = 0, folded = 0;
+    gpu::ComputeBindings b;
+    uint32_t gx = 0, gy = 0;
+  } fold_pending_;
+  // A chain pass: held while fold_frame_ (any pass held before it runs first), else dispatched.
+  void FoldDispatch(gpu::PipelineHandle plain, gpu::PipelineHandle folded, const gpu::ComputeBindings& b, uint32_t gx,
+                    uint32_t gy) {
+    FlushFold();
+    if (fold_frame_ && folded) {
+      fold_pending_.plain = plain;
+      fold_pending_.folded = folded;
+      fold_pending_.b = b;
+      fold_pending_.gx = gx;
+      fold_pending_.gy = gy;
+      return;
+    }
+    backend_->Dispatch(plain, b, gx, gy, 1);
+  }
+  // A held pass that is needed now (something reads its words before the refresh): as it would have run.
+  void FlushFold() {
+    if (!fold_pending_.plain) return;
+    const FoldPending fp = fold_pending_;
+    fold_pending_ = FoldPending{};
+    backend_->Dispatch(fp.plain, fp.b, fp.gx, fp.gy, 1);
+  }
+  // The variant of a chain shader (its words to u0) that also stores them to u1 unpacked, as kPresentUnpackCs does.
+  gpu::PipelineHandle MakeFoldPipeline(const char* name, const char* source) {
+    std::string src = source;
+    const std::string decl = "RWTexture2D<uint> xe_out : register(u0);";
+    const size_t at = src.find(decl);
+    if (at == std::string::npos) return 0;
+    const std::string helper =
+        "\nRWTexture2D<unorm float4> xe_fold : register(u1);\n"
+        "void XeOutFold(uint2 p, uint v) {\n"
+        "  xe_out[p] = v;\n"
+        "  xe_fold[p] = float4(float(v & 0x3FFu), float((v >> 10u) & 0x3FFu), float((v >> 20u) & 0x3FFu), 1023.0f) *\n"
+        "               (1.0f / 1023.0f);\n"
+        "}";
+    src.insert(at + decl.size(), helper);
+    const std::string store = "xe_out[id.xy] = ";
+    uint32_t stores = 0;
+    for (size_t pos = src.find(store, at + decl.size() + helper.size()); pos != std::string::npos;
+         pos = src.find(store, pos)) {
+      const size_t end = src.find(';', pos);
+      if (end == std::string::npos) return 0;
+      src.replace(end, 1, ");");
+      src.replace(pos, store.size(), "XeOutFold(id.xy, ");
+      ++stores;
+    }
+    if (!stores) return 0;
+    const gpu::ShaderHandle sh = cache_->GetBuiltin(name, src, gpu::ShaderStage::kCompute);
+    return sh ? backend_->CreateComputePipeline(sh) : 0;
+  }
   bool gamma_to_smaa_ = false, gamma_feed_smaa_now_ = false, gamma_fed_smaa_ = false;
   uint64_t smaa_unpacks_skipped_ = 0;
   bool front_copy_lean_ = false;  // --gow2_renderer_front_copy_lean
@@ -3628,6 +3725,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   // The present image (present_out_, w x h packed words) anti-aliased in place.
   bool SmaaPass(uint32_t w, uint32_t h, gpu::TextureHandle native = 0) {
+    FlushFold();  // O7: SMAA reads the gamma pass's words
     if (!EnsureSmaa(w, h)) {
       gamma_fed_smaa_ = false;
       return false;
@@ -3777,9 +3875,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (present_ours_) {
       const OursStats& o = ours_stats_;
       REXLOG_INFO("gow2_present: ours frames {}-{}: swaps {} | presented {} | refresh failed {} | gamma pass not run {} "
-                  "| frame images delivered {} | no matching front-buffer copy {}",
+                  "| frame images delivered {} | no matching front-buffer copy {} | unpack passes left out so far: SMAA {}, "
+                  "presenter {}",
                   frame_ + 1 - uint64_t(log_every_), frame_, display_stats_.swaps, o.presented, o.refresh_failed,
-                  o.not_presented, o.images, display_stats_.no_source);
+                  o.not_presented, o.images, display_stats_.no_source, smaa_unpacks_skipped_, present_folds_);
       ours_stats_ = {};
       display_stats_ = {};
       present_stats_ = {};
@@ -7906,6 +8005,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Notes/80: --gow2_ao_debug - the final AO over the finished picture (present_out_, w x h packed words).
   void AoDebugView(uint32_t w, uint32_t h) {
     if (!ao_debug_ || !ao_ready_ || !ao_debug_pipe_ || !present_out_ || !ao_final_) return;
+    FlushFold();  // O7: it writes over the gamma pass's words
     AoFinish();
     gpu::ComputeBindings b;
     b.constant_count = 8;
