@@ -1281,7 +1281,7 @@ class VulkanBackend final : public Backend {
     vk_.vkCmdDrawIndexed(C(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT), index_count, 1, uint32_t(at / 4), 0, 0);
     ++stats_.draws;
   }
-  void NextFrame() override {}
+  void NextFrame() override { if (rec_) RecordThreadFrame(); }
   BufferHandle CreateIndexBuffer(const uint32_t* indices, uint32_t index_count) override {
     if (!ready_ || lost_ || !indices || !index_count || !Record()) return 0;
     const uint64_t size = uint64_t(index_count) * 4;
@@ -4274,8 +4274,41 @@ class VulkanBackend final : public Backend {
     Fail(VkErr(rec_->ErrorWhat() ? rec_->ErrorWhat() : "Vulkan recording thread", e) + " on the recording thread");
     return false;
   }
+  // NextFrame: one stats line per vk_record_thread_log frames - per-frame averages / maxima.
+  void RecordThreadFrame() {
+    const vkrec::Recorder::Frame f = rec_->TakeFrame();
+    RecWindow& w = rec_window_;
+    ++w.frames;
+    w.encode_ms += f.encode_ms; w.encode_max = std::max(w.encode_max, f.encode_ms);
+    w.record_ms += f.record_ms; w.record_max = std::max(w.record_max, f.record_ms);
+    w.wait_ms += f.wait_ms; w.wait_max = std::max(w.wait_max, f.wait_ms);
+    w.blocks += f.blocks; w.bytes += f.bytes; w.depth_max = std::max(w.depth_max, f.depth_max);
+    for (uint32_t i = 0; i < vkrec::kWhyCount; ++i) w.forced[i] += f.forced[i];
+    w.fallbacks += f.fallbacks; w.direct_calls += f.direct_calls;
+    const uint32_t every = options_.vk_record_thread_log;
+    if (!every || w.frames < every) return;
+    const double n = double(w.frames);
+    REXLOG_INFO("gow2_renderer: Vulkan recording thread, {} frames, per frame (avg/max): caller encode {:.2f}/{:.2f} ms "
+                "(sampled), recording thread {:.2f}/{:.2f} ms, caller waiting for it {:.2f}/{:.2f} ms; {:.1f} blocks, "
+                "{:.0f} KB, queue depth max {}; forced flushes per frame: {} {:.2f}, {} {:.2f}, {} {:.2f}, {} {:.2f}; "
+                "direct calls {:.0f}",
+                w.frames, w.encode_ms / n, w.encode_max, w.record_ms / n, w.record_max, w.wait_ms / n, w.wait_max,
+                double(w.blocks) / n, double(w.bytes) / n / 1024.0, w.depth_max,
+                vkrec::kWhyNames[vkrec::kWhySubmit], double(w.forced[vkrec::kWhySubmit]) / n,
+                vkrec::kWhyNames[vkrec::kWhyWait], double(w.forced[vkrec::kWhyWait]) / n,
+                vkrec::kWhyNames[vkrec::kWhyNative], double(w.forced[vkrec::kWhyNative]) / n,
+                vkrec::kWhyNames[vkrec::kWhyFallback], double(w.forced[vkrec::kWhyFallback]) / n,
+                double(w.direct_calls) / n);
+    w = {};
+  }
+  struct RecWindow {
+    uint32_t frames = 0;
+    double encode_ms = 0, encode_max = 0, record_ms = 0, record_max = 0, wait_ms = 0, wait_max = 0;
+    uint64_t blocks = 0, bytes = 0, depth_max = 0, forced[vkrec::kWhyCount] = {}, fallbacks = 0, direct_calls = 0;
+  };
   std::unique_ptr<vkrec::Recorder> rec_;  // null = off (the default): every call goes to the driver at once
   bool submit_early_ = false;             // Submit was called by SubmitEarly (recording thread only)
+  RecWindow rec_window_;
 
   void Fail(const std::string& why) {
     if (lost_) return;
