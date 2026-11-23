@@ -2679,7 +2679,6 @@ struct Gen {
     const bool vs = p.is_vertex_shader;
     // Every register and system temp starts at 0.
     for (uint32_t i = 0; i < regs; ++i) a.OpMov(RegDest(i, UINT32_MAX, kXYZW), LF(0.0f));
-    if (opt.dxbc_salt) a.OpMov(R(base, kX), LU(opt.dxbc_salt));  // patch 0059: dead (cleared next), bench only
     for (uint32_t i = 0; i < kFixedTemps; ++i) a.OpMov(R(base + i), LU(0));
     if (uses_x1_final)
       for (uint32_t i = 0; i < 4; ++i) a.OpMov(Dest::X(1, i), LU(0));
@@ -3933,6 +3932,14 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
     }
     g.stat.instruction_count -= std::min(g.stat.instruction_count, removed);
     if (g.stat.mov_instruction_count >= removed) g.stat.mov_instruction_count -= removed;
+  }
+  // Patch 0059 (bench only): one dead `mov r[base].x, salt` so every shader's bytes - and the driver's cache key - are
+  // new. 23 Nov: written after the coalescing, whose dead-store pass (job 637) removed it when it was emitted with the
+  // body - so salted "first play" runs were answered from the driver's cache (jobs 2377f / j / l).
+  if (options.dxbc_salt) {
+    const uint32_t mov[5] = {54u | (5u << 24), 0x00100012u /* r#.x, immediate index */, g.base,
+                             0x00004001u /* 1-component immediate32 */, options.dxbc_salt};
+    g.code.insert(g.code.begin(), mov, mov + 5);
   }
 
   // Metadata (hlsl.cpp's Translation fields).
