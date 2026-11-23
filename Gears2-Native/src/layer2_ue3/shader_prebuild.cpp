@@ -103,12 +103,42 @@ REXCVAR_DEFINE_INT32(ue3_shader_prebuild_play_pace, -1, "Gears2",
                      "list (percent; it reads a file, then rests 3x as long at 25). Packages the game opens itself are "
                      "never paced; loading screens, menus and videos read at full speed. -1 = auto (25 on 8 logical "
                      "processors or fewer; else 50 - 0.6.5, was 100)");
+REXCVAR_DEFINE_STRING(ue3_shader_dump_dir, "", "Gears2",
+                      "Developer (23 Nov, the translator benchmark): every shader container found in the packages read "
+                      "(pixel and vertex, before any filtering) is written once to this folder as <ps|vs>-<XXH3>.ucode "
+                      "(host-order dwords, the recorded-shader format). Game-derived: local use only. Empty = off");
 REXCVAR_DEFINE_BOOL(ue3_shader_prebuild_done_list, true, "Gears2",
                     "0.6.3: remember packages read to the end (<shader cache>\\prebuild-done.bin: path, size, date, and "
                     "the recipe pack's shaders found in them) so the next start does not read them again; a changed or "
                     "damaged file is read again. false = every package is read at every start, as before");
 
 namespace {
+// --ue3_shader_dump_dir: one file per distinct microcode (the key is XXH3 of the big-endian bytes, as the renderer's).
+void DumpShader(bool vertex, const uint8_t* be, uint32_t size) {
+  static const std::string dir = REXCVAR_GET(ue3_shader_dump_dir);
+  if (dir.empty() || !be || !size || (size & 3) || size > 1024u * 1024u) return;
+  static std::mutex mu;
+  static std::unordered_set<uint64_t> seen;
+  static std::atomic<uint32_t> written{0};
+  const uint64_t h = XXH3_64bits(be, size);
+  {
+    std::lock_guard<std::mutex> lock(mu);
+    if (seen.empty()) {
+      std::error_code ec;
+      std::filesystem::create_directories(rex::to_path(dir), ec);
+    }
+    if (!seen.insert(h ^ (vertex ? 1ull : 0ull)).second) return;
+  }
+  std::vector<uint32_t> host(size / 4);
+  for (size_t i = 0; i < host.size(); ++i)
+    host[i] = (uint32_t(be[i * 4]) << 24) | (uint32_t(be[i * 4 + 1]) << 16) | (uint32_t(be[i * 4 + 2]) << 8) | be[i * 4 + 3];
+  char name[48];
+  std::snprintf(name, sizeof(name), "%s-%016llX.ucode", vertex ? "vs" : "ps", static_cast<unsigned long long>(h));
+  std::ofstream(rex::to_path(dir) / name, std::ios::binary).write(reinterpret_cast<const char*>(host.data()), host.size() * 4);
+  const uint32_t n = written.fetch_add(1) + 1;
+  if (n == 1 || n % 5000 == 0) REXLOG_INFO("ue3_shader_dump: {} shaders written to {}", n, dir);
+}
+
 
 uint32_t Be32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
 uint32_t Be16(const uint8_t* p) { return uint32_t(p[0]) << 8 | p[1]; }
@@ -409,6 +439,7 @@ class PackageScanner {
   // whole region (Hospital_03: 187 whole vs 16 code-only), Gears 3 the code only (5 vs 120). Both are handed over
   // until the renderer has seen which one this game draws (Ue3: XenosPrebuildVariantHits).
   void Add(bool vertex, const uint8_t* rec, uint32_t off, uint32_t size) {
+    DumpShader(vertex, rec + off, size);  // --ue3_shader_dump_dir (developer; off)
     if (vertex) {
       ++r_.vertex;
       // notes/78 C3: the renderer rebuilds recipe vertex shaders from these (a no-op without a recipe pack).
