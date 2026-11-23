@@ -78,6 +78,9 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/layer2_ue3/config_bundle.cpp
             src/layer2_ue3/config_install.cpp)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
+# The shared layer 2 headers (ue3/console.h, chat.h, name_tags.h...): ONE copy, in GN_LAYER0_HOME. Listed after this
+# game's own folder, so a header this game still keeps its own copy of (objects.h, launch.h...) is found first.
+target_include_directories(gn_layer2_ue3 PUBLIC ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer0_xenos)
 rexglue_apply_target_settings(gn_layer2_ue3)
 # notes/78 chapter recipes: Gears 2's package shader reader (patch 0068, game-free UE3 code that already reads Gears 3's

@@ -1,5 +1,5 @@
 // Layer 2 (Unreal Engine 3 on the 360): true 1080p (--gowN_native_lines) - the game's own FViewport reports the larger
-// screen. This header has a copy in each game's src/layer2_ue3/include/ue3 - keep the four identical. Our code (MIT).
+// screen. ONE copy, here: all four games build with this folder. Our code (MIT).
 //
 // Why (job 2189): with --gowN_native_lines=1080 the game draws 1920x1080 itself (the size function's 720 / 1280 are
 // changed), but its FViewport - the one object every UI system asks for "the screen's size" through its virtual

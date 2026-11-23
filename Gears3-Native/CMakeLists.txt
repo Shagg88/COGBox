@@ -80,6 +80,9 @@ add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/laye
             src/layer2_ue3/modcore/modcore.cpp
             src/layer2_ue3/playlist_names.cpp)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
+# The shared layer 2 headers (ue3/console.h, chat.h, name_tags.h...): ONE copy, in GN_LAYER0_HOME. Listed after this
+# game's own folder, so a header this game still keeps its own copy of (objects.h, launch.h...) is found first.
+target_include_directories(gn_layer2_ue3 PUBLIC ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 # modcore (MIT, from KiltedKernel's Gears 3 port): mod.ini rules, config fragments, bare-file mods (ue3/mod_extras.h)
 target_include_directories(gn_layer2_ue3 PRIVATE src/layer2_ue3)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer0_xenos)

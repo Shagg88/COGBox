@@ -1,5 +1,5 @@
 // Layer 2 (Unreal Engine 3): native mouse look's carry of the turn the engine would drop (GitHub #115, #175, #228).
-// The same file is in each port's src/layer2_ue3/include/ue3 (tested in Gears2-Native/tests/layer2_mouse_carry_test.cpp).
+// ONE copy, here (all four games use this folder) (tested in Gears2-Native/tests/layer2_mouse_carry_test.cpp).
 //
 // UE3's PlayerInput turns a MouseX / MouseY value into aTurn / aLookUp as value x MouseSensitivity (60.0 in every
 // game's [Engine.PlayerInput]) x FOVScale (camera FOV / 90), and the PlayerController keeps only whole rotation units

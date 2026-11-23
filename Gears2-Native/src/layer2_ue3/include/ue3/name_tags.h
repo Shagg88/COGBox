@@ -1,7 +1,7 @@
 // Layer 2 (Unreal Engine 3 on the 360): GitHub #353 - each online player's COGBox tag after their name, everywhere the
 // game shows it (party list, lobby, scoreboard). name_tags.cpp lives in Gears 2's layer 2 (shared: Gears 1, 3 and
-// Judgment build it from GN_LAYER0_HOME, each with its own ue3/objects.h); this header has a copy in each game's
-// src/layer2_ue3/include/ue3 - keep the four identical.
+// Judgment build it from GN_LAYER0_HOME, each with its own ue3/objects.h); this header is the ONE copy, built by
+// all four games from this folder.
 //
 // Once a second (a scan of the game's own objects, no network) every PlayerReplicationInfo is read: its UniqueId (the
 // XUID) and PlayerName. A player with a COGBox account (xenos/player_tags.h asks the master server once per player)

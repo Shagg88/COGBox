@@ -12,8 +12,8 @@
 //    "@F9" there presses that cheat key (GitHub #359: tests of the cheat key notices).
 // GitHub #359: a command from a cheat key (not --ue3_exec / scripted ones) gets an on-screen notice (xenos/cheat_popup.h)
 // with the cheat's state read back after it (ue3/auto_cheats.h DescribeKey) and a "cheat_popup:" log line.
-// console.cpp lives in Gears 2's layer 2 (shared: Gears 1, 3 and Judgment build it from GN_LAYER0_HOME); this header
-// has a copy in each game's src/layer2_ue3/include/ue3 - keep the four identical.
+// console.cpp lives in Gears 2's layer 2 (shared: Gears 1, 3 and Judgment build it from GN_LAYER0_HOME); this header is
+// the ONE copy, here (all four games use this folder).
 // Our code (MIT).
 #pragma once
 
