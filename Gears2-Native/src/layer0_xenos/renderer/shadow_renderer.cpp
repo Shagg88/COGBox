@@ -2534,9 +2534,28 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   };
   struct DisplayStats {
     uint64_t swaps = 0, shown = 0, no_source = 0, not_ready = 0, dropped = 0, lag_sum = 0, bytes = 0, bad = 0;
+    // Hitch log (RecompLauncher report 151185: "stutter" with a fine average): swap-to-swap interval of the game's own
+    // frames (before frame generation), its mean / max and the frames over 3x the running average and over 25 ms.
+    uint64_t intervals = 0, hitches = 0;
+    double interval_sum_ms = 0, interval_max_ms = 0;
   };
+  std::chrono::steady_clock::time_point last_swap_time_{};
+  double swap_interval_avg_ms_ = 0;  // running average (1/32 weight) for the hitch test
   void RequestDisplay(const RegisterFile& regs, uint32_t fb_phys, uint32_t fb_width, uint32_t fb_height) {
     ++display_stats_.swaps;
+    {
+      const auto swap_now = std::chrono::steady_clock::now();
+      if (last_swap_time_ != std::chrono::steady_clock::time_point{}) {
+        const double dt = std::chrono::duration<double, std::milli>(swap_now - last_swap_time_).count();
+        DisplayStats& ds = display_stats_;
+        ++ds.intervals;
+        ds.interval_sum_ms += dt;
+        ds.interval_max_ms = std::max(ds.interval_max_ms, dt);
+        if (swap_interval_avg_ms_ > 0 && dt > 25.0 && dt > 3.0 * swap_interval_avg_ms_) ++ds.hitches;
+        swap_interval_avg_ms_ = swap_interval_avg_ms_ > 0 ? swap_interval_avg_ms_ + (dt - swap_interval_avg_ms_) / 32.0 : dt;
+      }
+      last_swap_time_ = swap_now;
+    }
     auto it = display_sources_.find(fb_phys);
     if (!display_first_logged_) {
       display_first_logged_ = true;
@@ -3952,9 +3971,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const OursStats& o = ours_stats_;
       REXLOG_INFO("gow2_present: ours frames {}-{}: swaps {} | presented {} | refresh failed {} | gamma pass not run {} "
                   "| frame images delivered {} | no matching front-buffer copy {} | unpack passes left out so far: SMAA {}, "
-                  "presenter {}",
+                  "presenter {} | game frame interval mean {:.2f} ms max {:.1f} ms, hitches {} (over 3x the average and 25 ms)",
                   frame_ + 1 - uint64_t(log_every_), frame_, display_stats_.swaps, o.presented, o.refresh_failed,
-                  o.not_presented, o.images, display_stats_.no_source, smaa_unpacks_skipped_, present_folds_);
+                  o.not_presented, o.images, display_stats_.no_source, smaa_unpacks_skipped_, present_folds_,
+                  display_stats_.intervals ? display_stats_.interval_sum_ms / double(display_stats_.intervals) : 0.0,
+                  display_stats_.interval_max_ms, display_stats_.hitches);
       ours_stats_ = {};
       display_stats_ = {};
       present_stats_ = {};
