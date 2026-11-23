@@ -260,6 +260,8 @@ class TextureCache {
     std::string failure;  // non-empty: this guest texture can't be represented (stand-in)
     bool load_failed = false;  // 0.6.2 (#311): the last Load did not complete; Lookup loads it again (once a frame)
     uint64_t retry_frame = ~0ull;
+    bool deferred = false;  // 23 Nov (stutter): new texture held back - this frame's load budget was used (loads later)
+    uint64_t deferred_frame = ~0ull;  // first frame it was held back (loaded anyway 8 frames later)
     uint32_t retry_count = 0;
     bool dimension_mismatch = false;  // the failure is a fetch-dimension mismatch (zero view, see SetMismatchZero)
     bool gpu_storage = false;  // created with UAV access: loads go through the GPU untile
@@ -333,6 +335,9 @@ class TextureCache {
   };
   std::unordered_map<uint64_t, PackShared> pack_shared_;
   uint64_t frame_now_ = 0;  // Lookup's frame (ReleasePack stamps it)
+  double frame_load_ms_ = 0.0;      // 23 Nov: time spent loading new textures this frame (load budget)
+  uint32_t deferred_this_frame_ = 0;  // new textures held back this frame
+  uint64_t deferred_total_ = 0;
   uint64_t pack_reads_ = 0, pack_reuses_ = 0, pack_freed_ = 0, pack_logged_reads_ = ~0ull, pack_logged_reuses_ = ~0ull;
   // Drops e's reference to its shared pack texture (the texture stays in pack_shared_); e.texture = 0.
   void ReleasePack(Entry& e);

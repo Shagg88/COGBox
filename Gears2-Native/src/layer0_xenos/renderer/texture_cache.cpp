@@ -46,6 +46,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_force_trilinear, false, "Gears2",
                     "Blend between mip levels (trilinear) on filtered, mipmapped textures the game samples with point mips");
 REXCVAR_DEFINE_INT32(gow2_texture_cpu_threads, 0, "Gears2",
                      "0.5.1: threads for a big CPU-path texture level (0 = automatic, up to 8; 1 = one thread, as before)");
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_texture_load_budget_ms, 0.0, "Gears2",
+                      "23 Nov (first-play stutter: G2 loaded 377 new textures in one frame = 59 ms at gameplay start): once "
+                      "new-texture loads in a frame have taken this many ms, further NEW textures wait for a later frame "
+                      "(a stand-in is drawn meanwhile; each one loads within 8 frames at most). Textures already loaded are "
+                      "never held back. 0 = off (load everything at once, as before)");
 REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
                       "Diagnostic (job 299): log a frame whose texture loads took longer than this many ms, split into "
                       "phases - page watch arming, page hashing, host texture creation, GPU-path copy + untile, CPU-path "
@@ -786,7 +791,7 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
     bool slot_load_failed = false;
     if (sc.valid)
       for (const Entry* se : sc.entries)
-        if (se && se->load_failed) slot_load_failed = true;
+        if (se && (se->load_failed || se->deferred)) slot_load_failed = true;  // 23 Nov: held back = look again
     // 19 Nov (review of 12 Nov, P5; job 2106: ~700 slot lookups a frame after ~17 watch-epoch changes a frame): the
     // slot's result was made at an older epoch - a write or resolve SOMEWHERE since. If its own textures' pages were
     // not written (the same version test Lookup makes) the result still holds: no map lookups, no sampler and view
@@ -982,8 +987,19 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   }
   if (it == entries_.end()) {
     const uint64_t epoch_before = watch_.Epoch();  // a write during the load must trigger the next re-check
+    if (const double budget = REXCVAR_GET(gow2_renderer_texture_load_budget_ms); budget > 0.0 && frame_load_ms_ >= budget) {
+      auto d = std::make_unique<Entry>();  // 23 Nov: held back - loaded on a later frame (see the cvar)
+      d->deferred = true;
+      d->deferred_frame = frame;
+      ++deferred_this_frame_;
+      ++deferred_total_;
+      it = entries_.emplace(key, std::move(d)).first;
+      return done(*it->second, "deferred: this frame's texture-load budget is used");
+    }
     auto e = std::make_unique<Entry>();
+    const auto load_t0 = std::chrono::steady_clock::now();
     Load(*e, tf, host_kind);
+    frame_load_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - load_t0).count();
     e->loaded_frame = frame;
     e->freed_at_load = freed_total_;  // patch 0149
     if (probe_base) e->probe_load_hash = GuestHash(*e);
@@ -997,6 +1013,28 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
     return done(*it->second, "new");
   }
   Entry& e = *it->second;
+  if (e.deferred) {  // 23 Nov: a new texture held back on an earlier frame - load it now unless this frame is full too
+    const double budget = REXCVAR_GET(gow2_renderer_texture_load_budget_ms);
+    if (frame == e.deferred_frame || (budget > 0.0 && frame_load_ms_ >= budget && frame < e.deferred_frame + 8)) {
+      ++deferred_this_frame_;
+      return done(e, "deferred: this frame's texture-load budget is used");
+    }
+    const uint64_t epoch_before = watch_.Epoch();
+    e.deferred = false;
+    const auto load_t0 = std::chrono::steady_clock::now();
+    Load(e, tf, host_kind);
+    frame_load_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - load_t0).count();
+    e.loaded_frame = frame;
+    e.freed_at_load = freed_total_;
+    if (probe_base) e.probe_load_hash = GuestHash(e);
+    if (e.texture) {
+      ++stats_.textures;
+      stats_.host_bytes += e.host_bytes;
+    }
+    e.checked_frame = frame;
+    e.callbacks_at_check = epoch_before;
+    return done(e, "new (held back before)");
+  }
   if (!e.texture) return done(e, "stand-in");
   if (e.load_failed && e.retry_count >= 16) e.load_failed = false;  // a failure that repeats: stop trying (and logging)
   if (e.load_failed && e.retry_frame != frame) {
@@ -1405,6 +1443,16 @@ void TextureCache::EndFrame(uint64_t frame) {
     }
     g_phase = {};
   }
+  if (deferred_this_frame_) {  // 23 Nov: texture-load budget
+    static uint32_t dlog = 0;
+    if (dlog < 40 || (frame % 3000) == 0) {
+      ++dlog;
+      REXLOG_INFO("gow2_texture_budget: frame {}: new-texture loads {:.1f} ms, {} held back for a later frame ({} so far)",
+                  frame, frame_load_ms_, deferred_this_frame_, deferred_total_);
+    }
+  }
+  frame_load_ms_ = 0.0;
+  deferred_this_frame_ = 0;
   // Patch 0149 (deep-dive review): scaled resolve textures (scale > 1) were never freed and are outside the cap; one
   // unused for 3600 frames is dropped now (it is made again from its resolve if a draw needs it).
   if ((frame & 511u) == 0 && frame > 3600 && !scaled_entries_.empty()) {
