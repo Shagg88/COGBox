@@ -2392,8 +2392,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     // Gears 3 Horde ribbon / attribute-modifier progress (Discord): the title keeps it in Live stats, which the SDK dropped.
-    // SDK patch 118 keeps them in <user>\stats\<title>.txt (only when the runtime has the switch).
-    if (g == Game::Gears3 && cap_rt(env, "xam_stats_store")) a.push_back("--xam_stats_store=true");
+    // SDK patch 123 keeps them in <user>\stats\<title>.txt (only when the runtime has the switch). All four games
+    // (Shagg 23 Nov: every fix for all four; Judgment's stats reset on relaunch, GitHub #416, may be the same loss).
+    if (cap_rt(env, "xam_stats_store")) a.push_back("--xam_stats_store=true");
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
     if (g == Game::Gears2 && avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #237: press Y in game
         a.push_back("--gow2_split_vertical=true");
@@ -2495,7 +2496,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         a.insert(a.end(), { "--mnk_mode=true", "--mnk_mouse=true", "--mnk_sensitivity=" + fmt_double(s.f("Sens") * 2.0 / boost) });
         if (nativeMouse) a.insert(a.end(), { "--ue3_mouse_look=true", "--ue3_mouse_scale=" + fmt_double(s.f("Sens")) });
         // GitHub #420: split screen with keyboard + mouse and a pad - the keyboard / mouse is player 1, pads from player 2
-        // (SDK patch 117; before, the first pad also drove player 1)
+        // (SDK patch 122; before, the first pad also drove player 1)
         if (avail("Players") && s.i("Players") > 0 && cap_rt(env, "mnk_own_player")) a.push_back("--mnk_own_player=true");
         // GitHub #52: keep the turn speed per count the same whatever Field of view (%) is (UE3 scales the mouse by the
         // FOV). Only the FOV % here: the ultrawide patch (gow3_aspect) widens the projection, not FOVAngle, so

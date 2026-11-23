@@ -21,7 +21,7 @@ index 4fae00cf..7f73b6ad 100644
  }
  }  // namespace
  
-+// ---- Gears2-Native SDK patch 118: a local Live stats store (COGBox: Gears 3 Horde ribbon / attribute-modifier progress
++// ---- Gears2-Native SDK patch 123: a local Live stats store (COGBox: Gears 3 Horde ribbon / attribute-modifier progress
 +// back at 0 after a restart - the stats calls below only logged, so whatever the title keeps in Live stats was lost).
 +// XSessionWriteStats / XSessionFlushStats: XSESSION_VIEW_PROPERTIES {dwViewId, dwNumProperties, pProperties} (12 bytes)
 +// each, XUSER_PROPERTY 24 bytes (id +0, XUSER_DATA type +8, value +16 - as session_marshal.h). Stored per title, XUID,

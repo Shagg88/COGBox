@@ -1,0 +1,145 @@
+diff --git a/src/system/xmemory.cpp b/src/system/xmemory.cpp
+index d3eea62..7f7f4b5 100644
+--- a/src/system/xmemory.cpp
++++ b/src/system/xmemory.cpp
+@@ -10,6 +10,9 @@
+  */
+ 
+ #include <algorithm>
++#include <atomic>
++#include <climits>
++#include <mutex>
+ #include <cstdlib>
+ #include <cstring>
+ #include <utility>
+@@ -980,6 +983,54 @@ uint32_t FromPageAccess(rex::memory::PageAccess protect) {
+   return memory::kMemoryProtectNoAccess;
+ }
+ 
++namespace {
++// COGBox SDK patch 121: search hints for BaseHeap::AllocRange, kept OUTSIDE
++// BaseHeap so the class layout (and every game exe built against it) stays
++// as it is. Every page below `low` and every page above `high` is in use, so
++// a scan may start there and still pick exactly the page the full scan would.
++// Pages only become free in Release / Reset / Restore / Initialize, which
++// widen the hints again. Read and written under the heap's own mutex
++// (Initialize / Reset / Restore run before or outside guest allocation).
++struct AllocHints {
++  const void* heap = nullptr;
++  uint32_t low = 0;
++  uint32_t high = UINT32_MAX;
++};
++constexpr size_t kMaxAllocHints = 32;
++AllocHints g_alloc_hints[kMaxAllocHints];
++std::atomic<size_t> g_alloc_hint_count{0};
++std::mutex g_alloc_hint_add_mutex;
++AllocHints* FindAllocHints(const void* heap) {
++  size_t n = g_alloc_hint_count.load(std::memory_order_acquire);
++  for (size_t i = 0; i < n; ++i) {
++    if (g_alloc_hints[i].heap == heap) {
++      return &g_alloc_hints[i];
++    }
++  }
++  return nullptr;
++}
++// Full range again (or a new entry); nullptr when the table is full - then
++// that heap just keeps the full scan.
++void ResetAllocHints(const void* heap, size_t page_count) {
++  AllocHints* h = FindAllocHints(heap);
++  if (!h) {
++    std::lock_guard<std::mutex> lock(g_alloc_hint_add_mutex);
++    h = FindAllocHints(heap);
++    if (!h) {
++      size_t n = g_alloc_hint_count.load(std::memory_order_relaxed);
++      if (n >= kMaxAllocHints) {
++        return;
++      }
++      g_alloc_hints[n].heap = heap;
++      h = &g_alloc_hints[n];
++      g_alloc_hint_count.store(n + 1, std::memory_order_release);
++    }
++  }
++  h->low = 0;
++  h->high = page_count ? uint32_t(page_count - 1) : UINT32_MAX;
++}
++}  // namespace
++
+ BaseHeap::BaseHeap() : membase_(nullptr), heap_base_(0), heap_size_(0), page_size_(0) {}
+ 
+ BaseHeap::~BaseHeap() = default;
+@@ -1119,6 +1170,7 @@ void BaseHeap::Initialize(memory::Memory* memory, uint8_t* membase, HeapType hea
+   host_address_offset_ = host_address_offset;
+   page_table_.resize(heap_size / page_size);
+   unreserved_page_count_ = uint32_t(page_table_.size());
++  ResetAllocHints(this, page_table_.size());
+ }
+ 
+ void BaseHeap::Dispose() {
+@@ -1254,6 +1306,9 @@ bool BaseHeap::Restore(stream::ByteStream* stream) {
+   for (size_t i = 0; i < page_table_.size(); i++) {
+     auto& page = page_table_[i];
+     page.qword = stream->Read<uint64_t>();
++    if (i == 0) {
++      ResetAllocHints(this, page_table_.size());
++    }
+     if (!page.state) {
+       // Unallocated.
+       continue;
+@@ -1320,6 +1375,7 @@ bool BaseHeap::Restore(stream::ByteStream* stream) {
+ void BaseHeap::Reset() {
+   // TODO(DrChat): protect pages.
+   std::memset(page_table_.data(), 0, sizeof(PageEntry) * page_table_.size());
++  ResetAllocHints(this, page_table_.size());
+   // TODO(Triang3l): Remove access callbacks from pages if this is a physical
+   // memory heap.
+ }
+@@ -1503,6 +1559,38 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t
+   uint32_t end_page_number = UINT_MAX;
+   uint32_t page_scan_stride = alignment >> page_size_shift_;
+   uint32_t max_base_page_number = high_page_number + 1 - page_count;
++  // Patch 121: skip the runs of used pages at both ends (see AllocHints).
++  // Same result as the full scan: no base below hints->low is free, and a
++  // range ending above hints->high can't be all free.
++  if (AllocHints* hints = FindAllocHints(this)) {
++    uint32_t& free_low_hint_ = hints->low;
++    uint32_t& free_high_hint_ = hints->high;
++    while (free_low_hint_ < page_table_.size() && page_table_[free_low_hint_].state != 0) {
++      ++free_low_hint_;
++    }
++    while (free_high_hint_ != UINT32_MAX && free_high_hint_ < page_table_.size() &&
++           page_table_[free_high_hint_].state != 0) {
++      --free_high_hint_;
++    }
++    if (free_low_hint_ >= page_table_.size() || free_high_hint_ == UINT32_MAX ||
++        free_high_hint_ >= page_table_.size()) {
++      // Every page used (or hints unset): fall through to the full scan.
++    } else if (top_down) {
++      if (free_high_hint_ + 1 >= page_count) {
++        max_base_page_number = std::min(max_base_page_number, free_high_hint_ + 1 - page_count);
++      } else {
++        max_base_page_number = 0;
++        low_page_number = std::max(low_page_number, 1u);  // nothing fits: loop runs 0 times
++      }
++    } else if (free_low_hint_ > low_page_number) {
++      // Round up to the scan stride from low_page_number, as the loop steps.
++      uint32_t skip = free_low_hint_ - low_page_number;
++      skip = rex::round_up(skip, page_scan_stride);
++      low_page_number = skip > max_base_page_number - std::min(max_base_page_number, low_page_number)
++                            ? max_base_page_number + 1
++                            : low_page_number + skip;
++    }
++  }
+   if (top_down) {
+     max_base_page_number -= max_base_page_number % page_scan_stride;
+     for (int64_t base_page_number = max_base_page_number; base_page_number >= low_page_number;
+@@ -1713,6 +1801,10 @@ bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
+     page_entry.qword = 0;
+     unreserved_page_count_++;
+   }
++  if (AllocHints* hints = FindAllocHints(this)) {
++    hints->low = std::min(hints->low, base_page_number);
++    hints->high = hints->high == UINT32_MAX ? end_page_number : std::max(hints->high, end_page_number);
++  }
+ 
+   if (!SyncHostPageAccess(base_page_number, end_page_number)) {
+     return false;

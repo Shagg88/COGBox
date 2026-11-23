@@ -13,7 +13,7 @@ index 969e3b40..b266f25b 100644
  #include <rex/system/kernel_state.h>
  #include <rex/system/xam/user_profile.h>
  
-+// Gears2-Native SDK patch 119 (COGBox GitHub #416 / #424, Judgment stats / stars "lost after an update"): the
++// Gears2-Native SDK patch 124 (COGBox GitHub #416 / #424, Judgment stats / stars "lost after an update"): the
 +// title-specific settings live in <content>/<title>/profile/<gamertag>/ (ContentManager::ResolveGameUserContentPath) -
 +// keyed by the gamertag TEXT. A gamertag that changes (renamed in the launcher, a launcher update or a profile setting
 +// that writes it differently, cleaning of a character) points at an empty folder: the game reads defaults and writes a
@@ -49,12 +49,12 @@ index 969e3b40..b266f25b 100644
      auto setting_id = fmt::format("{:08X}", setting->setting_id);
      auto file_path = content_dir / setting_id;
 +    std::error_code fec;
-+    if (REXCVAR_GET(xam_profile_follow_rename) && !std::filesystem::exists(file_path, fec)) {   // SDK patch 119
++    if (REXCVAR_GET(xam_profile_follow_rename) && !std::filesystem::exists(file_path, fec)) {   // SDK patch 124
 +      const auto other = FindOtherNameSetting(content_dir, setting_id);
 +      if (!other.empty()) {
 +        std::filesystem::create_directories(content_dir, fec);
 +        std::filesystem::copy_file(other, file_path, std::filesystem::copy_options::skip_existing, fec);
-+        REXSYS_WARN("SDK patch 119: no profile setting {} for gamertag folder '{}' - copied from '{}' (the newest of this "
++        REXSYS_WARN("SDK patch 124: no profile setting {} for gamertag folder '{}' - copied from '{}' (the newest of this "
 +                    "game's other gamertag folders){}", setting_id, content_dir.filename().string(),
 +                    other.parent_path().filename().string(), fec ? " - copy FAILED: " + fec.message() : std::string());
 +      }

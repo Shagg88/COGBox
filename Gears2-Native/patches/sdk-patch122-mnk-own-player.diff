@@ -8,7 +8,7 @@ index 52e00737..ee789e30 100644
  
 +#include <rex/cvar.h>
 +
-+// Gears2-Native SDK patch 117 (COGBox GitHub #420): keyboard + mouse and a pad both drove player 1 in split screen -
++// Gears2-Native SDK patch 122 (COGBox GitHub #420): keyboard + mouse and a pad both drove player 1 in split screen -
 +// the keyboard / mouse device (synthetic) and the first pad (ordinal 0) were both given user 0. With
 +// --mnk_own_player the keyboard / mouse keeps player 1 and every pad moves one slot on (pad 1 = player 2, ...).
 +REXCVAR_DEFINE_BOOL(mnk_own_player, false, "Input",
