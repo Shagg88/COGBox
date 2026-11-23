@@ -332,6 +332,7 @@ class VulkanBackend final : public Backend {
     if (!CreateLayouts(error)) return false;
     ready_ = true;
     if (!CreateDefaults(error)) { ready_ = false; return false; }
+    StartRecordThread();  // off by default: nothing changes unless --gow2_renderer_vulkan_record_thread
     REXLOG_INFO("gow2_renderer: Vulkan backend: {} (driver {}, Vulkan {}.{}.{}, built with headers 1.4.{}), queue family "
                 "{}, {} MB device memory, push descriptors {}{}",
                 device_name_, driver_name_, VK_API_VERSION_MAJOR(device_api_), VK_API_VERSION_MINOR(device_api_),
@@ -512,6 +513,9 @@ class VulkanBackend final : public Backend {
     EndPass(7);
     if (device) *device = reinterpret_cast<void*>(device_);
     if (command_buffer) *command_buffer = reinterpret_cast<void*>(C());
+    // Recording thread: wait until it has replayed everything (the pass end and barriers above included), then the
+    // caller's thread records cmd_ itself - the SDK's calls and ours - until EndNativeVulkan or the list's Submit.
+    if (rec_) rec_->SetDirect(true, vkrec::kWhyNative);
     return true;
   }
   void* NativeTextureVulkan(TextureHandle texture, uint32_t layout) override {
@@ -555,6 +559,7 @@ class VulkanBackend final : public Backend {
     bound_index_ = VK_NULL_HANDLE;
     dirty_sets_ = dirty_cb_ = dirty_viewport_ = dirty_scissor_ = dirty_stencil_ = dirty_blend_ = true;
     dirty_views_ = dirty_samplers_ = true;
+    if (rec_) rec_->SetDirect(false, vkrec::kWhyNative);  // the barrier above went in directly; encode again from here
   }
   void ReleaseImport(TextureHandle, uint32_t) override {}
 
@@ -1713,6 +1718,15 @@ class VulkanBackend final : public Backend {
   // so the adaptive form (--gow2_renderer_submit_draws=-1) may ask for it as on D3D12.
   uint64_t LastSubmittedFence() override { return submitted_; }
   bool HasEarlySubmit() const override { return true; }
+  // Off: Submit, as the default gpu::Backend::SubmitEarly. Recording thread: the same Submit, which hands the list to
+  // the thread without waiting for it (the lists are submitted in order; the frame's Submit and every wait drain).
+  uint64_t SubmitEarly() override {
+    if (!rec_) return Submit();
+    submit_early_ = true;
+    const uint64_t value = Submit();
+    submit_early_ = false;
+    return value;
+  }
   uint64_t Submit() override {
     if (!ready_ || lost_) return submitted_;
     if (!cmd_) return submitted_;  // nothing recorded: the last value is already the right one to wait for
@@ -1746,6 +1760,10 @@ class VulkanBackend final : public Backend {
     r = vk_.vkQueueSubmit2(queue_, 1, &si, VK_NULL_HANDLE);
     UnlockQueue();
     const auto sub_t3 = SubClock::now();
+    // Recording thread: the End and the submit above were only encoded. The frame's Submit waits until the thread has
+    // made them (presentation order and our fence waits rely on the work being in the queue when Submit returns, as
+    // D3D12's Submit drains); an early submit only hands the block over (D3D12's Kick).
+    if (rec_ && r == VK_SUCCESS && !RecordThreadSubmitted()) return submitted_;
     if (r != VK_SUCCESS) { Fail(VkErr("vkQueueSubmit2", r)); return submitted_; }
     submitted_ = value;
     slots_[slot_].fence = value;
@@ -1789,6 +1807,10 @@ class VulkanBackend final : public Backend {
   void WaitForFence(uint64_t fence) override {
     if (!ready_ || lost_ || !fence || CompletedFence() >= fence) return;
     if (fence > submitted_) Submit();  // waiting for work still being recorded: send it first
+    if (rec_) {  // recording thread: every list up to `fence` must really be in the queue before we wait on it
+      rec_->Drain(vkrec::kWhyWait);
+      if (!RecordThreadOk()) return;
+    }
     const auto t0 = std::chrono::steady_clock::now();
     VkSemaphoreWaitInfo wi{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
     wi.semaphoreCount = 1;
@@ -3424,6 +3446,7 @@ class VulkanBackend final : public Backend {
     StopOccWaiter();  // perf 22 Nov: before anything it waits on is destroyed
     if (device_) {
       if (cmd_) Submit();
+      StopRecordThread();  // everything replayed and submitted; the table has the driver's entries again
       {
         std::lock_guard<std::mutex> lock(job_mutex_);
         stop_workers_ = true;
@@ -4205,6 +4228,55 @@ class VulkanBackend final : public Backend {
     not_done_.push_back(what);
     REXLOG_WARN("gow2_renderer: Vulkan backend: {} is not implemented yet", what);
   }
+  // ---- the recording thread (--gow2_renderer_vulkan_record_thread; vulkan_record_thread.inl) ----
+  // Thread ownership while it runs: the recording thread owns the command buffers, their pools and queue_ (it alone
+  // calls vkResetCommandPool / vkBegin/EndCommandBuffer / vkCmd* / vkQueueSubmit2 on them), and touches nothing of the
+  // backend but rec_'s own block queue. Everything else stays the caller's: cmd_, slots_, submitted_, the dirty state,
+  // descriptor pools and sets, the ring, readbacks, queries' CPU bookkeeping and every destroy (all fence-deferred).
+  // The rule that keeps that safe: a GPU fence value can only complete after the thread has submitted its list, so
+  // anything freed or reused once CompletedFence() reaches a value is never named by a call still waiting to be replayed.
+  void StartRecordThread() {
+    if (!options_.vk_record_thread) return;
+    if (vkrec::g_rec) {
+      REXLOG_WARN("gow2_renderer: Vulkan recording thread already in use by another backend - this one records inline");
+      return;
+    }
+    rec_ = std::make_unique<vkrec::Recorder>();
+    if (ext_) {  // someone else's queue: the thread takes the owner's lock around each submit, as Submit does inline
+      rec_->queue_lock = ext_->lock;
+      rec_->queue_unlock = ext_->unlock;
+      rec_->queue_lock_user = ext_->lock_user;
+    }
+    vkrec::Install(*rec_, vk_, set_depth_bias2_);
+    rec_->Start();
+    REXLOG_INFO("gow2_renderer: Vulkan command recording on its own thread (--gow2_renderer_vulkan_record_thread)");
+  }
+  void StopRecordThread() {
+    if (!rec_) return;
+    rec_->Stop();
+    vkrec::Uninstall(*rec_, vk_, set_depth_bias2_);
+    stats_.recording_wait_ms = rec_->WaitMsTotal();
+    rec_.reset();
+  }
+  // Submit's hand-over (see Submit). False: the thread failed (the backend stops, as when an inline call fails).
+  bool RecordThreadSubmitted() {
+    rec_->SetDirect(false, vkrec::kWhyNative);  // a native window ends with its list (callers need not EndNativeVulkan)
+    if (submit_early_) rec_->Kick();
+    else rec_->Drain(vkrec::kWhySubmit);
+    stats_.recording_wait_ms = rec_->WaitMsTotal();
+    return RecordThreadOk();
+  }
+  bool RecordThreadOk() {
+    const VkResult e = rec_->Error();
+    if (e == VK_SUCCESS) return true;
+    // Nothing after the failure reached the queue: shutdown waits only for what the thread really submitted.
+    submitted_ = std::min(submitted_, rec_->SubmittedValue());
+    Fail(VkErr(rec_->ErrorWhat() ? rec_->ErrorWhat() : "Vulkan recording thread", e) + " on the recording thread");
+    return false;
+  }
+  std::unique_ptr<vkrec::Recorder> rec_;  // null = off (the default): every call goes to the driver at once
+  bool submit_early_ = false;             // Submit was called by SubmitEarly (recording thread only)
+
   void Fail(const std::string& why) {
     if (lost_) return;
     lost_ = true;
