@@ -27,6 +27,7 @@
 #include <rex/ppc/func.h>
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
+#include <ue3/profile_tools.h>
 
 #include <atomic>
 #include <cstdlib>
@@ -50,6 +51,12 @@ REXCVAR_DEFINE_STRING(gow3_unlock_chapter_settings, "", "Gears3",
 REXCVAR_DEFINE_BOOL(gow3_profile_log, false, "Gears3",
                     "Developers: log each profile setting the game reads (id, value, class, caller) once per change - "
                     "open Select Chapter to see the chapter progress ids. Read-only");
+// 23 Nov parity pass (Shagg 10:42: the profile debugging tools in all four games): Gears 2 / Judgment's test-only
+// profile writer, through the same getter (layer 2 ue3/profile_tools.h).
+REXCVAR_DEFINE_BOOL(gow3_profile_100, false, "Gears3",
+                    "Test only: write the profile values in gow3_profile_100_file into the in-memory profile, so the "
+                    "game saves them (100% campaign test profile). Changes the profile when it saves");
+REXCVAR_DEFINE_STRING(gow3_profile_100_file, "", "Gears3", "Text file of id=value lines for gow3_profile_100");
 
 namespace {
 
@@ -88,6 +95,7 @@ bool IsGearProfileSettings(const uint8_t* base, uint32_t self) {
 }
 
 bool g_insane = false, g_log = false;
+ue3::Profile100 g_p100;   // --gow3_profile_100
 std::vector<std::pair<int32_t, uint32_t>> g_chapter_masks;  // id -> mask (gow3_unlock_chapter_settings)
 
 void ParseChapterSettings(const std::string& text) {
@@ -139,6 +147,7 @@ void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   const uint32_t lr = uint32_t(ctx.lr);
   g_get_int_orig(ctx, base);
   if (!value_addr) return;
+  g_p100.OnRead(base, self, id, value_addr, ctx.r3.u32, false);
   if (g_log) LogRead(base, self, id, Load32(base, value_addr), ctx.r3.u32, lr);
   for (const auto& [cid, mask] : g_chapter_masks) {
     if (cid != id || !IsGearProfileSettings(base, self)) continue;
@@ -192,7 +201,8 @@ void Gow3InstallUnlocks() {
       REXLOG_WARN("gow3_unlock_all_chapters: no chapter setting ids (gow3_unlock_chapter_settings) - Insane only; run "
                   "with --gow3_profile_log=true and open Select Chapter to find them");
   }
-  if (!g_insane && !g_log && g_chapter_masks.empty()) return;
+  if (REXCVAR_GET(gow3_profile_100)) g_p100.Load("gow3_profile_100", REXCVAR_GET(gow3_profile_100_file));
+  if (!g_insane && !g_log && g_chapter_masks.empty() && !g_p100.On()) return;
   rex::Runtime* rt = rex::Runtime::instance();
   auto* d = rt ? rt->function_dispatcher() : nullptr;
   const uint8_t* base = rt ? rt->virtual_membase() : nullptr;

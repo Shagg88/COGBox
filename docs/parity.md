@@ -23,9 +23,6 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `hook ShadowCap` | G2 G3 J | G1 | |
 | `option texture_stats_off` | G2 | G3 J (G1 n/a) | Canary's G2-only patch (RHIGetTextureMemoryStats -> FALSE); no leaf of its shape in J's code [V]; G3 / J need the streamer's budget call found first. G1 doesn't apply: Canary's G1 texture patch is only the pool size [S notes], no such leaf in G1 [V] |
 | `hook TextureStatsOff` | G2 | G3 J | |
-| `option profile_100` | G2 J | G1 G3 | |
-| `option profile_100_file` | G2 J | G1 G3 | |
-| `option profile_log` | G1 G3 J | G2 | |
 | `option ultrawide` | G2 G3 J | G1 | G1 has its own: no_aspect_lock, ViewFov (check what is missing) |
 | `option aspect` | G2 G3 J | G1 | |
 | `option ultrawide_fov_exact` | G2 G3 | G1 J | |
@@ -156,6 +153,9 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `option no_film_grain` | J | |
 | `option log_weapon_state` | - | (all four since 23 Nov: one layer 2 copy, `ue3/weapon_state_log.h`; on by default in G1, off in G2 / G3 / J until a run shows no hitch - Shagg to flip) |
 | `option show_fps` | - | (all four since 23 Nov: G2 / G3 a data patch; J / G1 the engine's own `stat fps` / `stat unit` through the console, logged when the engine runs them) |
+| `option profile_100` | - | (all four since 23 Nov, Shagg 10:42: profile debugging tools; one layer 2 copy, `ue3/profile_tools.h`, off by default) |
+| `option profile_100_file` | - | (with profile_100) |
+| `option profile_log` | - | (all four since 23 Nov) |
 | `option menu_fps` | - | (all four since 23 Nov: G1 / G2 / J share layer 2 `ue3/menu_fps.h`; G3 keeps its own listener) |
 | `hook MaxTickRate` | G2 G3 J | G1's 2006 engine has no GetMaxTickRate (no frame smoothing; no function of that shape in its code [V], J's matches at 0x8255E200); G1 limits in `PresentInterval` |
 | `option tick_floor_fps` | G2 G3 J | G1: no engine tick-rate read to floor (no GetMaxTickRate, see above); its limiter is the render thread's present interval |
