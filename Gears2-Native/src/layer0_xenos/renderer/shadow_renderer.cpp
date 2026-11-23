@@ -462,6 +462,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       options.vk_barrier_src_stages = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "work";          // 0107
       options.vk_skip_memory_barriers = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "skip_memory";  // 0108
       options.vk_record_thread = REXCVAR_GET(gow2_renderer_vulkan_record_thread);  // Vulkan recording thread
+      options.vk_viewset_hi = REXCVAR_GET(gow2_renderer_vulkan_viewset_hi);  // perf 22 Nov (H8)
       options.vk_record_thread_log = uint32_t(std::max(0, REXCVAR_GET(gow2_renderer_vulkan_record_thread_log)));
     }
     // Notes/68: on Vulkan, --gow2_present=ours runs our whole present (gamma, SMAA, HDR) into our own image without a

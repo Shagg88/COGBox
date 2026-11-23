@@ -1194,8 +1194,14 @@ class VulkanBackend final : public Backend {
     set_sampler_count_ = samplers ? sampler_count : 0u;
     if (vchg) {
       dirty_views_ = true;
+      // perf 22 Nov (H8): slots at or past vn were never set (default); the highest set slot + 1 bounds the work below and
+      // ViewSet's key - the default slots after it are the same in every table.
+      uint32_t hi = vn;
+      while (hi > 0 && views_[hi - 1] == TextureView{}) --hi;
+      if (!options_.vk_viewset_hi) hi = kViewBindings;  // the old way: all 96 slots
+      view_hi_ = hi;
       bound_view_count_ = 0;
-      for (uint32_t i = 0; i < kViewBindings; ++i)
+      for (uint32_t i = 0; i < hi; ++i)
         if (views_[i].texture) bound_views_[bound_view_count_++] = uint8_t(i);
     }
     if (schg) dirty_samplers_ = true;
@@ -2855,9 +2861,13 @@ class VulkanBackend final : public Backend {
   VkDescriptorSet ViewSet() {
     // perf 22 Nov: the key holds each slot's texture generation (bumped when a texture is destroyed or remade) and is
     // compared in full on a hit - the hash alone could hand back another table's set (D3D12 compares exactly).
-    view_key_.resize(size_t(kViewBindings) * 2);
-    uint64_t h = 0xCBF29CE484222325ull;
-    for (uint32_t i = 0; i < kViewBindings; ++i) {
+    // perf 22 Nov (H8): only the slots up to the highest set one (view_hi_) - the rest are default in every table; the
+    // count itself is part of the key, so tables of different lengths never compare equal.
+    const uint32_t hi = view_hi_;
+    view_key_.resize(size_t(hi) * 2 + 1);
+    view_key_[size_t(hi) * 2] = hi;
+    uint64_t h = (0xCBF29CE484222325ull ^ hi) * 0x100000001B3ull;
+    for (uint32_t i = 0; i < hi; ++i) {
       const TextureView& v = views_[i];
       const uint64_t w = uint64_t(v.texture) | ViewKey(v) << 20 | uint64_t(v.zero) << 50;
       const uint64_t g = TextureGen(v.texture);
@@ -4600,6 +4610,7 @@ class VulkanBackend final : public Backend {
   CbShadow cb_shadow_[2 * kCbCount];
   uint8_t bound_views_[96] = {};
   uint32_t bound_view_count_ = 0;
+  uint32_t view_hi_ = 0;  // perf 22 Nov (H8): highest non-default slot of views_ + 1
   uint32_t set_view_count_ = 96, set_sampler_count_ = 32;  // VKP1: slots the last SetTextures set (all at start)
   PipelineHandle last_pipeline_ = 0;                       // VKP1: GetGraphicsPipeline memo
   GraphicsPipelineDesc last_pipeline_desc_{};

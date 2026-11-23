@@ -104,6 +104,7 @@ REXCVAR_DECLARE(std::string, gow2_renderer_vulkan_barrier_stages);
 REXCVAR_DECLARE(bool, gow2_renderer_vulkan_depth_bias_control);
 REXCVAR_DECLARE(std::string, gow2_renderer_vulkan_attachment_layouts);
 REXCVAR_DECLARE(bool, gow2_renderer_vulkan_record_thread);
+REXCVAR_DECLARE(bool, gow2_renderer_vulkan_viewset_hi);
 REXCVAR_DECLARE(int32_t, gow2_renderer_vulkan_record_thread_log);
 REXCVAR_DECLARE(int32_t, gow2_renderer_draw_report_frame);
 REXCVAR_DECLARE(bool, gow2_renderer_draw_report_samples);

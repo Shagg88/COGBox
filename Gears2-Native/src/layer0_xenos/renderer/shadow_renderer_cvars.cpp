@@ -411,6 +411,9 @@ REXCVAR_DEFINE_STRING(gow2_renderer_vulkan_attachment_layouts, "general", "Gears
                       "COLOR_ATTACHMENT_OPTIMAL / DEPTH_STENCIL_ATTACHMENT_OPTIMAL while drawn to (as Canary does), back "
                       "to GENERAL in the next full barrier outside a pass. Job 404: Vulkan's colour targets cost ~2.5x "
                       "D3D12's per pixel, not more pixels; job 406: spirv-opt shaders gave no gain");
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_viewset_hi, true, "Gears2",
+                    "Vulkan: the texture-table lookup hashes and compares only the slots up to the highest one in use "
+                    "(perf 22 Nov, H8; false = all 96 slots, as before)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_record_thread, false, "Gears2",
                     "Vulkan (default off): record the command buffers on a recording thread, as D3D12's "
                     "threaded_recording does - our vkCmd* calls, vkBegin/EndCommandBuffer and vkQueueSubmit2 are "

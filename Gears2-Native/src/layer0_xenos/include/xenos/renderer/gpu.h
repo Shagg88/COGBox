@@ -399,6 +399,7 @@ struct BackendOptions {
   // calls go straight to the driver, exactly as before. vk_record_thread_log: one stats line per that many frames
   // (0 = none).
   bool vk_record_thread = false;
+  bool vk_viewset_hi = true;  // perf 22 Nov (H8): texture-table key over the set slots only
   uint32_t vk_record_thread_log = 0;
   // Patch 0109 (both APIs, a measurement switch): false = GPU timestamps only at the start and end of each command
   // list (whole-frame GPU time, no split by category / target / draw), so the timestamps can't change the timing.
