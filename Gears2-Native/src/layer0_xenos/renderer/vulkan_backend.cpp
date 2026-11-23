@@ -1729,7 +1729,12 @@ class VulkanBackend final : public Backend {
   }
   uint64_t Submit() override {
     if (!ready_ || lost_) return submitted_;
-    if (!cmd_) return submitted_;  // nothing recorded: the last value is already the right one to wait for
+    if (!cmd_) {  // nothing recorded: the last value is already the right one to wait for
+      // Recording thread: an early submit may have only handed that value's list over - the frame's Submit still
+      // returns only once it is in the queue.
+      if (rec_ && !submit_early_) RecordThreadSubmitted();
+      return submitted_;
+    }
     using SubClock = std::chrono::steady_clock;  // 0.6.2 (job 1755b): where a slow submit spends its time
     const auto sub_t0 = SubClock::now();
     auto sub_ms = [](SubClock::time_point a, SubClock::time_point b) {
