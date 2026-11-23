@@ -75,7 +75,8 @@ endif()
 rexglue_apply_target_settings(gn_layer0_xenos)
 
 # Layer 2: Unreal Engine 3.
-add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/layer2_ue3/config_bundle.cpp
+add_library(gn_layer2_ue3 STATIC ${GN_LAYER0_HOME}/src/layer2_ue3/launch_command_line.cpp  # shared (--ue3_launch)
+            src/layer2_ue3/config_bundle.cpp
             src/layer2_ue3/config_install.cpp)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 # The shared layer 2 headers (ue3/console.h, chat.h, name_tags.h...): ONE copy, in GN_LAYER0_HOME. Listed after this

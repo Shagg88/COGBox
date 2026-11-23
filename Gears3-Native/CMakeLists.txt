@@ -74,7 +74,8 @@ endif()
 rexglue_apply_target_settings(gn_layer0_xenos)
 
 # Layer 2: Unreal Engine 3.
-add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/layer2_ue3/config_bundle.cpp
+add_library(gn_layer2_ue3 STATIC ${GN_LAYER0_HOME}/src/layer2_ue3/launch_command_line.cpp  # shared (--ue3_launch)
+            src/layer2_ue3/config_bundle.cpp
             src/layer2_ue3/config_install.cpp src/layer2_ue3/package_patch.cpp src/layer2_ue3/lzx.cpp
             src/layer2_ue3/mod_extras.cpp src/layer2_ue3/objects.cpp src/layer2_ue3/script_input.cpp
             src/layer2_ue3/modcore/modcore.cpp
