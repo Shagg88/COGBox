@@ -19,10 +19,8 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | Name | Has it | Missing | Note |
 |---|---|---|---|
 | `option fast_mip_fade` | G3 J | G2 (G1 n/a) | G2: its Coalesced_int.bin has no MipFadeInSpeed key (J's has) [V]; whether G2's engine reads the key if added is unknown (packages compressed) - an ini edit is harmless to try, needs a test run. G1 doesn't apply: its Coalesced.ini has no mip-fade or MipFilter keys [V] |
-| `option shadow_cap` | G2 G3 J | G1 | Smart Shadow Cuts (J since 23 Nov: G3's gather function, layer 2 `ue3/shadow_cap.h`). G1: no shadow counter of the G2 or G3/J shape in its code - its 2006 shadow pass needs its own look |
+| `option shadow_cap` | G2 G3 J | G1 | Smart Shadow Cuts (J since 23 Nov: G3's gather function, layer 2 `ue3/shadow_cap.h`). G1 has projected shadow maps too (its Engine script: LightComponent.ShadowProjectionTechnique / ModShadowColor, Engine.Min/MaxShadowResolution) but no shadow counter of the G2 or G3/J shape - its gather function needs its own trace. Side find: the launcher says G1 has no shadow-size setting, but Engine.MinShadowResolution exists in its script (an ini edit may give it Shadow detail) |
 | `hook ShadowCap` | G2 G3 J | G1 | |
-| `option texture_stats_off` | G2 | G3 J (G1 n/a) | Canary's G2-only patch (RHIGetTextureMemoryStats -> FALSE); no leaf of its shape in J's code [V]; G3 / J need the streamer's budget call found first. G1 doesn't apply: Canary's G1 texture patch is only the pool size [S notes], no such leaf in G1 [V] |
-| `hook TextureStatsOff` | G2 | G3 J | |
 
 ## On hold (Shagg)
 
@@ -178,4 +176,31 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `option ultrawide_min_rows` | G2 | G2's render-target pool trap below ~536 rows (GitHub #94 / #137); the other games have no such trap (their floor is a fixed 240) |
 | `option ultrawide_ui_centre` | G2 | GitHub #278 test switch for G2's UE3 UI scenes; G3 / J centre their Scaleform menus by default (G3's `ultrawide_ui_full_width` switches that back). G1 (same UI system as G2): to look at with its experimental ultrawide's first run |
 | `option ultrawide_ui_full_width` | G3 | the switch back to G3's pre-0.6.6 full-width Scaleform menus (GitHub #396); J's menus have their own `UltrawideUiScale` hook |
+| `option texture_stats_off` | G2 | Canary's G2-only Texture Streaming Fix (RHIGetTextureMemoryStats -> FALSE, "FudgeFactor stays 1.0"). G3 / J's streamers make no such call: searched their code (PC's G3 TU6, J) for G2's caller set-up (two -1 stack slots passed as r3 / r4) and for a three-output form - none (the same search finds exactly G2's three calls). G1's Canary patch is the pool size only. Reopen if G3 / J show over-budget blur |
+| `hook TextureStatsOff` | G2 | (with texture_stats_off) |
 | `hook ShaderCreatedVertex` | - | (all four since 23 Nov: patch 0066) |
+
+## Test checklist
+
+Options added or changed by the 23 Nov parity pass. One line each: game, what to pass, and the log line that proves it ran
+(from the code; `{}` = a value). A job passes the switch, plays the stated part, and checks the log.
+
+| Game | Pass | Do | Log line that proves it |
+|---|---|---|---|
+| G1 | `--gow1_menu_fps=60 --gow1_max_fps=0 --gow2_gpu_vsync=false` | title screen, then a level | `gow1_menu_fps: front end (...WarStart.xxx) - limit 60 fps`, then `gow1_menu_fps: level ... - the player's limit again` |
+| G2 | `--gow2_menu_fps=60 --gow2_max_fps=-1` | title screen, then a level | `gow2_menu_fps: front end (...GearStart.xxx) - limit 60 fps`, then `... - the player's limit again` |
+| J | `--gowj_menu_fps=60 --gowj_max_fps=-1` | title screen, then a level | `gowj_menu_fps: front end (...GearStart...) - limit 60 fps`, then `... - the player's limit again` |
+| G2 | `--gow2_max_fps=-1 --gow2_tick_floor_fps=240` | a checkpoint save | `gow2_max_fps: engine frame-rate limit {} -> none (tick floor 240/s)` |
+| J | `--gowj_max_fps=-1 --gowj_tick_floor_fps=240` | gameplay | `gowj_max_fps: no limit - tick floor 240/s (--gowj_tick_floor_fps)` |
+| G1 | `--gow1_show_fps=true` | a level | `gow1_show_fps: the engine ran 'stat fps'` (missing = G1's engine does not know the name) and the counter on screen |
+| J | `--gowj_show_fps=true` | a level | `gowj_show_fps: the engine ran 'stat fps'` and the counter on screen |
+| G3 | `--gow3_shadow_cap=20` | a shadow-heavy scene | `gow3_shadow_cap: more than 20 shadow depth passes in a frame - further per-object shadows skipped`, and no `... - left alone` |
+| J | `--gowj_shadow_cap=20` | a shadow-heavy scene | `gowj_shadow_cap: more than 20 shadow depth passes in a frame - ...`, and no `... - left alone` |
+| G2 | (default) `--gow2_tick_log=600` | 20 s of play | `gow2_tick_log: ticks {}-{}: median {} ms, p95 ...` every 600 ticks |
+| G2 / G3 / J | `--gow2_log_weapon_state=true` (`gow3_` / `gowj_`) | co-op, switch weapons | `<game> weapon log: InvManager +0x{}...` once, then `<game> weapon state: player 1 | pawn ... | weapon ...` per change |
+| G2 | `--gow2_profile_log=true` | campaign menu | `gow2_profile_log: get int id={} value={} ...` |
+| G1 / G3 | `--gow1_profile_100=true --gow1_profile_100_file=<file>` (`gow3_`) | menus, then a profile save | `<option>: {} value(s) from '<file>'`, `<option>: settings array at object+0x...`, `<option>: {} written, {} missing ...` |
+| G1 | `--gow1_ultrawide=true --gow1_aspect=21:9` | a level, menus, HUD, a film | `gow1_ultrawide: on - 1280x552, aspect lock off, ...`, `gow1_ultrawide: screen height 720 -> 552`, `gow1_ultrawide: field of view {} deg: factor ...`; look: wider view, not stretched; note how menus / HUD / films look |
+| J | `--gowj_ultrawide=true` (`--gowj_ultrawide_fov_exact` default true) | a level, aim | `gowj_ultrawide: field-of-view factor {} -> {}` with a value that differs from 0.010975 x scale; aiming keeps its vertical framing |
+| G2 / J | `--gow2_aspect=auto` / `--gowj_aspect=auto` with ultrawide | start-up | `<tag>: monitor is {}x{}` (the shared ue3/aspect.h now measures the monitor) |
+
