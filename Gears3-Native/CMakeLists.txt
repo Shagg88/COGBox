@@ -113,6 +113,7 @@ set(GOW3_SOURCES
     src/layer3_gow3/mod_chapters.cpp
     src/layer3_gow3/squad_catch_up.cpp
     src/layer3_gow3/kismet_trace.cpp
+    src/layer3_gow3/fps_probe.cpp  # GitHub #414: --fps_probe, --kismet_min_delay
     src/layer3_gow3/prop_log.cpp
     src/layer3_gow3/checkpoint_stream.cpp
     src/layer3_gow3/unlocks.cpp

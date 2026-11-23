@@ -111,10 +111,12 @@ set(GOWJ_SOURCES
     src/layer3_gowj/cheats.cpp  # GitHub #264: --gowj_cheats
     src/layer3_gowj/adaptive_triggers.cpp  # GitHub #245: DualSense trigger feel per weapon (--pad_adaptive_triggers)
     src/layer3_gowj/first_person.cpp  # --gowj_first_person (experimental first-person camera)
+    src/layer3_gowj/fps_probe.cpp  # GitHub #405 / #413: --fps_probe, --kismet_min_delay
 )
 # ue3/objects.h is Gears 2's (its objects.cpp is built in layer 2 above); only these files get that folder, so this
 # game's own ue3/ headers are not shadowed.
 set_source_files_properties(src/layer3_gowj/adaptive_triggers.cpp src/layer3_gowj/first_person.cpp src/layer3_gowj/cheats.cpp
+    src/layer3_gowj/fps_probe.cpp
     src/layer3_gowj/game_patches.cpp PROPERTIES  # 0.6.6: game_patches.cpp uses ue3::obj too (true-1080p menus)
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 if(WIN32)

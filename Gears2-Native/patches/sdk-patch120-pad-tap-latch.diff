@@ -1,0 +1,103 @@
+From 40bfc8f4c74288a74e3dbfe4929030229425d429 Mon Sep 17 00:00:00 2001
+From: Shagg <343598286+Shagg88@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 05:58:56 -0800
+Subject: [PATCH] SDK patch 120 (GitHub #415): pad button taps kept until the
+ game has read them (--pad_tap_latch_ms)
+
+The SDL driver drains its events only when the game reads the pad, so a
+press and release inside one frame cancelled out: below 30 fps fast
+mashing (Gears 2 Brumak vs Corpser) lost presses. The same TapLatch as
+patch 99 (keyboard / mouse), per pad; Guide is not latched.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_0127ksk94SAv8aqLkJcggwhP
+---
+ include/rex/input/sdl/sdl_input_driver.h |  4 +++
+ src/input/sdl/sdl_input_driver.cpp       | 35 ++++++++++++++++++++++++
+ 2 files changed, 39 insertions(+)
+
+diff --git a/include/rex/input/sdl/sdl_input_driver.h b/include/rex/input/sdl/sdl_input_driver.h
+index 7d1b054..17935ed 100644
+--- a/include/rex/input/sdl/sdl_input_driver.h
++++ b/include/rex/input/sdl/sdl_input_driver.h
+@@ -17,6 +17,7 @@
+ #include <vector>
+ 
+ #include <rex/input/input_driver.h>
++#include <rex/input/tap_latch.h>
+ 
+ #include <SDL3/SDL.h>
+ 
+@@ -87,6 +88,9 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+     // the pad's next input event (RetryRumbleLocked).
+     bool rumble_retry;
+     uint16_t rumble_low, rumble_high;
++    // COGBox SDK patch 120 (GitHub #415): pad buttons that went down since the game's last read (the SDL events are
++    // drained only when the game reads, so a press and its release in the same frame used to cancel out).
++    TapLatch tap_latch;
+   };
+ 
+   // WindowListener
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+index 0a0d4d6..ebd3c1a 100644
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -26,6 +26,23 @@
+ #include <rex/logging.h>
+ #include <rex/ui/virtual_key.h>
+ 
++// COGBox SDK patch 120 (GitHub #415, Gears 2 Brumak vs Corpser below 30 fps): a pad button press that goes down and up
++// between two game reads is kept until the game has read it once (the same TapLatch as patch 99's keyboard / mouse).
++REXCVAR_DEFINE_INT32(pad_tap_latch_ms, 250, "Input",
++                     "Keep a pad button press until the game has read it, for up to this many ms "
++                     "(0 = off: a press and release between two game reads is lost)")
++    .range(0, 1000);
++
++namespace {
++uint64_t PadNowMs() {
++  return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
++                                   std::chrono::steady_clock::now().time_since_epoch()).count());
++}
++// Guide is never latched (COGBox's menu and the social page read it live).
++constexpr uint32_t kPadLatchMask = 0xFBFFu;   // 0x0400 = X_INPUT_GAMEPAD_GUIDE
++std::atomic<uint64_t> g_pad_taps_kept{0};   // presses the game saw only because of the latch
++}  // namespace
++
+ REXCVAR_DEFINE_STRING(hid_mappings_file, "gamecontrollerdb.txt", "Input",
+                       "Path to SDL gamecontroller mappings file");
+ 
+@@ -427,6 +444,22 @@ X_RESULT SDLInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+     controller->state_changed = false;
+   }
+   std::memcpy(out_state, &controller->state, sizeof(*out_state));
++  // Patch 120: report presses the game has not seen yet (only the game's own read uses them up).
++  if (const int32_t latch_ms = REXCVAR_GET(pad_tap_latch_ms); latch_ms > 0 && is_active) {
++    const uint32_t live = controller->state.gamepad.buttons & kPadLatchMask;
++    const uint32_t out =
++        controller->tap_latch.Read(live, InGuestPoll(), PadNowMs(), static_cast<uint32_t>(latch_ms)) & kPadLatchMask;
++    if (out != live) {
++      if (InGuestPoll() && (out & ~live)) {
++        const uint64_t n = g_pad_taps_kept.fetch_add(1, std::memory_order_relaxed) + 1;
++        if (n == 1 || n == 10 || n == 100 || n % 1000 == 0)
++          REXLOG_INFO("pad_tap_latch: {} short press(es) so far kept until the game read them (patch 120)", n);
++      }
++      out_state->gamepad.buttons =
++          static_cast<uint16_t>((controller->state.gamepad.buttons & ~kPadLatchMask) | out);
++      out_state->packet_number = ++controller->state.packet_number;   // the game sees a new packet for it
++    }
++  }
+   if (!is_active) {
+     // Simulate an "untouched" controller. When we become active again the
+     // pressed buttons aren't lost and will be visible again.
+@@ -938,6 +971,8 @@ void SDLInputDriver::OnControllerDeviceButtonChangedLocked(const SDL_Event& even
+   } else {
+     xbuttons &= ~xbutton;
+   }
++  if (REXCVAR_GET(pad_tap_latch_ms) > 0 && event.gbutton.down)
++    controller.tap_latch.Rise(xbutton & kPadLatchMask & ~controller.state.gamepad.buttons, PadNowMs());  // patch 120
+   controller.state.gamepad.buttons = xbuttons;
+   controller.state_changed = true;
+ }
+-- 
+2.43.0
+

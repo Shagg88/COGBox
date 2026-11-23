@@ -50,6 +50,8 @@
     if (!gowj_logged_.exchange(true)) REXLOG_INFO(__VA_ARGS__);      \
   } while (0)
 
+void FpsProbeDump(const char* why);  // fps_probe.cpp (GitHub #405 / #413)
+
 namespace {
 #ifdef _WIN32
 uint64_t QpcNow() {
@@ -402,12 +404,15 @@ bool LoadingClampActive() {
   }
   // every 10 s: say it is still on, so a report shows a load that does not end (#54) and why the cap stays
   int64_t last = g_load_watchdog.load(std::memory_order_relaxed);
-  if (now - LoadClock::duration(std::max(last, start)) >= seconds(10) && g_load_watchdog.compare_exchange_strong(last, now_ticks))
+  if (now - LoadClock::duration(std::max(last, start)) >= seconds(10) && g_load_watchdog.compare_exchange_strong(last, now_ticks)) {
+    // GitHub #405 / #413 (fps_probe.cpp, --fps_probe): what the game waits on, once, 20 s into a load
+    if (since_start >= seconds(20) && since_start < seconds(30)) FpsProbeDump("loading screen still on after 20 s");
     REXLOG_INFO("gowj_loading_fps: still loading after {:.0f} s ({}, last package {:.1f} s ago, last trigger {:.1f} s ago)",
                 duration<double>(since_start).count(),
                 flag == 1 ? "engine signal: the loading movie is playing" : "file-open signal, no engine answer",
                 duration<double>(now - LoadClock::duration(g_load_last_pkg.load())).count(),
                 duration<double>(now - LoadClock::duration(g_load_last_trigger.load())).count());
+  }
   return true;
 }
 uint32_t LoadBe32(const uint8_t* base, uint32_t guest) {
