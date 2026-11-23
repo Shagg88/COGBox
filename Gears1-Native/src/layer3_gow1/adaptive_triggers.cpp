@@ -38,6 +38,7 @@
 #include <rex/runtime.h>
 
 #include <ue3/objects.h>
+#include <ue3/weapon_state_log.h>  // --gow1_log_weapon_state
 
 #include <algorithm>
 #include <array>
@@ -176,12 +177,8 @@ struct Props {
                 gamePlayers, actorOfPlayer, controllerId, pawnOfController, weapon, health, pauser, cinematic,
                 cinematicMask, sawing, sawingMask, sawRunning, sawRunningMask);
     if (g_weaponLogOn) {   // 22 Nov (Discord co-op report): the weapon-state log's lookups, here on the worker thread
-      invManagerClass = obj::FindClass("InventoryManager");
-      invManager = obj::PropertyOffset(pawn, "InvManager");
-      role = obj::PropertyOffset(actor, "Role");
-      if (role >= 0 && obj::PropertySize(actor, "Role") != 1) role = -1;   // a byte (the word's first)
-      if (invManagerClass) pendingWeapon = obj::PropertyOffset(invManagerClass, "PendingWeapon");
-      REXLOG_INFO("weapon log: InvManager +0x{:X}, PendingWeapon +0x{:X}, Role +0x{:X}", invManager, pendingWeapon, role);
+      weaponLog.invManagerClass = obj::FindClass("InventoryManager");
+      ue3::WeaponLogFindProps("gow1", weaponLog, pawn, actor);   // layer 2 ue3/weapon_state_log.h
     }
     if (g_impulseOn) {   // (each found once, here on the worker thread; not waited for)
       ammoClass = obj::FindClass("WarWeapon");
@@ -197,8 +194,7 @@ struct Props {
     return true;
   }
   // 22 Nov: weapon-state log (-1 / 0: not found - that part is logged as "?")
-  uint32_t invManagerClass = 0;
-  int invManager = -1, pendingWeapon = -1, role = -1;
+  ue3::WeaponLogProps weaponLog;
   // 0.6.3 impulse triggers (GitHub #245): the engine's per-shot signals on Pawn, the weapon's ammo count and the game's
   // vibration option (VibrationAllowed). -1 / 0: not found - that signal is not used.
   uint32_t ammoClass = 0, priClass = 0, ffmClass = 0;
@@ -429,38 +425,10 @@ REXCVAR_DEFINE_BOOL(cogbox_test_state, false, "COGBox",
 REXCVAR_DEFINE_BOOL(gow1_log_weapon_state, true, "Gears1",
                     "Log one line when a local player's pawn, weapon, pending weapon switch or network role changes "
                     "(co-op weapon / turret reports) - log only");
-static std::string ClassNameOf(uint32_t object) {
-  if (!object) return "none";
-  const uint32_t cls = obj::ClassOf(object);
-  return cls ? obj::ObjectName(cls) : std::string("?");
-}
-static void WeaponStateLog() {
-  static std::array<std::string, 4> last;
-  const uint32_t engine = obj::Read32(kGEngine);
-  if (!engine) return;
-  const uint32_t data = obj::Read32(engine + uint32_t(g_p.gamePlayers));
-  const uint32_t count = std::min<uint32_t>(obj::Read32(engine + uint32_t(g_p.gamePlayers) + 4), 4);
-  for (uint32_t i = 0; data && i < count; i++) {
-    const uint32_t lp = obj::Read32(data + 4 * i);
-    if (!lp || !obj::IsA(lp, g_p.localPlayer)) continue;
-    const uint32_t pc = obj::Read32(lp + uint32_t(g_p.actorOfPlayer));
-    if (!pc || !obj::IsA(pc, g_p.playerController)) continue;
-    const uint32_t pawn = obj::Read32(pc + uint32_t(g_p.pawnOfController));
-    const bool isPawn = pawn && obj::IsA(pawn, g_p.pawn);
-    const uint32_t weapon = isPawn ? obj::Read32(pawn + uint32_t(g_p.weapon)) : 0;
-    uint32_t pending = 0;
-    if (isPawn && g_p.invManager >= 0 && g_p.pendingWeapon >= 0) {
-      const uint32_t im = obj::Read32(pawn + uint32_t(g_p.invManager));
-      if (im && (!g_p.invManagerClass || obj::IsA(im, g_p.invManagerClass))) pending = obj::Read32(im + uint32_t(g_p.pendingWeapon));
-    }
-    const int pawnRole = isPawn && g_p.role >= 0 ? int(obj::Read32(pawn + uint32_t(g_p.role)) >> 24) : -1;
-    const std::string now = "pawn " + (isPawn ? ClassNameOf(pawn) : std::string(pawn ? "not a pawn" : "none")) +
-                            " | weapon " + ClassNameOf(weapon) + " | switching to " + ClassNameOf(pending) +
-                            " | role " + (pawnRole >= 0 ? std::to_string(pawnRole) : std::string("?"));
-    if (now == last[i]) continue;
-    last[i] = now;
-    REXLOG_INFO("gow1 weapon state: player {} | {}", i + 1, now);
-  }
+static void WeaponStateLog() {   // layer 2 ue3/weapon_state_log.h (one copy for all four games)
+  ue3::WeaponStateLogTick("gow1", {kGEngine, g_p.gamePlayers, g_p.actorOfPlayer, g_p.pawnOfController, g_p.weapon,
+                                   g_p.localPlayer, g_p.playerController, g_p.pawn},
+                          g_p.weaponLog);
 }
 static void TestStateLine(Clock::time_point now) {
   static Clock::time_point next{};

@@ -41,7 +41,6 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `hook UltrawideSceneHeight` | G2 G3 J | G1 | |
 | `hook UltrawideSharedMemory` | G3 J | G1 G2 | |
 | `hook NativeSceneWidthMax` | G2 G3 | G1 J | |
-| `option log_weapon_state` | G1 | G2 G3 J | co-op weapon desync diagnostics (notes: G2 / G3 / J need it) |
 
 ## On hold (Shagg)
 
@@ -156,6 +155,7 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `option unlock_aftermath_setting` | J | |
 | `hook NoFilmGrain` | J | J's film grain |
 | `option no_film_grain` | J | |
+| `option log_weapon_state` | - | (all four since 23 Nov: one layer 2 copy, `ue3/weapon_state_log.h`; on by default in G1, off in G2 / G3 / J until a run shows no hitch - Shagg to flip) |
 | `option menu_fps` | - | (all four since 23 Nov: G1 / G2 / J share layer 2 `ue3/menu_fps.h`; G3 keeps its own listener) |
 | `hook MaxTickRate` | G2 G3 J | G1's 2006 engine has no GetMaxTickRate (no frame smoothing; no function of that shape in its code [V], J's matches at 0x8255E200); G1 limits in `PresentInterval` |
 | `option tick_floor_fps` | G2 G3 J | G1: no engine tick-rate read to floor (no GetMaxTickRate, see above); its limiter is the render thread's present interval |
