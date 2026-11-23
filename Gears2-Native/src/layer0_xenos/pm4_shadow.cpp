@@ -52,6 +52,9 @@ REXCVAR_DEFINE_BOOL(gow2_pm4_own_zpd, false, "Gears2",
                     "Stage 5B: with --gow2_pm4_execute, occlusion-query reports (EVENT_WRITE_ZPD) are ours too: we write "
                     "the report as the SDK's fallback path does (query_occlusion_fake_sample_count) and tell the "
                     "observers (our renderer then answers it). Not with occlusion_query_no_fake.");
+REXCVAR_DEFINE_INT32(gow2_pm4_block_items, 24, "Gears2",
+                     "Draws / commands handed to the renderer thread per block (8-256; 24 = the old fixed size). Larger "
+                     "blocks mean fewer lock + wake pairs per frame; writes, fences and swaps still go out at once (test)");
 REXCVAR_DEFINE_BOOL(gow2_pm4_fast_constants, true, "Gears2",
                     "Our PM4 processor stores constant-file register writes (0x4000-0x4927) straight into the host "
                     "register file (job 168)");
@@ -281,7 +284,8 @@ class RenderPipe {
     std::atomic<uint64_t> writes{0}, consumer_sleeps{0};       // consumer (read for the log)
   };
 
-  RenderPipe(const RegisterFile* live, rex::memory::Memory* memory) : live_(live), memory_(memory) {
+  RenderPipe(const RegisterFile* live, rex::memory::Memory* memory)
+      : block_items_(size_t(std::clamp<int32_t>(REXCVAR_GET(gow2_pm4_block_items), 8, 256))), live_(live), memory_(memory) {
     std::memcpy(Shadow().values, live_->values, sizeof(live_->values));
     BumpAllConstGens();
     g_const_gens.valid = true;
@@ -303,7 +307,7 @@ class RenderPipe {
     return it;
   }
   void Added() {
-    if (current_->items.size() >= kBlockItems || current_->changes.size() >= kBlockChanges) Publish();
+    if (current_->items.size() >= block_items_ || current_->changes.size() >= kBlockChanges) Publish();
   }
   // Job 173b: a deferred write goes out at once - the title may be waiting for it with the ring idle (job 173 hung
   // after the first frame: the fence sat in an unpublished block). The read pointer write ends every kick, so the
@@ -364,7 +368,8 @@ class RenderPipe {
   const Stats& GetStats() const { return stats_; }
 
  private:
-  static constexpr size_t kBlockItems = 24, kBlockChanges = 16384, kMaxQueued = 512;
+  static constexpr size_t kBlockChanges = 16384, kMaxQueued = 512;
+  const size_t block_items_;  // --gow2_pm4_block_items (was the constant kBlockItems = 24)
   static constexpr int kSpin = 4000;
   RegisterFile& Shadow() { return *reinterpret_cast<RegisterFile*>(shadow_storage_); }
   std::unique_ptr<Block> NewBlock() {
