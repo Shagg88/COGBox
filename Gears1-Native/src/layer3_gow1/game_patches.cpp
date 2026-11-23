@@ -360,7 +360,15 @@ extern "C" void sub_82306D00(PPCContext& __restrict ctx, uint8_t* base) {
 // 0x82392530 always skip that; here the flag test reads 0 instead (after the rlwinm at 0x82392528). Checked at start-up.
 REXCVAR_DEFINE_BOOL(gow1_no_aspect_lock, false, "Gears 1",
                     "The view fills the picture's own shape (16:10) instead of a letterboxed 16:9 (Canary's TU5 patch by boma)");
+// GitHub #407 (16:10 films flattened to 1152x450 = H*H/W): the launcher's 16:10 mode is 1152x720 "not widescreen" (Gears 1's
+// device setup needs that for the 1152-wide picture), and the start-up film player (sub_8222F5D0) keeps its own copy of
+// XGetVideoMode's widescreen flag at +220, so the films are laid out for a 4:3 TV on top of the 16:10 picture. With the
+// aspect lock off (16:10 / 4:3 modes), the film player alone is told the screen is widescreen - its 16:9 path.
+REXCVAR_DEFINE_BOOL(gow1_films_widescreen, true, "Gears 1",
+                    "With --gow1_no_aspect_lock: the film player is told the screen is widescreen (16:10 films keep their "
+                    "shape, #407); the rest of the game keeps the not-widescreen 16:10 mode");
 namespace {
+std::atomic<bool> g_films_wide{false};
 std::atomic<bool> g_no_gaussian{false};
 std::atomic<bool> g_no_aspect_lock{false};
 uint32_t GuestWord(const uint8_t* m, uint32_t a) {
@@ -396,11 +404,22 @@ void Gow1InstallPostFxSwitches(rex::Runtime* runtime) {
     } else {
       g_no_aspect_lock.store(true);
       REXLOG_INFO("gow1_no_aspect_lock: on (the view fills the picture's shape)");
+      if (REXCVAR_GET(gow1_films_widescreen)) {
+        if (GuestWord(m, 0x8222F798) != 0x816100ACu) {   // lwz r11,172(r1): XGetVideoMode's fIsWideScreen
+          REXLOG_WARN("gow1_films_widescreen: the code at 0x8222F798 is not TU5's - left alone");
+        } else {
+          g_films_wide.store(true);
+          REXLOG_INFO("gow1_films_widescreen: on (the film player uses its widescreen layout, #407)");
+        }
+      }
     }
   }
 }
 void Gow1NoAspectLock(PPCRegister& r11) {   // after `rlwinm r11,r11,0,1,1` at 0x82392528: the constrain flag
   if (g_no_aspect_lock.load(std::memory_order_relaxed)) r11.u64 = 0;
+}
+void Gow1FilmsWidescreen(PPCRegister& r11) {   // after `lwz r11,172(r1)` at 0x8222F798 (stored to the player's +220)
+  if (g_films_wide.load(std::memory_order_relaxed)) r11.u64 = 1;
 }
 void Gow1NoGaussianBlurA(PPCRegister& f1) {   // after `lfs f1,12(r26)` at 0x82539568
   if (g_no_gaussian.load(std::memory_order_relaxed)) f1.f64 = 0.0;
