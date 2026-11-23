@@ -457,6 +457,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       options.vk_dedicated_images = REXCVAR_GET(gow2_renderer_vulkan_dedicated_images);                    // 0097
       options.vk_count_pixels = REXCVAR_GET(gow2_renderer_vulkan_count_pixels);                            // 0098
       options.vk_pipeline_libraries = REXCVAR_GET(gow2_renderer_vulkan_pipeline_libraries);                 // 0.6.5
+      options.vk_fast_first = REXCVAR_GET(gow2_renderer_vulkan_fast_first);  // test, 23 Nov
       options.vk_attachment_layouts = REXCVAR_GET(gow2_renderer_vulkan_attachment_layouts) == "optimal";   // 0100
       options.vk_no_depth_bias_control = !REXCVAR_GET(gow2_renderer_vulkan_depth_bias_control);  // 22 Nov
       options.vk_barrier_src_stages = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "work";          // 0107

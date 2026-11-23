@@ -247,6 +247,7 @@ struct PipelineLib {  // one pipeline library; `done` under the backend's lib_mu
 struct Pipeline {
   VkPipeline pipeline = VK_NULL_HANDLE;
   bool linked = false;  // built from pipeline libraries: `dyn` is set at bind (written before `ready`)
+  bool fast = false;    // vk_fast_first: built without driver optimisation; the optimised one is swapped in later
   LinkedState dyn;
   ShaderHandle compute = 0;  // compute pipelines: their shader (layout and binding types)
   std::atomic<bool> ready{true};
@@ -263,6 +264,7 @@ struct PipelineJob {
   // 0.6.5: a whole (optimised) build of a pipeline that was linked from libraries: it goes into the pipeline cache for
   // the next start, and the recording thread swaps it in for the linked one (ApplyPipelineSwaps, after a submit).
   bool cache_fill = false;
+  bool live = false;  // vk_fast_first: taken from the live queue (a draw waits for it), set by the worker
 };
 
 struct Buffer {
@@ -865,6 +867,7 @@ class VulkanBackend final : public Backend {
       return 0;
     }
     const auto t0 = std::chrono::steady_clock::now();
+    job.live = true;  // (a draw waits for it right here)
     Build(job);
     stats_.pipeline_create_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     return pipelines_[handle]->failed.load() ? 0 : handle;
@@ -1886,7 +1889,11 @@ class VulkanBackend final : public Backend {
     return warm_jobs_.size() + warm_busy_;
   }
   std::string PipelineLibraryReport() override {  // 0.6.2
-    if (!gpl_) return "pipeline libraries: off";
+    if (!gpl_) {
+      if (!options_.vk_fast_first) return "pipeline libraries: off";
+      return std::format("pipeline libraries: off; fast first: {} built unoptimised, {} optimised in the background ({:.0f} ms), {} swapped in",
+                         fast_built_.load(), gpl_fills_.load(), double(gpl_fill_us_.load()) / 1000.0, gpl_swaps_.load());
+    }
     std::lock_guard<std::mutex> lock(lib_mutex_);
     const uint64_t links = gpl_links_.load();
     return std::format("pipeline libraries: {} built ({} vertex input, {} pre-rasterization, {} fragment, {} output), "
@@ -2116,6 +2123,7 @@ class VulkanBackend final : public Backend {
         if (backlog) ++backlog_busy_;
       }
       const auto t0 = std::chrono::steady_clock::now();
+      job.live = !backlog;
       Build(job);
       const uint64_t us = uint64_t(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count());
       if (job.cache_fill) {
@@ -2333,7 +2341,23 @@ class VulkanBackend final : public Backend {
       }
       gpl_fallbacks_.fetch_add(1);  // a library or the link failed: built whole, as before
     }
-    const VkResult r = vk_.vkCreateGraphicsPipelines(device_, pipeline_cache_vk_, 1, &gi, nullptr, &p.pipeline);
+    // vk_fast_first (test, off): a pipeline a draw is waiting for is built without the driver's optimisation (much less
+    // driver time on a first play), then built again optimised in the background and swapped in (as the linked ones).
+    const bool fast = options_.vk_fast_first && job.live && !workers_.empty();
+    if (fast) gi.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+    const VkResult r = vk_.vkCreateGraphicsPipelines(device_, fast ? VK_NULL_HANDLE : pipeline_cache_vk_, 1, &gi, nullptr, &p.pipeline);
+    if (r == VK_SUCCESS && fast) {
+      p.fast = true;
+      fast_built_.fetch_add(1);
+      PipelineJob fill = job;
+      fill.cache_fill = true;  // (the fill builds `gi` again without the flag, into the cache, and queues the swap)
+      {
+        std::lock_guard<std::mutex> lock(job_mutex_);
+        fill_jobs_.push_back(fill);
+        ++fills_left_;
+      }
+      job_cv_.notify_one();
+    }
     if (r != VK_SUCCESS) {
       p.failed.store(true);
       REXLOG_ERROR("gow2_renderer: Vulkan: {} (vs {} ps {} gs {} topology {} targets {} depth {})", VkErr("vkCreateGraphicsPipelines", r),
@@ -3928,13 +3952,14 @@ class VulkanBackend final : public Backend {
     for (auto& [h, whole] : todo) {
       Pipeline* p = h < pipelines_.size() ? pipelines_[h].get() : nullptr;
       Deferred d{submitted_ + (cmd_ ? 1 : 0)};
-      if (!p || !p->linked || !p->pipeline || !p->ready.load(std::memory_order_acquire)) {
+      if (!p || !(p->linked || p->fast) || !p->pipeline || !p->ready.load(std::memory_order_acquire)) {
         d.pipeline = whole;  // nothing to replace (kept for the cache only)
       } else {
         d.pipeline = p->pipeline;
         if (bound_pipeline_ == p->pipeline) { bound_pipeline_ = VK_NULL_HANDLE; dyn_valid_ = false; }
         p->pipeline = whole;
         p->linked = false;  // its state is now static in the pipeline (the bind sets no dynamic state for it)
+        p->fast = false;
         gpl_swaps_.fetch_add(1);
       }
       deferred_.push_back(d);
@@ -4668,6 +4693,7 @@ class VulkanBackend final : public Backend {
   std::atomic<uint64_t> warm_built_{0}, warm_known_{0}, warm_failed_{0}, warm_us_{0};
   std::atomic<uint64_t> gpl_links_{0}, gpl_link_us_{0}, gpl_fallbacks_{0};
   std::atomic<uint64_t> gpl_cache_hits_{0}, gpl_fills_{0}, gpl_fill_us_{0}, gpl_swaps_{0};
+  std::atomic<uint64_t> fast_built_{0};  // vk_fast_first: built unoptimised first
   std::mutex swap_mutex_;  // 0.6.5: optimised whole builds waiting for the recording thread
   std::vector<std::pair<PipelineHandle, VkPipeline>> swaps_;  // 0.6.5: whole pipelines from the cache / built for it
   bool own_cache_control_ = false;  // 0.6.5: on our own device (set where it is made; used once gpl_ is known)

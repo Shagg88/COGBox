@@ -100,6 +100,7 @@ REXCVAR_DECLARE(bool, gow2_renderer_vulkan_clear_in_pass);
 REXCVAR_DECLARE(bool, gow2_renderer_vulkan_suballoc_textures);
 REXCVAR_DECLARE(bool, gow2_renderer_vulkan_dedicated_images);
 REXCVAR_DECLARE(bool, gow2_renderer_vulkan_pipeline_libraries);
+REXCVAR_DECLARE(bool, gow2_renderer_vulkan_fast_first);
 REXCVAR_DECLARE(bool, gow2_renderer_vulkan_count_pixels);
 REXCVAR_DECLARE(std::string, gow2_renderer_vulkan_barrier_stages);
 REXCVAR_DECLARE(bool, gow2_renderer_vulkan_depth_bias_control);

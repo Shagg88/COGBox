@@ -388,6 +388,9 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_dedicated_images, false, "Gears2",
                     "Patch 0097 (Vulkan): images the driver prefers in an allocation of their own (NVIDIA: render "
                     "targets) get one, as D3D12's committed resources are. A measurement switch first (job 403): "
                     "Vulkan colour targets draw in ~2x D3D12's GPU time even with DXC-compiled shaders (job 402)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_fast_first, false, "Gears2",
+                    "Test (23 Nov): Vulkan pipelines a draw waits for are built without the driver's optimisation (far less "
+                    "driver time on a first play), the optimised one later in the background and swapped in. Off");
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_pipeline_libraries, false, "Gears2",
                     "0.6.5 (Vulkan): build each new pipeline from per-stage pipeline libraries "
                     "(VK_EXT_graphics_pipeline_library, SDK patch 116 / runtime 066): each shader is compiled once, and a "

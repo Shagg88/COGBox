@@ -385,6 +385,9 @@ struct BackendOptions {
   // state, cull mode, front face and depth bias become dynamic state, set when such a pipeline is bound. Needs
   // VK_EXT_graphics_pipeline_library; without it (or for pipelines without a pixel shader) pipelines are built whole.
   bool vk_pipeline_libraries = false;
+  // Test (23 Nov): a pipeline a draw waits for is built with VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT, the optimised
+  // one later in the background and swapped in (without pipeline libraries).
+  bool vk_fast_first = false;
   // Patch 0107 (Vulkan): the barriers' source stages are the kinds of GPU work recorded since the last barrier
   // (graphics / compute / transfer) instead of ALL_COMMANDS; the destination stays ALL_COMMANDS.
   bool vk_barrier_src_stages = false;
