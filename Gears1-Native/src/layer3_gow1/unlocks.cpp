@@ -18,6 +18,7 @@
 #include <rex/ppc/func.h>
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
+#include <ue3/audio_menu.h>
 #include <ue3/profile_tools.h>
 
 #include <atomic>
@@ -37,6 +38,7 @@ REXCVAR_DEFINE_BOOL(gow1_profile_100, false, "Gears1",
                     "Test only: write the profile values in gow1_profile_100_file into the in-memory profile, so the "
                     "game saves them (100% campaign test profile). Changes the profile when it saves");
 REXCVAR_DEFINE_STRING(gow1_profile_100_file, "", "Gears1", "Text file of id=value lines for gow1_profile_100");
+UE3_AUDIO_MENU_CVARS(gow1, "Gears1");
 REXCVAR_DEFINE_BOOL(gow1_profile_log, false, "Gears1",
                     "insane050 research: log each profile setting the game reads (id, value, getter, caller) once per "
                     "change - open the campaign difficulty screen to find the Insane unlock. Read-only");
@@ -55,6 +57,11 @@ PPCFunc* g_orig_activated = nullptr;   // 0.5.0 review: the game's own IsInsaneU
 PPCFunc* g_orig[2] = {nullptr, nullptr};
 bool g_log = false, g_unlock = false;
 ue3::Profile100 g_p100;   // --gow1_profile_100
+// The audio menu's sliders (ue3/audio_menu.h). Ids (WarProfileSettings MusicVolume / FxVolume / DialogueVolume consts): not known yet for this build - the test job reads them from the
+// game's ProfileMappings (as GearsJ-Native/tools/gj100_profile_ids.ps1 does) or --gow1_profile_log while each slider is
+// moved; until then --gow1_audio_menu_ids=<music>,<effects>,<dialogue> sets them and the launcher's values are skipped.
+constexpr ue3::AudioMenuSlider kAudioSliders[ue3::kAudioMenuSliders] = {{"music", -1}, {"effects", -1}, {"dialogue", -1}};
+ue3::AudioMenu g_audio;   // --gow1_audio_music / _effects / _dialogue
 int32_t g_id = -1;
 uint32_t g_mask = 1;
 
@@ -75,6 +82,7 @@ void Hook(PPCContext& ctx, uint8_t* base) {
   const bool found = (ctx.r3.u32 & 1) != 0;
   if (!value_addr) return;
   g_p100.OnRead(base, self, id, value_addr, ctx.r3.u32, false);
+  g_audio.OnRead(base, self, id, value_addr, ctx.r3.u32);
   if (g_unlock && id == g_id && found) {
     const uint32_t v = Load32(base, value_addr);
     if ((v & g_mask) != g_mask) {
@@ -132,7 +140,8 @@ void Gow1InstallUnlocks() {
     }
   }
   if (REXCVAR_GET(gow1_profile_100)) g_p100.Load("gow1_profile_100", REXCVAR_GET(gow1_profile_100_file));
-  if (!g_log && !g_unlock && !g_p100.On()) return;
+  UE3_AUDIO_MENU_SETUP(g_audio, gow1, kAudioSliders);
+  if (!g_log && !g_unlock && !g_p100.On() && !g_audio.On()) return;
   g_orig[0] = d->GetFunction(kGetters[0]);
   g_orig[1] = d->GetFunction(kGetters[1]);
   const bool ok = g_orig[0] && g_orig[1] && d->SetFunction(kGetters[0], &Hook<0>) && d->SetFunction(kGetters[1], &Hook<1>);

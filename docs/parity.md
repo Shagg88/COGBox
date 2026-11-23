@@ -140,6 +140,10 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `option profile_100` | - | (all four since 23 Nov, Shagg 10:42: profile debugging tools; one layer 2 copy, `ue3/profile_tools.h`, off by default) |
 | `option profile_100_file` | - | (with profile_100) |
 | `option profile_log` | - | (all four since 23 Nov) |
+| `option audio_music` | - | (all four since 23 Nov: the game's own audio menu from the launcher; one layer 2 copy, `ue3/audio_menu.h`, cvars made by its `UE3_AUDIO_MENU_CVARS`; ids per game in each hook file, all still -1 = not known) |
+| `option audio_effects` | - | (with audio_music) |
+| `option audio_dialogue` | - | (with audio_music) |
+| `option audio_menu_ids` | - | (with audio_music) |
 | `option ultrawide` | - | (all four since 23 Nov; G1's is experimental and greyed in the launcher until a run - see the hooks below) |
 | `option aspect` | - | (with ultrawide) |
 | `option menu_fps` | - | (all four since 23 Nov: G1 / G2 / J share layer 2 `ue3/menu_fps.h`; G3 keeps its own listener) |
@@ -198,6 +202,7 @@ Options added or changed by the 23 Nov parity pass. One line each: game, what to
 | J | `--gowj_shadow_cap=20` | a shadow-heavy scene | `gowj_shadow_cap: more than 20 shadow depth passes in a frame - ...`, and no `... - left alone` |
 | G2 | (default) `--gow2_tick_log=600` | 20 s of play | `gow2_tick_log: ticks {}-{}: median {} ms, p95 ...` every 600 ticks |
 | G2 / G3 / J | `--gow2_log_weapon_state=true` (`gow3_` / `gowj_`) | co-op, switch weapons | `<game> weapon log: InvManager +0x{}...` once, then `<game> weapon state: player 1 | pawn ... | weapon ...` per change |
+| G1 / G2 / G3 / J | `--gow2_audio_menu_ids=<m>,<e>,<d> --gow2_audio_music=3` (`gow1_` / `gow3_` / `gowj_`); runtime `--audio_channels=1` | title screen, Options > Audio | `<game>_audio_menu: ids music=...`, `<game>_audio_menu: settings array at object+0x...`, `<game>_audio_menu: id {} 0x... -> 0x00000003`, `<game>_audio_menu: now music=3 (id {})`; `audio_channels: 1 -> mono (...)` |
 | G2 | `--gow2_profile_log=true` | campaign menu | `gow2_profile_log: get int id={} value={} ...` |
 | G1 / G3 | `--gow1_profile_100=true --gow1_profile_100_file=<file>` (`gow3_`) | menus, then a profile save | `<option>: {} value(s) from '<file>'`, `<option>: settings array at object+0x...`, `<option>: {} written, {} missing ...` |
 | G1 | `--gow1_ultrawide=true --gow1_aspect=21:9` | a level, menus, HUD, a film | `gow1_ultrawide: on - 1280x552, aspect lock off, ...`, `gow1_ultrawide: screen height 720 -> 552`, `gow1_ultrawide: field of view {} deg: factor ...`; look: wider view, not stretched; note how menus / HUD / films look |
