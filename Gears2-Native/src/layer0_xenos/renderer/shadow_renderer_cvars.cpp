@@ -1358,3 +1358,8 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_draw_trims, true, "Gears2",
                     "Speed study (O9, layer0 sweep 22 Nov): per-draw trims with the same results - the fog-anchor shader "
                     "list parsed once (no text search per draw), the index-reuse table as a flat table cleared by "
                     "generation, and a small filter in front of the recipe pack's drawn-shader set");
+
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_lean, false, "Gears2",
+                    "Vulkan (perf 23 Nov): the DXBC -> SPIR-V converter keeps r# registers as values within a block (no "
+                    "load before each read, no load + merge + store per partial write) - smaller modules, less driver "
+                    "time per new pipeline. Off until checked in all four games");

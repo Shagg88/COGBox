@@ -44,5 +44,8 @@ void DiscardCounts(uint64_t& pixel_shaders, uint64_t& discards, uint64_t& termin
 // Patch 0103 (a measurement switch, Vulkan): false = no ExecutionMode SignedZeroInfNanPreserve (float controls), so the
 // driver may use its fast float paths as D3D12's DXBC compiler does. Default true (as before).
 void SetFloatControls(bool on);
+// perf 23 Nov (--gow2_renderer_vulkan_spirv_lean): r# registers kept as values within a block (no load before each
+// read, no load + merge + store for each partial write; memory written once at the block's end) - smaller modules.
+void SetLean(bool on);
 
 }  // namespace xenos::dxbc_spirv

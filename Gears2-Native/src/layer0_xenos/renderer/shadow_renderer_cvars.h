@@ -107,6 +107,7 @@ REXCVAR_DECLARE(std::string, gow2_renderer_vulkan_attachment_layouts);
 REXCVAR_DECLARE(bool, gow2_renderer_vulkan_record_thread);
 REXCVAR_DECLARE(bool, gow2_renderer_vulkan_viewset_hi);
 REXCVAR_DECLARE(bool, gow2_renderer_vulkan_dyn_skip);
+REXCVAR_DECLARE(bool, gow2_renderer_vulkan_spirv_lean);
 REXCVAR_DECLARE(int32_t, gow2_renderer_vulkan_record_thread_log);
 REXCVAR_DECLARE(int32_t, gow2_renderer_draw_report_frame);
 REXCVAR_DECLARE(bool, gow2_renderer_draw_report_samples);

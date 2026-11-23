@@ -586,7 +586,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         REXLOG_INFO("gow2_renderer: Vulkan SPIR-V optimiser: {}", !have ? "not in this build" : want ? "on" : "off (--gow2_renderer_vulkan_spirv_optimise=false)");
       // the store's key carries every switch that changes the converted words
       const uint32_t sw = (have && want ? 1u : 0u) | (REXCVAR_GET(gow2_renderer_vulkan_discard_terminates) ? 2u : 0u) |
-                          (REXCVAR_GET(gow2_renderer_vulkan_float_controls) ? 4u : 0u);
+                          (REXCVAR_GET(gow2_renderer_vulkan_float_controls) ? 4u : 0u) |
+                          (REXCVAR_GET(gow2_renderer_vulkan_spirv_lean) ? 8u : 0u);  // perf 23 Nov
       const bool vk = backend_ && backend_->GetShaderIL() == gpu::ShaderIL::kSpirv;
       xenos::renderer::ShaderCache::SetSpirvStore(vk && REXCVAR_GET(gow2_renderer_vulkan_spirv_store) ? cache_->Dir() : std::filesystem::path(), sw);
       xenos::renderer::ShaderCache::SetDxbcStore(REXCVAR_GET(gow2_renderer_dxbc_store) ? cache_->Dir() : std::filesystem::path());  // 0.6.5
@@ -597,6 +598,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     xenos::dxbc_spirv::SetDiscardTerminates(REXCVAR_GET(gow2_renderer_vulkan_discard_terminates));  // patch 0102
     xenos::dxbc_spirv::SetFloatControls(REXCVAR_GET(gow2_renderer_vulkan_float_controls));        // patch 0103
+    xenos::dxbc_spirv::SetLean(REXCVAR_GET(gow2_renderer_vulkan_spirv_lean));                    // perf 23 Nov
     {  // patch 0089
       const std::string m = REXCVAR_GET(gow2_renderer_msaa_sample_positions);
       msaa_positions_mode_ = m == "xenos" ? 1u : m == "canary_off" ? 2u : 0u;

@@ -27,6 +27,8 @@ static std::atomic<uint64_t> g_ps{0}, g_discards{0}, g_terminated{0};
 void SetDiscardTerminates(bool on) { g_terminate.store(on); }
 static std::atomic<bool> g_float_controls{true};  // patch 0103
 void SetFloatControls(bool on) { g_float_controls.store(on); }
+static std::atomic<bool> g_lean{false};  // perf 23 Nov: r# kept as values within a block
+void SetLean(bool on) { g_lean.store(on); }
 void DiscardCounts(uint64_t& pixel_shaders, uint64_t& discards, uint64_t& terminated) {
   pixel_shaders = g_ps.load();
   discards = g_discards.load();
@@ -360,6 +362,8 @@ class Converter {
   }
   void Void(uint32_t op, std::initializer_list<uint32_t> args) {
     Open();
+    // lean: a merge instruction must stand right before its block's branch - the registers go to memory before it
+    if (op == kOpSelectionMerge || op == kOpLoopMerge) FlushTemps();
     Module::Put(m_.fn, op, args);
   }
   uint32_t Precise(uint32_t id) {
@@ -393,14 +397,31 @@ class Converter {
   void Label(uint32_t id) {
     Module::Put(m_.fn, kOpLabel, {id});
     open_ = true;
+    ForgetTemps();  // lean: a value made in another block may not dominate this one
   }
   void Open() {
     if (!open_) Label(m_.Id());  // code after a break / return: an unreachable block of its own
   }
   void Terminate(uint32_t op, std::initializer_list<uint32_t> args) {
     Open();
+    FlushTemps();  // lean: the block's register values to memory before it ends
     Module::Put(m_.fn, op, args);
     open_ = false;
+  }
+  // ---- lean (perf 23 Nov, --gow2_renderer_vulkan_spirv_lean): r# registers kept as values within a block ----
+  // The converter read every register with a load and wrote every partial register with load + merge + store (82 % of
+  // all loads fed a shuffle; the modules were ~5x the DXBC). Within one block each r# now has a current value: a read
+  // uses it, a write replaces it (a partial write merges into it), and memory is written once, when the block ends.
+  // Blocks begin with nothing known, so every value used is made earlier in the same block.
+  void ForgetTemps() {
+    for (auto& v : temp_val_) v = 0;
+    for (auto& d : temp_dirty_) d = false;
+  }
+  void FlushTemps() {
+    if (!lean_) return;
+    for (size_t r = 0; r < temp_val_.size(); ++r)
+      if (temp_dirty_[r]) Module::Put(m_.fn, kOpStore, {temps_[r], temp_val_[r]});
+    ForgetTemps();
   }
 
   bool Declare(const Instr& in);
@@ -428,6 +449,11 @@ class Converter {
   uint32_t glsl_ = 0;
   uint32_t main_ = 0;
   std::vector<uint32_t> temps_;                 // r#: uvec4 Function variables
+  std::vector<uint32_t> temp_val_;              // lean: r#'s value in the current block (0 = not known)
+  std::vector<uint8_t> temp_dirty_;             // lean: that value is not in memory yet
+ public:
+  bool lean_ = false;
+ private:
   std::map<uint32_t, std::pair<uint32_t, uint32_t>> xtemps_;  // x#: variable, size
   std::map<uint32_t, std::pair<uint32_t, uint32_t>> cbs_;     // range id -> variable, vec4 count
   std::map<uint32_t, Resource> textures_;       // range id
@@ -492,6 +518,10 @@ uint32_t Converter::LoadRaw(const Instr& in, const Operand& o) {
     case kOtTemp: {
       const uint32_t r = o.idx[0].imm;
       if (r >= temps_.size()) { Fail(std::format("r{} past dcl_temps", r)); return SplatU(0); }
+      if (lean_) {
+        if (temp_val_[r]) return temp_val_[r];
+        return temp_val_[r] = Op(kOpLoad, TU4(), {temps_[r]});
+      }
       return Op(kOpLoad, TU4(), {temps_[r]});
     }
     case kOtIndexableTemp: {
@@ -569,6 +599,18 @@ bool Converter::Store(const Instr& in, const Operand& d, uint32_t u4, bool float
         if (it == xtemps_.end()) return Fail("x# not declared");
         ptr = Op(kOpAccessChain, TPtr(kScFunction, TU4()), {it->second.first, IndexValue(in, d.idx[1])});
       }
+      if (lean_ && d.type == kOtTemp) {
+        const uint32_t r = d.idx[0].imm;
+        Open();
+        if (mask != 0xF) {
+          const uint32_t old = temp_val_[r] ? temp_val_[r] : Op(kOpLoad, TU4(), {ptr});
+          u4 = Shuffle(TU4(), old, u4,
+                       {mask & 1 ? 4u : 0u, mask & 2 ? 5u : 1u, mask & 4 ? 6u : 2u, mask & 8 ? 7u : 3u});
+        }
+        temp_val_[r] = u4;
+        temp_dirty_[r] = true;
+        return true;
+      }
       if (mask != 0xF) {
         const uint32_t old = Op(kOpLoad, TU4(), {ptr});
         u4 = Shuffle(TU4(), old, u4,
@@ -641,6 +683,8 @@ bool Converter::Declare(const Instr& in) {
         const uint32_t v = m_.Id();
         temps_.push_back(v);
       }
+      temp_val_.assign(temps_.size(), 0);
+      temp_dirty_.assign(temps_.size(), 0);
       return true;
     }
     case kDxDclIndexableTemp: {
@@ -1415,6 +1459,7 @@ SpirvResult ConvertDxbcToSpirv(const uint8_t* dxbc, size_t size, bool precise) {
       std::memcpy(code.data(), dxbc + off + 8, code.size() * 4);
       Converter conv;
       conv.precise_ = precise;
+      conv.lean_ = g_lean.load(std::memory_order_relaxed);
       return conv.Run(code.data(), code.size());
     }
   }
