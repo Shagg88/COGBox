@@ -11,7 +11,7 @@ Gears2-Native's own code is MIT-licensed (`LICENSE`). It contains or builds agai
 | stb_dxt (Fabian Giesen, Sean Barrett) | `src/layer0_xenos/third_party/stb_dxt/stb_dxt.h` | Public domain (note below) |
 | PsychoV35 (Carlos Lopez / ShortFuse / clshortfuse; self-contained edition modifications by Musa Haji / mqhaji) | Gears 2 and Gears 3 native HDR scene mapping, `src/layer0_xenos/include/xenos/renderer/psychov35_source.h` | MIT ([full notice](cogbox/licenses/PsychoV35-LICENSE.txt); also copied beside each game EXE under `licenses/`) |
 | Libraries bundled by the SDK (SDL3, Dear ImGui, Tracy, fmt, spdlog, FFmpeg, ...) | inside the SDK | their own licences, listed in the SDK's `licenses/` folder |
-| gow3-recomp (Flippage and the gow3-recomp contributors) and gears-of-war-2-pc-port / gow2-recomp (Santiago Quiroz Upegui and the gow2-recomp contributors) | the native mouse look method and the Gears 3 / Gears 2 base-disc addresses in `ue3_mouse_look.h` and `mouse_look.cpp` (layer 3 of all three ports, COGBox 0.2.1), plus the multi-controller 4x prompt overlay catalog and live device monitor (`prompt_atlas_catalog.*`, `prompt_overlay_compositor.*`, `prompt_device_monitor.*`) | BSD-3-Clause (notices below) |
+| gow3-recomp (Flippage and the gow3-recomp contributors) and gears-of-war-2-pc-port / gow2-recomp (Santiago Quiroz Upegui and the gow2-recomp contributors) | the native mouse look method and the Gears 3 / Gears 2 base-disc addresses in `ue3/mouse_look.h` (layer 2, one copy since 23 Nov 2026) and each game's `mouse_look.cpp` (layer 3, COGBox 0.2.1), plus the multi-controller 4x prompt overlay catalog and live device monitor (`prompt_atlas_catalog.*`, `prompt_overlay_compositor.*`, `prompt_device_monitor.*`) | BSD-3-Clause (notices below) |
 | Kenney Input Prompts (`assets/glyphs/`) | Controller and keyboard/mouse prompt glyph icons for Xbox, PlayStation, Nintendo Switch, Steam Deck, and Steam Controller | CC0 1.0 Universal (public domain dedication; `assets/glyphs/LICENSE.txt`) |
 | Inter 4.1 (The Inter Project Authors, `assets/fonts/`) | Inter-Regular.ttf and Inter-SemiBold.ttf, the achievement popups' and the in-game Achievements page's font | SIL Open Font License 1.1 (`assets/fonts/Inter-LICENSE.txt`) |
 | LZMA SDK 23.01 7z decoder (Igor Pavlov, `cogbox/third_party/lzma`, unchanged) | CogBox.exe unpacking .7z updates (0.4.9) | Public domain (`cogbox/licenses/LZMA-SDK-public-domain.txt`) |
@@ -132,7 +132,7 @@ https://github.com/nothings/stb - DXT1/DXT5 compressor by Fabian "ryg" Giesen, p
 domain (or MIT, at your choice); COGBox uses it under the public-domain option (Unlicense), unmodified. Used to re-encode a button-prompt sheet after COGBox's keyboard key caps
 are drawn over it (GitHub #41).
 
-## Native mouse look (ue3_mouse_look.h, mouse_look.cpp)
+## Native mouse look (ue3/mouse_look.h, mouse_look.cpp)
 
 Copyright (c) 2026, Flippage and the gow3-recomp contributors
 Copyright (c) 2026, Santiago Quiroz Upegui and the gow2-recomp contributors

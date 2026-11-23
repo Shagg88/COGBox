@@ -13,7 +13,7 @@
 //   Gears 3 TU6 sub_829343E0 / sub_82934188 (the GFx movies' viewport): li r30,1280 / li r9,720 as the default, then
 //     lwz r11,72(r3) / lwz r10,8(r11) / bctrl / ... / lwz r7,12(r8) / bctrl, the size passed on to the movie.
 // Every one of those calls is a virtual call (bctrl), so it goes through the function dispatcher: the two getters the
-// viewport's vtable names are replaced (FunctionDispatcher::SetFunction, as ue3_mouse_look.h does) by wrappers that
+// viewport's vtable names are replaced (FunctionDispatcher::SetFunction, as ue3/mouse_look.h does) by wrappers that
 // run the game's getter and, only for this one viewport object, return the size times lines / 720. Other objects that
 // share the same getter code get the game's value unchanged. Direct (non-virtual) reads of the size are not changed.
 //

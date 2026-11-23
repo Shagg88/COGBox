@@ -236,6 +236,11 @@ std::vector<Option> make_options(Game g) {
                "aiming and zoom. Game's (default, GitHub #169): aiming and zoom keep the console game's slower turn. Native mouse look only.", 0));
     // 0.5.0 (Reddit: zoomed aiming too fast): extra mouse speed while aiming and while zoomed through a scope, in % -
     // the games that tell COGBox their camera's field of view (Gears 2 and 3 now; Gears 1 and Judgment when hooked)
+    // Discord #suggestions (23 Nov 2026, two players): an option to cap mouse turning at the controller's top turn rate,
+    // as on the Xbox 360 (ue3/mouse_look.h --ue3_mouse_turn_cap). All four games; off = uncapped, as before.
+    add(make("MouseTurnCap", "Limit mouse turning to controller speed (as on Xbox 360)", Tab::Controls, Kind::Bool, SH, 0,
+             "With Keyboard and mouse: the mouse never turns the view faster than the right stick pushed all the way, as "
+             "on the Xbox 360 (aiming slows it like the stick). Off: no limit. Native mouse look only.", 0), "mouseturncap");
     if (g == Game::Gears3 || g == Game::Gears2 || g == Game::Gears1 || g == Game::Judgment) {
         add(number("AimSens", "Aim sensitivity (%)", Tab::Controls, Kind::Int, OWN, 10, 200, 5, 100,
                    "Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only.", 0));
@@ -1060,6 +1065,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears2 && !cap_exe(env, "gow2_renderer_queries")) return no(not_yet(0, "needs its next build"));
         // 0.3.0: with Gears 1's shader pack it froze the title screen (frame 183, 14:10 runs) - off until that is fixed
         if (g == Game::Gears1) return no(not_yet(gi, "freezes Gears 1's title screen with its shader pack - off for now"));
+    } else if (f == "mouseturncap") {   // --ue3_mouse_turn_cap (ue3/mouse_look.h): its option's description, a long literal
+        if (!cap_exe(env, "limit mouse turning to controller speed (as on Xbox 360)")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "walkkey") {   // GitHub #125: SDK patch 60 (the 0.4.5 runtime)
         if (!cap_rt(env, "keybind_walk")) return no(not_yet(gi, "needs its next build (SDK patch 60)"));
     } else if (f == "vsync") {   // launcher patch 0155
@@ -1271,6 +1278,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "PaperWhite" || o.id == "Peak" || o.id == "HdrHighlights" || o.id == "HdrCompressedLut") on = s.b("HDR");   // PS1 366; 0.6.2
     else if (o.id == "PadPrompts") on = s.b("Mnk");                                  // GitHub #104
     else if (o.id == "WalkMode") on = s.b("Mnk");                                    // GitHub #125
+    else if (o.id == "MouseTurnCap") on = s.b("Mnk");                                // --ue3_mouse_turn_cap
     else if (o.id == "TriggerRumble") on = s.b("Vibration");                         // 0.6.3: no rumble, no trigger rumble
     else if (o.id == "AimSens") on = s.b("Mnk") && cap_exe(env, "ue3_mouse_aim_scale");    // 0.5.0: games whose exe knows the camera FOV
     else if (o.id == "ZoomSens") on = s.b("Mnk") && cap_exe(env, "ue3_mouse_zoom_scale");
@@ -2657,6 +2665,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back("--ue3_mouse_aim_scale=" + fmt_double(s.i("AimSens") / 100.0));
         if (nativeMouse && s.i("ZoomSens") != 100 && cap_exe(env, "ue3_mouse_zoom_scale"))
             a.push_back("--ue3_mouse_zoom_scale=" + fmt_double(s.i("ZoomSens") / 100.0));
+        if (nativeMouse && on("MouseTurnCap")) a.push_back("--ue3_mouse_turn_cap=true");   // greyed without the exe's option
         if (nativeMouse && avail("Fov") && s.i("Fov") != 100 && cap_exe(env, "ue3_mouse_fov_comp"))
             a.push_back("--ue3_mouse_fov_comp=" + fmt_double(100.0 / static_cast<double>(s.i("Fov"))));
         if (mouseLook) {

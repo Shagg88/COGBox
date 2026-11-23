@@ -1,4 +1,4 @@
-// COGBox 0.2.1: native mouse look (mouse_look.cpp, ue3_mouse_look.h).
+// COGBox 0.2.1: native mouse look (mouse_look.cpp; the logic: layer 2 ue3/mouse_look.h).
 #pragma once
 
 namespace rex::ui {

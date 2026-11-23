@@ -1154,7 +1154,7 @@ std::thread g_idle_thread;
 std::atomic<bool> g_idle_hidden{false};   // set / cleared on the UI thread; the watcher and our window procedure read it
 std::atomic<bool> g_idle_post_pending{false};   // a hide / show is queued on the UI thread (no pile-up while it is busy)
 // r54: mouse look owns the cursor only while the flag is on AND the window has the mouse captured (as in
-// ue3_mouse_look.h) - IsMouseLookActive() alone is true from the start, so the hide never happened (#143 and #320).
+// ue3/mouse_look.h) - IsMouseLookActive() alone is true from the start, so the hide never happened (#143 and #320).
 // The capture count belongs to the UI thread: it is read there and mirrored here for the watcher.
 std::atomic<bool> g_idle_look_owned{false};
 std::atomic<HWND> g_idle_hwnd_cached{nullptr};   // r54: the game window's handle, written on the UI thread only (read by the watcher)
