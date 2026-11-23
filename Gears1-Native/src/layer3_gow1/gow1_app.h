@@ -10,6 +10,7 @@
 #include <rex/rex_app.h>
 #include <xenos/utf8_paths.h>
 #include "mouse_look.h"
+#include "freeze_watchdog.h"
 
 namespace rex::ui {
 class WindowedAppContext;
@@ -77,6 +78,7 @@ class Gow1App : public rex::ReXApp {
   void OnPostSetup() override {
     CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
+    Gow1StartFreezeWatchdog();  // 23 Nov: --gow1_freeze_watchdog_seconds (developer, log-only; off by default)
     // developer mode: --cogbox_input_script (ue3/script_input.h). The engine's tables are found in memory; its object
     // layout was (ue3/objects.h Discover, TU5 2026-11-11): the slot at +4, Outer +40, Name +44 (index, number), Class
     // +52, SuperStruct +60, Children +76, Next +64, ElementSize +72, Offset +96, BitMask +124, 16-bit names at +16
@@ -193,6 +195,7 @@ class Gow1App : public rex::ReXApp {
     XenosQuitWithoutDllUnload(runtime());
   }
   void OnShutdown() override {
+    Gow1StopFreezeWatchdog();
     XenosShutdownAoDebugKeys();  // Gears 2 notes/80
     Gow1StopMemoryGauge();
     XenosShutdownInGameMenu();  // patch 0163
