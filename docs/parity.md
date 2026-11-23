@@ -19,11 +19,8 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | Name | Has it | Missing | Note |
 |---|---|---|---|
 | `option fast_mip_fade` | G3 J | G2 (G1 n/a) | G2: its Coalesced_int.bin has no MipFadeInSpeed key (J's has) [V]; whether G2's engine reads the key if added is unknown (packages compressed) - an ini edit is harmless to try, needs a test run. G1 doesn't apply: its Coalesced.ini has no mip-fade or MipFilter keys [V] |
-| `option shadow_cap` | G2 G3 | G1 J | Smart Shadow Cuts (parked for G1 / J on 23 Nov - reopen) |
-| `hook ShadowCap` | G2 G3 | G1 J | |
-| `option shadow_value_cap` | G2 | G1 G3 J | |
-| `hook ShadowValueCapA` | G2 | G1 G3 J | |
-| `hook ShadowValueCapB` | G2 | G1 G3 J | |
+| `option shadow_cap` | G2 G3 J | G1 | Smart Shadow Cuts (J since 23 Nov: G3's gather function, layer 2 `ue3/shadow_cap.h`). G1: no shadow counter of the G2 or G3/J shape in its code - its 2006 shadow pass needs its own look |
+| `hook ShadowCap` | G2 G3 J | G1 | |
 | `option query_poll_yield` | G2 G3 J | G1 | render thread's GPU query wait without spinning |
 | `hook QueryPollYield` | G2 G3 J | G1 | |
 | `option query_wait` | G1 G2 | G3 J | |
@@ -178,4 +175,7 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `option loading_tail_s` | J | (with loading_fps) |
 | `option checkpoint_stream_wait` | G3 | Shagg 23 Nov: one G3 DLC scene (RAAM's Shadow ch.4) |
 | `option checkpoint_stream_wait_ms` | G3 | (with checkpoint_stream_wait) |
+| `option shadow_value_cap` | G2 | Canary's G2 sites (a per-light default read after a `lwz 288 / cmpwi / bgt` override test); that code is in no other game (searched G1 / G3 / J, the same search finds exactly G2's two) [V]; G3 / J use the per-object `shadow_cap` |
+| `hook ShadowValueCapA` | G2 | (with shadow_value_cap) |
+| `hook ShadowValueCapB` | G2 | (with shadow_value_cap) |
 | `hook ShaderCreatedVertex` | - | (all four since 23 Nov: patch 0066) |

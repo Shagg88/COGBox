@@ -25,6 +25,7 @@
 #include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
 #include <ue3/name_tags.h>
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
+#include <ue3/shadow_cap.h>  // --gow3_shadow_cap (shared with Judgment)
 #include <iterator>   // std::size  // GitHub #353
 #include "mouse_look.h"
 #include "main_menu_exit.h"
@@ -214,30 +215,21 @@ void Gow3UltrawideFov(PPCRegister& f0, PPCRegister& f31) {  // after `lfs f0,0x6
   f0.f64 = factor;
 }
 // Performance option (Shagg 22 Nov; idea from boma's Canary "Smart Shadow Cuts", made our own way): the projected-shadow
-// render gathers its draw lists one shadow at a time; at 0x827E2AF0 (`addi r11,r11,1`, r16 = shadow depth passes so
+// render gathers its draw lists one shadow at a time; at 0x827E2AF0 (`addi r11,r16,1`, r16 = shadow depth passes so
 // far this frame, r30 = the shadow's info, flags at +0x4E0) a per-object shadow (not whole-scene, not a preshadow: flag
 // bits 0x06000000 clear) past the cap is skipped to 0x827E2B4C, as the game skips one it doesn't draw. Whole-scene and
 // preshadows are never capped. Canary's value: 20. The instruction is checked once before the first use.
 REXCVAR_DEFINE_INT32(gow3_shadow_cap, 0, "Gears3",
                      "Most per-object dynamic shadows drawn a frame (0 = the game's own, no limit; 20 = Canary's Smart "
                      "Shadow Cuts). Fewer = less game-thread and GPU work; some objects lose their shadow");
-bool Gow3ShadowCap(PPCRegister& r16, PPCRegister& r30) {   // before `addi r11,r11,1` at 0x827E2AF0; true = skip
+bool Gow3ShadowCap(PPCRegister& r16, PPCRegister& r30) {   // at `addi r11,r16,1`, 0x827E2AF0; true = skip
   const int32_t cap = REXCVAR_GET(gow3_shadow_cap);
   if (cap <= 0 || int32_t(r16.u32) < cap) return false;
   const uint8_t* m = rex::Runtime::instance()->virtual_membase();
-  static const bool code_ok = [m] {
-    const uint8_t* q = m + 0x827E2AF0u;
-    const uint32_t w = (uint32_t(q[0]) << 24) | (uint32_t(q[1]) << 16) | (uint32_t(q[2]) << 8) | q[3];
-    if (w != 0x396B0001u) REXLOG_WARN("gow3_shadow_cap: the code at 0x827E2AF0 is {:08X}, not TU6's - left alone", w);
-    return w == 0x396B0001u;
-  }();
-  if (!code_ok || !r30.u32) return false;
-  const uint8_t* f = m + r30.u32 + 0x4E0u;
-  const uint32_t flags = (uint32_t(f[0]) << 24) | (uint32_t(f[1]) << 16) | (uint32_t(f[2]) << 8) | f[3];
-  if (flags & 0x06000000u) return false;  // whole-scene shadow or preshadow: always drawn
-  static std::atomic<bool> logged{false};
-  if (!logged.exchange(true)) REXLOG_INFO("gow3_shadow_cap: more than {} shadow depth passes in a frame - further per-object shadows skipped", cap);
-  return true;
+  // 23 Nov parity pass: the check was for `addi r11,r11,1` (0x396B0001); TU6 has `addi r11,r16,1` there (PC's generated
+  // code), so the cap logged "not TU6's" and never ran. Shared with Judgment (layer 2 ue3/shadow_cap.h).
+  static const bool code_ok = ue3::ShadowCapSiteOk("gow3_shadow_cap", m, 0x827E2AF0u);
+  return ue3::ShadowCapSkip("gow3_shadow_cap", cap, r16.u32, r30.u32, m, code_ok);
 }
 // GitHub #207 (gow3_manifest_tu6.toml): a voice callback whose object is already gone (no vtable) is not called
 bool Gow3VoiceCallbackGone(PPCRegister& r3) {

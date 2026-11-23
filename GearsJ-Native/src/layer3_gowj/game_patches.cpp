@@ -18,6 +18,7 @@
 #include <xenos/dev_tools.h>
 #include <xenos/frame_limiter.h>
 #include <xenos/display_size.h>
+#include <ue3/shadow_cap.h>  // --gowj_shadow_cap (shared with Gears 3)
 #include <ue3/menu_fps.h>  // GitHub #101 front-end cap (layer 2, shared with Gears 2)
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/objects.h>
@@ -612,6 +613,21 @@ void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E2
       f1.f64 = ue3::TickFloorLimit(floor_fps, f1.f64);
     }
   }
+}
+
+// Performance option (as Gears 3's --gow3_shadow_cap, 23 Nov parity pass; layer 2 ue3/shadow_cap.h has the why): the
+// projected-shadow gather sub_827FD2F8 is Gears 3's sub_827E2848 (461 instructions, the same code); at 0x827FD5A0
+// `addi r11,r16,1` (r16 = shadow depth passes so far this frame, r30 = the shadow's info, flags `lwz r10,1248(r30)`) a
+// per-object shadow past the cap goes to the game's own skip path 0x827FD5FC. Checked in the PC's generated code.
+REXCVAR_DEFINE_INT32(gowj_shadow_cap, 0, "Judgment",
+                     "Most per-object dynamic shadows drawn a frame (0 = the game's own, no limit; 20 = Canary's Smart "
+                     "Shadow Cuts). Fewer = less game-thread and GPU work; some objects lose their shadow");
+bool GowjShadowCap(PPCRegister& r16, PPCRegister& r30) {   // at `addi r11,r16,1`, 0x827FD5A0; true = skip
+  const int32_t cap = REXCVAR_GET(gowj_shadow_cap);
+  if (cap <= 0 || int32_t(r16.u32) < cap) return false;
+  const uint8_t* m = rex::Runtime::instance()->virtual_membase();
+  static const bool code_ok = ue3::ShadowCapSiteOk("gowj_shadow_cap", m, 0x827FD5A0u);
+  return ue3::ShadowCapSkip("gowj_shadow_cap", cap, r16.u32, r30.u32, m, code_ok);
 }
 
 // ---- Engine settings through the game's own config (layer 2 --ue3_ini_edits) ----------------------------------------

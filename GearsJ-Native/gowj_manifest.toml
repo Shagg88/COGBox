@@ -367,3 +367,12 @@ registers = ["r4", "r28"]
 address = 0x82995E58  # patch 0066: `bl 82BE2F60` in the pixel-shader constructor 82995CF8
 name = "GowjShaderCreatedPixel"
 registers = ["r4", "r27"]
+
+# Performance option: per-object dynamic shadow cap (--gowj_shadow_cap; game_patches.cpp has the why). Before
+# `addi r11,r16,1` at 0x827FD5A0 in sub_827FD2F8 (Gears 3's sub_827E2848); true = skip this shadow (the game's own skip
+# path at 0x827FD5FC, `lwz r11,16(r26)`). Both checked in the PC's generated code (23 Nov).
+[[entrypoint.midasm_hook]]
+address = 0x827FD5A0
+name = "GowjShadowCap"
+registers = ["r16", "r30"]
+jump_address_on_true = 0x827FD5FC
