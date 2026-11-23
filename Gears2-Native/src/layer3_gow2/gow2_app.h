@@ -7,6 +7,7 @@
 #include <rex/rex_app.h>
 #include <xenos/utf8_paths.h>
 #include "mouse_look.h"
+#include "freeze_watchdog.h"
 #include "main_menu_exit.h"
 
 namespace rex::ui {
@@ -64,6 +65,7 @@ class Gow2App : public rex::ReXApp {
   void OnPostSetup() override {
     CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
+    Gow2StartFreezeWatchdog();  // 23 Nov: --gow2_freeze_watchdog_seconds (developer, log-only; off by default)
     Gow2AddTestIniEdits();  // before the bundle is edited
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (notes/64): before the game reads its config
     XenosInstallDrawStatsIfRequested();
@@ -145,6 +147,7 @@ class Gow2App : public rex::ReXApp {
     XenosQuitWithoutDllUnload(runtime());
   }
   void OnShutdown() override {
+    Gow2StopFreezeWatchdog();
     XenosShutdownInGameMenu();  // patch 0163
     XenosDestroyFpsBar();
     XenosShutdownAoDebugKeys();  // notes/80

@@ -168,6 +168,7 @@ set(GOW2_SOURCES
     src/layer3_gow2/untiled.cpp
     src/layer3_gow2/game_patches.cpp
     src/layer3_gow2/mouse_look.cpp
+    src/layer3_gow2/freeze_watchdog.cpp  # 23 Nov: --gow2_freeze_watchdog_seconds (developer)
     src/layer3_gow2/main_menu_exit.cpp
     src/layer3_gow2/unlocks.cpp
     src/layer3_gow2/cheats.cpp

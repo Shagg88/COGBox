@@ -9,6 +9,7 @@
 #include <rex/rex_app.h>
 #include <xenos/utf8_paths.h>
 #include "mouse_look.h"
+#include "freeze_watchdog.h"
 #include "main_menu_exit.h"
 #include "unlocks.h"
 #include "gow3_addresses.h"
@@ -71,6 +72,7 @@ class Gow3App : public rex::ReXApp {
   void OnPostSetup() override {
     CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
+    Gow3StartFreezeWatchdog();  // 23 Nov: --gow3_freeze_watchdog_seconds (developer, log-only; off by default)
     Gow3AddBuiltInIniEdits();  // before the bundle is edited
     Gow3InstallExtras();       // its package patches too
     Gow3InstallFirstPerson();  // --gow3_first_person: only its hotkey here (the camera is set from the engine tick)
@@ -201,6 +203,7 @@ class Gow3App : public rex::ReXApp {
     XenosQuitWithoutDllUnload(runtime());
   }
   void OnShutdown() override {
+    Gow3StopFreezeWatchdog();
     Gow3StopMemoryGauge();
     XenosShutdownInGameMenu();  // patch 0163
     XenosDestroyFpsBar();  // before the SDK drops its drawer
