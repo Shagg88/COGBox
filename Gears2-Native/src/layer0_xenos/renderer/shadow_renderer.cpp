@@ -522,6 +522,10 @@ REXCVAR_DEFINE_STRING(gow2_renderer_vulkan_barrier_stages, "all", "Gears2",
                       "(its work overlaps) and Vulkan 6.6, with ~180 full barriers a frame | skip_memory (patch 0108, a "
                       "MEASUREMENT mode that may give wrong pictures): barriers with no image layout change are not sent "
                       "(counted as 'all' in the 300-frame line)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_depth_bias_control, true, "Gears2",
+                    "22 Nov (Vulkan, devices without D24S8 such as AMD and the Steam Deck): keep the game's depth bias in "
+                    "D24 units on the D32F stand-in target with VK_EXT_depth_bias_control where the driver has it "
+                    "(as Xenia Canary and vkd3d-proton). false = the old behaviour (bias shrinks on far surfaces)");
 REXCVAR_DEFINE_STRING(gow2_renderer_vulkan_attachment_layouts, "general", "Gears2",
                       "Patch 0100 (Vulkan, a measurement switch first): the layout render passes draw to their targets "
                       "in. general = VK_IMAGE_LAYOUT_GENERAL, as before (targets are also sampled) | optimal = "
@@ -1696,6 +1700,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       options.vk_count_pixels = REXCVAR_GET(gow2_renderer_vulkan_count_pixels);                            // 0098
       options.vk_pipeline_libraries = REXCVAR_GET(gow2_renderer_vulkan_pipeline_libraries);                 // 0.6.5
       options.vk_attachment_layouts = REXCVAR_GET(gow2_renderer_vulkan_attachment_layouts) == "optimal";   // 0100
+      options.vk_no_depth_bias_control = !REXCVAR_GET(gow2_renderer_vulkan_depth_bias_control);  // 22 Nov
       options.vk_barrier_src_stages = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "work";          // 0107
       options.vk_skip_memory_barriers = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "skip_memory";  // 0108
     }

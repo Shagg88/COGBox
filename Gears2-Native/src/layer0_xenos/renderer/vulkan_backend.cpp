@@ -229,6 +229,7 @@ struct LinkedState {
   VkFrontFace front = VK_FRONT_FACE_CLOCKWISE;
   VkBool32 bias_enable = VK_FALSE, depth_test = VK_FALSE, depth_write = VK_FALSE, stencil_test = VK_FALSE;
   float bias = 0.0f, bias_slope = 0.0f;
+  bool bias_unorm = false;  // 22 Nov: set the bias with D24-unorm units (VK_EXT_depth_bias_control) - D32F stand-in target
   VkCompareOp depth_op = VK_COMPARE_OP_ALWAYS;
   VkStencilOpState stencil_front{}, stencil_back{};
 };
@@ -2102,6 +2103,22 @@ class VulkanBackend final : public Backend {
     rs.depthBiasConstantFactor = float(d.depth_bias);
     rs.depthBiasSlopeFactor = d.depth_bias_slope;
     rs.lineWidth = 1.0f;
+    // 22 Nov (audit: AMD #432 / Steam Deck #433 / Gears 3 dark patches lead): a device without D24S8 renders the guest's
+    // D24 depth into D32F, but the game's constant bias is in D24 units (r = 2^-24). On a float target r follows the
+    // depth's exponent, so far surfaces got a much smaller bias. VK_EXT_depth_bias_control keeps D24 units on the D32F
+    // target (as Xenia Canary a8d034c00 and vkd3d-proton do). Only where the extension is on and the target is the
+    // D24 stand-in; elsewhere unchanged.
+#ifdef VK_EXT_depth_bias_control
+    VkDepthBiasRepresentationInfoEXT bias_rep{VK_STRUCTURE_TYPE_DEPTH_BIAS_REPRESENTATION_INFO_EXT};
+    const bool bias_unorm = depth_bias_unorm_ && d.depth_format == Format::kD24UnormS8 && rs.depthBiasEnable;
+    if (bias_unorm) {
+      bias_rep.depthBiasRepresentation = VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
+      bias_rep.depthBiasExact = depth_bias_exact_ ? VK_TRUE : VK_FALSE;
+      rs.pNext = &bias_rep;
+    }
+#else
+    const bool bias_unorm = false;
+#endif
     VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     ms.rasterizationSamples = VkSampleCountFlagBits(std::max(1u, d.samples));
     VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -2201,6 +2218,7 @@ class VulkanBackend final : public Backend {
         p.dyn.bias_enable = rs.depthBiasEnable;
         p.dyn.bias = rs.depthBiasConstantFactor;
         p.dyn.bias_slope = rs.depthBiasSlopeFactor;
+        p.dyn.bias_unorm = bias_unorm;
         p.dyn.depth_test = ds.depthTestEnable;
         p.dyn.depth_write = ds.depthWriteEnable;
         p.dyn.depth_op = ds.depthCompareOp;
@@ -2938,6 +2956,19 @@ class VulkanBackend final : public Backend {
         vk_.vkCmdSetCullMode(cmd_, y.cull);
         vk_.vkCmdSetFrontFace(cmd_, y.front);
         vk_.vkCmdSetDepthBiasEnable(cmd_, y.bias_enable);
+#ifdef VK_EXT_depth_bias_control
+        if (y.bias_unorm && set_depth_bias2_) {  // 22 Nov: D24 units on the D32F stand-in (see Build)
+          VkDepthBiasRepresentationInfoEXT rep{VK_STRUCTURE_TYPE_DEPTH_BIAS_REPRESENTATION_INFO_EXT};
+          rep.depthBiasRepresentation = VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
+          rep.depthBiasExact = depth_bias_exact_ ? VK_TRUE : VK_FALSE;
+          VkDepthBiasInfoEXT bi{VK_STRUCTURE_TYPE_DEPTH_BIAS_INFO_EXT};
+          bi.pNext = &rep;
+          bi.depthBiasConstantFactor = y.bias;
+          bi.depthBiasClamp = 0.0f;
+          bi.depthBiasSlopeFactor = y.bias_slope;
+          set_depth_bias2_(cmd_, &bi);
+        } else
+#endif
         vk_.vkCmdSetDepthBias(cmd_, y.bias, 0.0f, y.bias_slope);
         vk_.vkCmdSetDepthTestEnable(cmd_, y.depth_test);
         vk_.vkCmdSetDepthWriteEnable(cmd_, y.depth_write);
@@ -3205,7 +3236,7 @@ class VulkanBackend final : public Backend {
     di.pQueueCreateInfos = &qi;
     // Patch 0104: the driver's per-pipeline statistics (a measurement, own device only).
     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pe{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
-    const char* dev_exts[3] = {};
+    const char* dev_exts[6] = {};
     // 0.6.2: graphics pipeline libraries, where the device offers them (our own device; on the SDK's, SDK patch 116 / runtime 066).
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gl{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
     if (options_.vk_pipeline_libraries && options_.vk_pipeline_stats)
@@ -3265,6 +3296,38 @@ class VulkanBackend final : public Backend {
         REXLOG_WARN("gow2_renderer: Vulkan: VK_KHR_pipeline_executable_properties not offered - no pipeline statistics");
       }
     }
+#ifdef VK_EXT_depth_bias_control
+    // 22 Nov: no D24S8 -> the guest's D24 depth lives in D32F; keep the game's bias in D24 units (see Build)
+    VkPhysicalDeviceDepthBiasControlFeaturesEXT dbc{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_BIAS_CONTROL_FEATURES_EXT};
+    if (!d24s8_ && !options_.vk_no_depth_bias_control) {
+      uint32_t n = 0;
+      vk_.vkEnumerateDeviceExtensionProperties(physical_, nullptr, &n, nullptr);
+      std::vector<VkExtensionProperties> xs(n);
+      vk_.vkEnumerateDeviceExtensionProperties(physical_, nullptr, &n, xs.data());
+      bool has = false;
+      for (const auto& x : xs) if (!std::strcmp(x.extensionName, VK_EXT_DEPTH_BIAS_CONTROL_EXTENSION_NAME)) has = true;
+      if (has) {
+        VkPhysicalDeviceDepthBiasControlFeaturesEXT q{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_BIAS_CONTROL_FEATURES_EXT};
+        VkPhysicalDeviceFeatures2 q2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+        q2.pNext = &q;
+        vk_.vkGetPhysicalDeviceFeatures2(physical_, &q2);
+        if (q.depthBiasControl && q.leastRepresentableValueForceUnormRepresentation) {
+          dbc.depthBiasControl = VK_TRUE;
+          dbc.leastRepresentableValueForceUnormRepresentation = VK_TRUE;
+          dbc.depthBiasExact = q.depthBiasExact;
+          dbc.pNext = e2.pNext;
+          e2.pNext = &dbc;
+          dev_exts[di.enabledExtensionCount++] = VK_EXT_DEPTH_BIAS_CONTROL_EXTENSION_NAME;
+          di.ppEnabledExtensionNames = dev_exts;
+          depth_bias_unorm_ = true;
+          depth_bias_exact_ = q.depthBiasExact != VK_FALSE;
+        }
+      }
+      REXLOG_WARN("gow2_renderer: Vulkan: no D24S8 - depth in D32F; depth bias in D24 units {}",
+                  depth_bias_unorm_ ? (depth_bias_exact_ ? "ON (VK_EXT_depth_bias_control, exact)" : "ON (VK_EXT_depth_bias_control)")
+                                    : "NOT available (the game's bias is smaller on far surfaces)");
+    }
+#endif
     VkResult r = vk_.vkCreateDevice(physical_, &di, nullptr, &device_);
     if (r != VK_SUCCESS) { error = VkErr("vkCreateDevice", r); return false; }
     return FinishDevice(error);
@@ -3280,6 +3343,12 @@ class VulkanBackend final : public Backend {
       if (!get_exec_props_ || !get_exec_stats_) pipeline_stats_ = false;
     }
     if (debug_utils_) { GN_VK_DEBUG_FUNCS(GN_VK_LOAD_D) }
+#ifdef VK_EXT_depth_bias_control
+    if (depth_bias_unorm_) {
+      set_depth_bias2_ = reinterpret_cast<PFN_vkCmdSetDepthBias2EXT>(vk_.vkGetDeviceProcAddr(device_, "vkCmdSetDepthBias2EXT"));
+      if (!set_depth_bias2_) REXLOG_WARN("gow2_renderer: Vulkan: vkCmdSetDepthBias2EXT missing - linked pipelines keep plain bias");
+    }
+#endif
 #undef GN_VK_LOAD_D
     if (ext_) queue_ = static_cast<VkQueue>(ext_->queue);
     else vk_.vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
@@ -4129,6 +4198,10 @@ class VulkanBackend final : public Backend {
   uint32_t device_api_ = 0;
   uint64_t device_local_mb_ = 0;
   bool d24s8_ = true;
+  bool depth_bias_unorm_ = false, depth_bias_exact_ = false;  // 22 Nov: VK_EXT_depth_bias_control on (no D24S8 only)
+#ifdef VK_EXT_depth_bias_control
+  PFN_vkCmdSetDepthBias2EXT set_depth_bias2_ = nullptr;
+#endif
   bool push_descriptor_ = false;  // Vulkan 1.4 push descriptors (stage V2 binds per draw with them when present)
   bool debug_utils_ = false;
   uint32_t debug_depth_ = 0;

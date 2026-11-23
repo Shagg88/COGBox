@@ -377,6 +377,8 @@ struct BackendOptions {
   // Patch 0104 (Vulkan, own device only - gn_vktest): enable VK_KHR_pipeline_executable_properties and capture each
   // graphics pipeline's driver statistics (registers, instructions...) for Backend::PipelineStatistics.
   bool vk_pipeline_stats = false;
+  // 22 Nov: true = do NOT enable VK_EXT_depth_bias_control on a device without D24S8 (the old behaviour; a control switch)
+  bool vk_no_depth_bias_control = false;
   // 0.6.2 (Vulkan first-run stutter; the DXVK 2.0 method): graphics pipelines are linked from pipeline libraries - one
   // per vertex shader (pre-rasterization), one per pixel shader (fragment), one per output state - so the driver
   // compiles each SHADER once and every further state combination of it is a link (no shader compile). Depth / stencil
