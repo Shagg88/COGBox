@@ -67,6 +67,15 @@ bool OpenObjects() {
 constexpr const char* kDefaultHotkeys = "F9=ToggleDebugCamera;F10=PlayersOnly;F11=ToggleHUD";
 }  // namespace
 
+// The engine's own FPS and frame-time display (Gears 2 / 3's --gow*_patch_show_fps, 23 Nov parity pass; the launcher's
+// FPS counter "game's own"). Gears 2 / 3 set the two flags as a data patch (Sowa_95's addresses); Judgment's engine has
+// the same UEngine::Exec STAT handler (sub_825126A8: one name compare and `xori 1` toggle per sub-command, as Gears 2's
+// at 0x8252EA48 whose FPS / third toggles are the patch's two flags), so the engine's own `stat fps` and `stat unit` turn
+// them on - no flag address. Queued as COGBox's own commands (trusted: a display, no cheat, also in Versus as the patch);
+// they run once a player exists. [G] which flag `stat unit` toggles: the frame-time one by UE3's names.
+REXCVAR_DEFINE_BOOL(gowj_show_fps, false, "Judgment",
+                    "Turn on the engine's FPS and frame-time display (its own stat fps / stat unit)");
+
 // OnPostSetup. Without --gowj_cheats only what --ue3_hotkeys / --ue3_exec name runs.
 void GowjInstallCheats() {
   Ue3ConsoleTarget target;
@@ -84,6 +93,11 @@ void GowjInstallCheats() {
   XenosChatSetHooks(&Ue3ChatMatchRunning, &Ue3ChatSend);
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
+  if (REXCVAR_GET(gowj_show_fps)) {
+    Ue3ConsoleQueueTrusted("stat fps");
+    Ue3ConsoleQueueTrusted("stat unit");
+    REXLOG_INFO("gowj_show_fps: the engine's stat fps / stat unit queued (they run once a player exists)");
+  }
   // GitHub #342: the launcher's cheats - also in a game this PC hosts (Judgment's own AllowCheats returns True)
   ue3::cheats::Configure({"Judgment", true, false, true, target.engine_global, target.players_data_offset,
                           target.players_num_offset, "GearPawn"});

@@ -156,6 +156,9 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
 // A single choice greyed: the FPS counter's "Game's own (column)" in Judgment / Gears 1 (PS1 267, 475), and the game
 // languages Gears 1 has no text for.
 Availability choice_available(const Option& o, Game g, int index);
+// 23 Nov parity pass: the FPS counter's "Game's own (column)" (index 3) in Judgment needs an exe with --gowj_show_fps
+// (the engine's own stat fps / stat unit); Gears 2 / 3 always have it, Gears 1 not yet (choice_available).
+Availability fps_own_choice_available(Game g, int index, const Environment& env);
 // Frame generation choices (FrameGen): 2-5 (NVIDIA DLSS) are not listed at all without the exe's support and NVIDIA's
 // Streamline DLLs next to it; greyed without an RTX 40 (2x) / RTX 50 (3x, 4x, dynamic) card. 1 (AMD) greyed without its DLL.
 bool dlss_fg_present(const Environment& env);

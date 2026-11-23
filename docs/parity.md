@@ -48,12 +48,11 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `hook CoalescedSkip` | G1 G2 | G3 J | |
 | `option texture_stats_off` | G2 | G3 J (G1 n/a) | Canary's G2-only patch (RHIGetTextureMemoryStats -> FALSE); no leaf of its shape in J's code [V]; G3 / J need the streamer's budget call found first. G1 doesn't apply: Canary's G1 texture patch is only the pool size [S notes], no such leaf in G1 [V] |
 | `hook TextureStatsOff` | G2 | G3 J | |
-| `option show_fps` | G2 G3 | G1 J | the engine's own FPS display |
+| `option show_fps` | G2 G3 J | G1 | the engine's own FPS display (J since 23 Nov: its `stat fps` / `stat unit` through the shared console exec). G1: no STAT toggle of that shape found in its code - needs another way |
 | `option profile_100` | G2 J | G1 G3 | |
 | `option profile_100_file` | G2 J | G1 G3 | |
 | `option profile_log` | G1 G3 J | G2 | |
 | `option tick_log` | G3 J | G1 G2 | timing log |
-| `option skip_logos` | G1 J | G2 G3 | G2 / G3 skip them through an ini edit (check) |
 | `option ultrawide` | G2 G3 J | G1 | G1 has its own: no_aspect_lock, ViewFov (check what is missing) |
 | `option aspect` | G2 G3 J | G1 | |
 | `option ultrawide_fov_exact` | G2 G3 | G1 J | |
@@ -171,4 +170,5 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `hook MaxTickRate` | G2 G3 J | G1's 2006 engine has no GetMaxTickRate (no frame smoothing; no function of that shape in its code [V], J's matches at 0x8255E200); G1 limits in `PresentInterval` |
 | `option tick_floor_fps` | G2 G3 J | G1: no engine tick-rate read to floor (no GetMaxTickRate, see above); its limiter is the render thread's present interval |
 | `option trilinear` | G1 G3 J | G2 does it as a launcher ini edit (`~=MipFilter=point>MipFilter=linear`, gears_settings.cpp) |
+| `option skip_logos` | G1 J | G2 / G3 skip the logo films through the launcher's ini edit (`-StartupMovies=EpicLogo` / `MGSLogo`, `Open_Logos`; gears_settings.cpp) [V] |
 | `hook ShaderCreatedVertex` | - | (all four since 23 Nov: patch 0066) |
