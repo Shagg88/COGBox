@@ -195,7 +195,7 @@ non_volatile_as_local = true
 0x82FB1848 = {}   # ptr; reference base 0x82FAEC28
 
 # Batch 2 (job 006: past the Bink movie, then "[FATAL] Call to invalid or unregistered function at guest address
-# 0x82C11620"). tools/scan_vtables.py (Gears 2's, D5) against the codegen's own function list (59,587 starts,
+# 0x82C11620"). Gears2-Native/tools/scan_vtables.py (D5) against the codegen's own function list (59,587 starts,
 # generated/default/gowj_init.cpp) and the SDK's loaded image (job 005 dump): 23 vtable/callback-table entries the
 # codegen doesn't know, 0x82C11620 among them.
 0x823987A0 = {}   # 1 table ref(s), first at 0x820A1E4C; inside sub_82398780 (+0x20); first word 3D608356

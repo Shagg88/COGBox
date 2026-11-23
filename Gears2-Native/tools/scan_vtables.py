@@ -1,17 +1,26 @@
-"""Gears2-Native: find functions the recompiler may have missed, by reading function-pointer tables.
+"""All four games (ONE copy, Gears2-Native/tools): find functions the recompiler may have missed, by reading
+function-pointer tables.
 
-Input: an image dump (--gow2_dump_image or the codegen dump) and generated/default/*.cpp (known function starts) + gow2_manifest.toml.
+Input: an image dump (--gow2_dump_image or the codegen dump) and the game's generated/<tu6|default>/<game>_recomp.*.cpp
+(known function starts) + its manifest. The game is --game=gow1|gow2|gow3|gowj, else the one whose manifest is in <root>.
 Method: every aligned big-endian word in a non-code section that points into a code section is a code pointer.
 Consecutive code pointers form a run. A run whose targets fall in two or more different functions looks like a vtable
 or callback table (a switch jump table points into one function, so it's skipped). Entries in such runs that are not
 known function starts are candidates. Each candidate is printed with its table, the containing function and the
 first instruction word, for review before it goes into the manifest.
-Usage: python tools/scan_vtables.py <root> <image.bin>
+Usage: python Gears2-Native/tools/scan_vtables.py <game root> <image.bin> [--game=...] [--tu6] [--init=<x_init.cpp>]
+       [--code=<start>-<end>] [--ignore-manifest]
 """
 import bisect, glob, os, re, struct, sys
 
 root, image_path = sys.argv[1], sys.argv[2]
-tu6 = '--tu6' in sys.argv[3:]   # notes/63: generated/tu6 + gow2_manifest_tu6.toml
+tu6 = '--tu6' in sys.argv[3:]   # notes/63: generated/tu6 (Gears 2 always reads tu6)
+# per game: (manifest, generated folder with --tu6, without) - from the four games' former copies of this script
+GAMES = {'gow1': ('gow1_manifest.toml', 'tu6', 'default'), 'gow2': ('gow2_manifest_tu6.toml', 'tu6', 'tu6'),
+         'gow3': ('gow3_manifest_tu6.toml', 'tu6', 'default'), 'gowj': ('gowj_manifest.toml', 'tu6', 'default')}
+game = next((a.split('=', 1)[1] for a in sys.argv[3:] if a.startswith('--game=')), None) or next(
+    (g for g, (m, _, _) in GAMES.items() if os.path.exists(os.path.join(root, m))), 'gow2')
+manifest_name, gen_dir = GAMES[game][0], GAMES[game][1 if tu6 else 2]
 ignore_manifest = '--ignore-manifest' in sys.argv[3:]   # self-test: would the scan have found the hints we added by running?
 BASE = 0x82000000
 img = open(image_path, 'rb').read()
@@ -36,12 +45,12 @@ def in_code(v):
     return any(a <= v < b for a, b in code)
 
 starts = set()
-init = next((a.split('=', 1)[1] for a in sys.argv[3:] if a.startswith('--init=')), None)   # a gow2_init.cpp: its function table
+init = next((a.split('=', 1)[1] for a in sys.argv[3:] if a.startswith('--init=')), None)   # a <game>_init.cpp: its function table
 if init:
     starts.update(int(m, 16) for m in re.findall(r'\{ 0x([0-9A-F]{8}), sub_', open(init, encoding='utf-8', errors='replace').read()))
-for f in ([] if init else glob.glob(os.path.join(root, 'generated', 'tu6', 'gow2_recomp.*.cpp'))):
+for f in ([] if init else glob.glob(os.path.join(root, 'generated', gen_dir, game + '_recomp.*.cpp'))):
     starts.update(int(m, 16) for m in re.findall(r'^DEFINE_REX_FUNC\(sub_([0-9A-F]{8})\)', open(f, encoding='utf-8', errors='replace').read(), re.M))
-manifest_hints = {int(m, 16) for m in re.findall(r'^0x([0-9A-Fa-f]{8})\s*=', open(os.path.join(root, 'gow2_manifest_tu6.toml')).read(), re.M)}
+manifest_hints = {int(m, 16) for m in re.findall(r'^0x([0-9A-Fa-f]{8})\s*=', open(os.path.join(root, manifest_name)).read(), re.M)}
 if ignore_manifest:
     starts -= manifest_hints   # hinted functions also appear as DEFINE_REX_FUNC; drop them to test the scan blind
 else:

@@ -1,7 +1,7 @@
 # Gears3-Native recompiler manifest for TITLE UPDATE 6 (0.0.6.11), notes/24. Built with tools\build.ps1 -Tu6; the disc
 # (0.0.0.11) manifest is gow3_manifest.toml. Every entry was re-found in the TU6 image, not copied:
 #  - the two tail-call hints: the TU6 codegen without hints reported exactly these two unresolved branches;
-#  - the function-pointer table hints: tools/scan_vtables.py run on the TU6 image and a TU6 codegen without hints
+#  - the function-pointer table hints: Gears2-Native/tools/scan_vtables.py run on the TU6 image and a TU6 codegen without hints
 #    (same rules as the disc list);
 #  - the callbacks: the same lis/addi scan as the disc (7 found, each the disc entry's counterpart, same instructions);
 #  - the switch table: read from the TU6 image (11 entries, the disc's moved by +0x13A00, same code);
@@ -29,7 +29,7 @@ cr_as_local = true
 0x82DCB448 = {}   # from 0x82DCB5B4 (disc 0x82DB80F0)
 0x82DE11F0 = {}   # from 0x82DE5DDC (disc 0x82DCE010)
 
-# Function-pointer table scan (tools/scan_vtables.py) on the TU6 image with the TU6 codegen's function list, 2026-10-24.
+# Function-pointer table scan (Gears2-Native/tools/scan_vtables.py) on the TU6 image with the TU6 codegen's function list, 2026-10-24.
 # See gow3_manifest.toml for why these are needed (job 007) and the rules (SEH resume points left out).
 0x822CE7A8 = {}   # 1 table ref(s), first at 0x8217AAD8; inside sub_822CE780 (+0x28); first word 81040000
 0x822DE2B0 = {}   # 1 table ref(s), first at 0x833AA3AC; inside sub_822DE280 (+0x30); first word 3D60833E
