@@ -1343,3 +1343,7 @@ REXCVAR_DEFINE_BOOL(gow2_present_fold_unpack, true, "Gears2",
                     "Speed study (O7, D3D12): the shown frame's last present pass (gamma, resample or sharpening) also "
                     "writes the presenter's image, so the full-screen pass that unpacked its words into it is left out "
                     "(bit-identical: the same n / 1023 values). Not with HDR output or frame generation");
+REXCVAR_DEFINE_BOOL(gow2_renderer_draw_trims, true, "Gears2",
+                    "Speed study (O9, layer0 sweep 22 Nov): per-draw trims with the same results - the fog-anchor shader "
+                    "list parsed once (no text search per draw), the index-reuse table as a flat table cleared by "
+                    "generation, and a small filter in front of the recipe pack's drawn-shader set");

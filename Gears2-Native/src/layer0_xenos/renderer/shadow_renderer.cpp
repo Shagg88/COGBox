@@ -254,6 +254,77 @@ struct SystemConstants {
 };
 static_assert(sizeof(SystemConstants) == 96);
 
+// Job 178's index-range reuse table (key -> ring offset, valid for one command list and release epoch). O9 (layer0
+// sweep 22 Nov, --gow2_renderer_draw_trims): a flat open-addressing table cleared by a generation tag instead of an
+// unordered_map (a node allocation per new range, a full clear per list). When the flat table is three-quarters full a
+// new range is not remembered - that draw's indices are converted again, which is what a miss always did, so only
+// reuse is lost, never correctness. With the switch off, the map as before.
+class IndexReuseTable {
+ public:
+  void SetFlat(bool flat) { flat_ = flat; }
+  void clear() {
+    if (!flat_) {
+      map_.clear();
+      return;
+    }
+    count_ = 0;
+    if (++gen_ == 0) {  // wrapped: forget every tag
+      for (Entry& e : slots_) e.gen = 0;
+      gen_ = 1;
+    }
+  }
+  bool Find(uint64_t key, uint64_t& value) const {
+    if (!flat_) {
+      const auto it = map_.find(key);
+      if (it == map_.end()) return false;
+      value = it->second;
+      return true;
+    }
+    if (slots_.empty()) return false;
+    for (uint32_t i = Slot(key), n = 0; n < kSlots; i = (i + 1) & (kSlots - 1), ++n) {
+      const Entry& e = slots_[i];
+      if (e.gen != gen_) return false;
+      if (e.key == key) {
+        value = e.value;
+        return true;
+      }
+    }
+    return false;
+  }
+  void Set(uint64_t key, uint64_t value) {
+    if (!flat_) {
+      map_[key] = value;
+      return;
+    }
+    if (slots_.empty()) slots_.resize(kSlots);
+    for (uint32_t i = Slot(key), n = 0; n < kSlots; i = (i + 1) & (kSlots - 1), ++n) {
+      Entry& e = slots_[i];
+      if (e.gen == gen_ && e.key == key) {
+        e.value = value;
+        return;
+      }
+      if (e.gen != gen_) {
+        if (count_ >= kSlots / 4 * 3) return;  // full enough: not remembered (a later miss converts again)
+        e = Entry{key, value, gen_};
+        ++count_;
+        return;
+      }
+    }
+  }
+
+ private:
+  static constexpr uint32_t kSlots = 4096;  // a power of two
+  struct Entry {
+    uint64_t key = 0, value = 0;
+    uint32_t gen = 0;
+  };
+  static uint32_t Slot(uint64_t key) { return uint32_t((key * 0x9E3779B97F4A7C15ull) >> 52); }  // 12 bits
+  bool flat_ = false;
+  uint32_t gen_ = 1, count_ = 0;
+  std::vector<Entry> slots_;
+  std::unordered_map<uint64_t, uint64_t> map_;
+};
+
 const char* DepthFormatName(uint32_t f) { return f ? "D24FS8" : "D24S8"; }
 
 
@@ -547,6 +618,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     ps_no_colour_variant_ = REXCVAR_GET(gow2_renderer_ps_no_colour_variant);
     query_chunk_ = uint32_t(std::clamp(REXCVAR_GET(gow2_renderer_query_chunk), 0, 4096));
     box_fast_ = REXCVAR_GET(gow2_renderer_query_box_fast);  // O6
+    draw_trims_ = REXCVAR_GET(gow2_renderer_draw_trims);  // O9
+    idx_reuse_.SetFlat(draw_trims_);
     front_copy_lean_ = REXCVAR_GET(gow2_renderer_front_copy_lean);
     vertex_watch_min_ = uint64_t(std::clamp(REXCVAR_GET(gow2_renderer_vertex_watch_min_bytes), 64, int32_t(kWatchMinBytes)));
     ps_noat_from_swap_ = uint64_t(std::max(REXCVAR_GET(gow2_renderer_ps_no_alpha_from_swap), 0));
@@ -5198,6 +5271,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       up_scene_copy_.last_only = REXCVAR_GET(gow2_upscale_scene_last_copy);
       up_scene_copy_.anchored = up_scene_copy_.last_only && REXCVAR_GET(gow2_upscale_scene_after_fog);
       up_fog_ps_ = "," + REXCVAR_GET(gow2_ao_fog_ps) + ",";
+      up_fog_hashes_ = FogHashes(up_fog_ps_);
       up_jitter_scope_ = uint32_t(std::clamp(REXCVAR_GET(gow2_upscale_jitter_scope), 0, 3));
       REXLOG_INFO("gow2_upscaler: object rows c{}-c{}, camera position {}, scene formats {}", up_object_base_,
                   up_object_base_ + 3, up_camera_reg_ ? "c" + std::to_string(up_camera_reg_) : std::string("not used"),
@@ -5558,6 +5632,31 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool up_fog_seen_ = false;  // --gow2_upscale_scene_after_fog: this frame drew the fog pass
   bool up_fog_last_ = false;  // ...and so did the frame before (--gow2_upscale_scene_guest_formats)
   std::string up_fog_ps_;     // its shader hashes, ",A,B,"
+  std::vector<uint64_t> up_fog_hashes_;  // O9: the same, parsed and sorted
+  // The hashes a ",%016llX," search of the list can find: comma-separated items of exactly 16 upper-case hex digits
+  // (lower case, spaces or other lengths never matched the search, so they are left out here too).
+  static std::vector<uint64_t> FogHashes(const std::string& list) {
+    std::vector<uint64_t> out;
+    size_t start = 0;
+    while (start <= list.size()) {
+      size_t end = list.find(',', start);
+      if (end == std::string::npos) end = list.size();
+      if (end - start == 16) {
+        uint64_t h = 0;
+        bool hex = true;
+        for (size_t i = start; i < end && hex; ++i) {
+          const char c = list[i];
+          if (c >= '0' && c <= '9') h = (h << 4) | uint64_t(c - '0');
+          else if (c >= 'A' && c <= 'F') h = (h << 4) | uint64_t(c - 'A' + 10);
+          else hex = false;
+        }
+        if (hex) out.push_back(h);
+      }
+      start = end + 1;
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+  }
   uint32_t up_jitter_scope_ = 0;         // --gow2_upscale_jitter_scope
   uint64_t up_jittered_scope_ = 0;       // draws jittered only because of the scope (log window)
   bool up_jitter_late_ = false;          // --gow2_upscale_jitter_late (Gears 3 job 120)
@@ -9406,9 +9505,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // --gow2_upscale_scene_after_fog: the anchor pass, by its pixel shader (a fog draw skipped before this point is not
     // seen: that frame counts as one without the anchor - no copy taken - and the picker lets go after two)
     if ((up_scene_copy_.anchored || SceneGuestFormatMask()) && !up_fog_seen_ && psg) {
-      char fog_hex[20];
-      std::snprintf(fog_hex, sizeof(fog_hex), ",%016llX,", static_cast<unsigned long long>(ps_hash));
-      up_fog_seen_ = up_fog_ps_.find(fog_hex) != std::string::npos;
+      if (draw_trims_) {  // O9: the list parsed once (FogHashes) - the same matches as the text search below
+        up_fog_seen_ = std::binary_search(up_fog_hashes_.begin(), up_fog_hashes_.end(), ps_hash);
+      } else {
+        char fog_hex[20];
+        std::snprintf(fog_hex, sizeof(fog_hex), ",%016llX,", static_cast<unsigned long long>(ps_hash));
+        up_fog_seen_ = up_fog_ps_.find(fog_hex) != std::string::npos;
+      }
     }
 
     // Patch 0025 (Canary render_target_cache.cc Update, 9da693480; Gears 3 review 01-g): a depth target at the same
@@ -10308,9 +10411,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   ((uint64_t(is32) | uint64_t(ib->endianness) << 1 | uint64_t(use_restart) << 3) << 24) ^
                   uint64_t(use_restart ? reset_index : 0) * 0x9E3779B97F4A7C15ull;
         idx_keep = true;
-        if (auto it = idx_reuse_.find(idx_key); it != idx_reuse_.end()) {
+        if (idx_reuse_.Find(idx_key, idx_off)) {
           idx_hit = true;
-          idx_off = it->second;
           idx_list = list;
         }
       }
@@ -10394,7 +10496,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
             idx_reuse_.clear();
             idx_reuse_list_ = backend_->Stats().submits;
           }
-          idx_reuse_[idx_key] = off;
+          idx_reuse_.Set(idx_key, off);
           idx_hit = true;  // repeats of this draw (aliases) use it too
           idx_off = off;
           idx_list = idx_reuse_list_;
@@ -12503,11 +12605,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // shader note counts only those while any are hot (the rest still build afterwards, in the background).
   uint64_t rcp_last_ps_ = 0;
   std::unordered_set<uint64_t> rcp_drawn_ps_;
+  uint64_t rcp_seen_filter_[256] = {};  // O9: hashes known to be in rcp_drawn_ps_
   std::vector<uint8_t> rcp_ch_hot_, rcp_rec_hot_;
   uint64_t rcp_hot_chapters_ = 0;
   void MarkRecipeChapterHot(uint64_t h) {
     rcp_last_ps_ = h;
-    if (!rcp_drawn_ps_.insert(h).second) return;
+    // O9: a pixel shader already in rcp_drawn_ps_ is usually one of the few drawn this frame - a direct-mapped filter of
+    // hashes known to be in the set answers without the set (only hashes already inserted are ever stored in it).
+    uint64_t& seen = rcp_seen_filter_[(h ^ (h >> 29)) & 255u];
+    if (draw_trims_ && seen == h && h) return;
+    if (!rcp_drawn_ps_.insert(h).second) {
+      seen = h;
+      return;
+    }
+    seen = h;
     const auto t = rcp_triggers_.find(h);
     if (t == rcp_triggers_.end()) return;
     for (uint32_t c : t->second) {
@@ -14641,7 +14752,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t tex_memo_frame_ = 0, tex_memo_epoch_ = 0, tex_memo_gen_ = 0, tex_gen_ = 0;
   uint32_t tex_memo_masks_[3] = {}, tex_memo_stand_ins_ = 0;
   uint32_t tex_memo_fetch_[32 * 6] = {};
-  std::unordered_map<uint64_t, uint64_t> idx_reuse_;  // job 178: index range key -> ring offset (this list + epoch)
+  IndexReuseTable idx_reuse_;  // job 178: index range key -> ring offset (this list + epoch)
   uint64_t idx_reuse_list_ = ~0ull, idx_reuse_epoch_ = ~0ull;
   struct VertexMemo {
     uint64_t gen = 0;
@@ -14825,6 +14936,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     XferDraw xfer{};
   } box_memo_;
   bool box_fast_ = false;  // --gow2_renderer_query_box_fast
+  bool draw_trims_ = false;  // --gow2_renderer_draw_trims (O9)
   std::map<std::pair<uint32_t, uint32_t>, XferPair> xfer_pairs_;  // job 180: depth transfers by target pair (window)
 
   uint64_t xfer_px_base_[4] = {};
