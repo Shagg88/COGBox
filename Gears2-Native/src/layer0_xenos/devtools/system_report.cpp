@@ -17,6 +17,9 @@
 #include <tlhelp32.h>
 #include <cwctype>
 #include <iterator>
+// The launcher's Proton detection, one copy for launcher and games (23 Nov): Windows-only helpers, no other dependency.
+#define PROTON_DETECT_ONLY 1
+#include "../../../cogbox/src/proton.cpp"
 #endif
 
 #if !defined(_M_ARM64)
@@ -101,6 +104,9 @@ void LogWindows() {
     const char* rel = nullptr;
     if (auto wh = reinterpret_cast<WineHostFn>(GetProcAddress(ntdll, "wine_get_host_version"))) wh(&sys, &rel);
     REXLOG_INFO("pc: running under Wine {} on {} {}", wv() ? wv() : "?", sys ? sys : "?", rel ? rel : "");
+    // 23 Nov (Shagg: what the Linux work learned that helps Proton): the launcher's Proton / SteamOS / Steam Deck details
+    // (cogbox proton.cpp, one copy - compiled into this file) also in every game's log, so a Deck report names its setup.
+    for (const std::string& line : proton::report_lines(proton::detect_here({}))) REXLOG_INFO("pc: {}", line);
   }
 }
 

@@ -294,6 +294,7 @@ std::vector<std::string> scan_roots(const std::string &home, const std::string &
     return out;
 }
 
+#ifndef PROTON_DETECT_ONLY  // file search - launcher only
 std::vector<std::filesystem::path> find_copies(const std::vector<std::filesystem::path> &roots,
                                                const std::function<bool(const std::filesystem::path &, bool)> &isGame,
                                                int maxDepth, int budget, double seconds)
@@ -380,6 +381,7 @@ bool quick_candidate(const std::filesystem::path &p, bool isDir)
     }
     return false;
 }
+#endif  // PROTON_DETECT_ONLY
 
 #ifdef _WIN32
 // ---- this process (Windows / Wine) --------------------------------------------------------------------------------------
@@ -439,6 +441,7 @@ Info detect_here(const std::vector<std::string> &gpus)
     return detect(in);
 }
 
+#ifndef PROTON_DETECT_ONLY  // the games compile only the detection (system_report.cpp, C++20: no u8string paths)
 std::vector<std::string> roots_here(const Info &i)
 {
     std::vector<std::string> out;
@@ -498,6 +501,7 @@ std::vector<std::string> roots_here(const Info &i)
     }
     return out;
 }
+#endif  // PROTON_DETECT_ONLY
 #endif
 
 }  // namespace proton
