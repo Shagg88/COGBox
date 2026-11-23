@@ -10190,7 +10190,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint64_t misses_before = backend_->PipelineMisses();  // patch 0058
     XENOS_SITE(1);
     // Patch 0068: the first real DXBC scene draw gives the warm-only pipelines their vertex shader and state.
-    if (prebuild_on_ && !warm_template_set_ && vsg.dxbc && d.ps && psg->dxbc && !d.gs && d.color_count &&
+    // 23 Nov (job 2377q): on Vulkan the translated shaders are SPIR-V (GuestShader::dxbc false), so this never ran and the
+    // pixel shaders built ahead as libraries (e208d7cb) all waited; Vulkan's SetWarmTemplate takes no shader from it.
+    const bool spirv_il = backend_->GetShaderIL() == gpu::ShaderIL::kSpirv;
+    if (prebuild_on_ && !warm_template_set_ && (vsg.dxbc || spirv_il) && d.ps && (psg->dxbc || spirv_il) && !d.gs && d.color_count &&
         d.color_formats[0] != gpu::Format::kUnknown && d.topology == gpu::Topology::kTriangleList)
       warm_template_set_ = backend_->SetWarmTemplate(d);
     gpu::PipelineHandle pipeline = backend_->GetGraphicsPipeline(d, async_pso, &pipeline_pending);
