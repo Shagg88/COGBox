@@ -87,6 +87,16 @@ void GowjInstallFilmGrainSwitch(rex::Runtime* runtime) {
   g_no_film_grain.store(true);
   REXLOG_INFO("gowj_no_film_grain: on");
 }
+// Patch 0066 for Judgment (23 Nov; Gears 2 had it alone - its first-play logs: 6,937 shaders seen while loading, the other
+// three 0): UE3's shader constructors, after each has copied the shader's microcode into its own allocation, hand it to
+// the renderer, which translates it and has the driver build it before the first draw (XenosGuestShaderCreated). Found
+// by matching Gears 2's constructors (82819440 / 82819608 TU6) and checked against this game's generated code:
+//  - vertex shader 82995B10: at 82995C6C `bl 82BE3158` (XDK vertex-shader header init), r4 = the microcode (its 32-byte
+//    aligned copy), r28 = its size in bytes;
+//  - pixel shader 82995CF8: at 82995E58 `bl 82BE2F60` (XDK pixel-shader header init), r4 = the microcode, r27 = its size.
+void GowjShaderCreatedVertex(PPCRegister& r4, PPCRegister& r28) { XenosGuestShaderCreated(true, r4.u32, r28.u32); }
+void GowjShaderCreatedPixel(PPCRegister& r4, PPCRegister& r27) { XenosGuestShaderCreated(false, r4.u32, r27.u32); }
+
 void GowjNoFilmGrain(PPCRegister& f0) {   // before `stfs f0,316(r31)` at 0x8243CF68
   if (g_no_film_grain.load(std::memory_order_relaxed)) f0.f64 = 0.0;
 }

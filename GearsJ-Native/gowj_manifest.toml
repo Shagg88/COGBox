@@ -357,3 +357,13 @@ jump_address_on_true = 0x82CBA688
 address = 0x8243CF68  # `stfs f0,316(r31)`: the blended film-grain amount
 name = "GowjNoFilmGrain"
 registers = ["f0"]
+
+[[entrypoint.midasm_hook]]
+address = 0x82995C6C  # patch 0066: `bl 82BE3158` in the vertex-shader constructor 82995B10
+name = "GowjShaderCreatedVertex"
+registers = ["r4", "r28"]
+
+[[entrypoint.midasm_hook]]
+address = 0x82995E58  # patch 0066: `bl 82BE2F60` in the pixel-shader constructor 82995CF8
+name = "GowjShaderCreatedPixel"
+registers = ["r4", "r27"]

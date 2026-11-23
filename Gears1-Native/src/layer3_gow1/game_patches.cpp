@@ -457,6 +457,16 @@ void Gow1SkipLogoStep2(PPCRegister& r11) { Gow1SkipLogoStep(r11); }
 // start-up films as being skipped, the next one stops the film and steps on). With --gow1_skip_logos, while the film
 // index (r31 + 68) is 1 (EpicLogo) or 2 (MGSLogo), the tick's "a button was pressed" flag (r28) is set just before it
 // is tested (0x8222DB00) - exactly what a player pressing A at the logo does, however that logo was started.
+// Patch 0066 for Gears 1 (23 Nov; Gears 2 had it alone - its first-play logs: 6,937 shaders seen while loading, the other
+// three 0): UE3's shader constructors, after each has copied the shader's microcode into its own allocation, hand it to
+// the renderer, which translates it and has the driver build it before the first draw (XenosGuestShaderCreated). Found
+// by matching Gears 2's constructors (82819440 / 82819608 TU6) and checked against this game's generated code:
+//  - vertex shader 825BA760: at 825BA8B0 `bl 82234FF0` (the XDK's vertex-shader header init), r4 = the microcode, r28 = its
+//    size in bytes;
+//  - pixel shader 825BA8C8: at 825BAA4C `stw r29,8(r31)`, r11 = the microcode just stored at header +24, r27 = its size.
+void Gow1ShaderCreatedVertex(PPCRegister& r4, PPCRegister& r28) { XenosGuestShaderCreated(true, r4.u32, r28.u32); }
+void Gow1ShaderCreatedPixel(PPCRegister& r11, PPCRegister& r27) { XenosGuestShaderCreated(false, r11.u32, r27.u32); }
+
 void Gow1SkipLogoTick(PPCRegister& r28, PPCRegister& r31) {
   if (!REXCVAR_GET(gow1_skip_logos)) return;
   rex::Runtime* runtime = rex::Runtime::instance();

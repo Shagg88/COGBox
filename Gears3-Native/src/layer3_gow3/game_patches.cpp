@@ -89,6 +89,16 @@ REXCVAR_DEFINE_BOOL(gow3_patch_no_dynamic_shadows, false, "Gears3",
 // is loaded.
 REXCVAR_DEFINE_BOOL(gow3_patch_show_fps, false, "Gears3", "Turn on the engine's FPS and frame-time display (community patch, Sowa_95)");
 
+// Patch 0066 for Gears 3 (TU6) (23 Nov; Gears 2 had it alone - its first-play logs: 6,937 shaders seen while loading, the other
+// three 0): UE3's shader constructors, after each has copied the shader's microcode into its own allocation, hand it to
+// the renderer, which translates it and has the driver build it before the first draw (XenosGuestShaderCreated). Found
+// by matching Gears 2's constructors (82819440 / 82819608 TU6) and checked against this game's generated code:
+//  - vertex shader 82974FD8: at 82975134 `bl 82B060B0` (XDK vertex-shader header init), r4 = the microcode (its 32-byte
+//    aligned copy), r28 = its size in bytes;
+//  - pixel shader 829751C0: at 82975320 `bl 82B05DC8` (XDK pixel-shader header init), r4 = the microcode, r27 = its size.
+void Gow3ShaderCreatedVertex(PPCRegister& r4, PPCRegister& r28) { XenosGuestShaderCreated(true, r4.u32, r28.u32); }
+void Gow3ShaderCreatedPixel(PPCRegister& r4, PPCRegister& r27) { XenosGuestShaderCreated(false, r4.u32, r27.u32); }
+
 void Gow3PatchAniso16(PPCRegister& r5) {
   if (!REXCVAR_GET(gow3_patch_aniso16)) return;
   GOW3_LOG_ONCE("gow3_patch_aniso16: anisotropy {} -> 16", r5.u32);

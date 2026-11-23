@@ -4635,3 +4635,13 @@ after_instruction = true
 address = 0x8222DB00  # `lis r11,-32006` (before it)
 name = "Gow1SkipLogoTick"
 registers = ["r28", "r31"]
+
+[[entrypoint.midasm_hook]]
+address = 0x825BA8B0  # patch 0066: `bl 82234FF0` in the vertex-shader constructor 825BA760
+name = "Gow1ShaderCreatedVertex"
+registers = ["r4", "r28"]
+
+[[entrypoint.midasm_hook]]
+address = 0x825BAA4C  # patch 0066: `stw r29,8(r31)` in the pixel-shader constructor 825BA8C8
+name = "Gow1ShaderCreatedPixel"
+registers = ["r11", "r27"]

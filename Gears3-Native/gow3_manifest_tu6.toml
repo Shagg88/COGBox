@@ -353,3 +353,13 @@ address = 0x82B55AC4  # `lwz r11,0(r3)`: the callback object's vtable
 name = "Gow3VoiceCallbackGone"
 registers = ["r3"]
 jump_address_on_true = 0x82B55AD4
+
+[[entrypoint.midasm_hook]]
+address = 0x82975134  # patch 0066: `bl 82B060B0` in the vertex-shader constructor 82974FD8 (TU6)
+name = "Gow3ShaderCreatedVertex"
+registers = ["r4", "r28"]
+
+[[entrypoint.midasm_hook]]
+address = 0x82975320  # patch 0066: `bl 82B05DC8` in the pixel-shader constructor 829751C0 (TU6)
+name = "Gow3ShaderCreatedPixel"
+registers = ["r4", "r27"]
