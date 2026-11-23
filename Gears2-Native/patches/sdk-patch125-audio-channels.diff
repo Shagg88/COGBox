@@ -1,0 +1,79 @@
+From: Shagg <343598286+Shagg88@users.noreply.github.com>
+Subject: [PATCH] patch125 (Shagg 23 Nov): --audio_channels=auto|1|2|6 - the output layout chosen in the launcher (mono = the stereo fold, then L/R averaged at -3 dB; 2 = always the stereo fold; 6 = always 5.1; auto = by the device, as before). One runtime change for all four games.
+
+diff --git a/include/rex/audio/sdl/sdl_audio_driver.h b/include/rex/audio/sdl/sdl_audio_driver.h
+index 32bf802..a6d532f 100644
+--- a/include/rex/audio/sdl/sdl_audio_driver.h
++++ b/include/rex/audio/sdl/sdl_audio_driver.h
+@@ -55,6 +55,7 @@ class SDLAudioDriver : public AudioDriver {
+   std::atomic<bool> silent_stop_{false};
+   bool sdl_initialized_ = false;
+   uint8_t sdl_device_channels_ = 0;
++  bool mono_ = false;  // COGBox patch 125: --audio_channels=1 (set before the stream plays)
+   // COGBox patch 66 (GitHub #203): the Windows default output device last checked, and frames since the last check
+   std::wstring default_endpoint_id_;
+   uint32_t endpoint_check_frames_ = 0;
+diff --git a/src/audio/sdl/sdl_audio_driver.cpp b/src/audio/sdl/sdl_audio_driver.cpp
+index d46f9e9..7e9f7b0 100644
+--- a/src/audio/sdl/sdl_audio_driver.cpp
++++ b/src/audio/sdl/sdl_audio_driver.cpp
+@@ -18,6 +18,7 @@
+ #include <rex/audio/conversion.h>
+ #include <rex/audio/downmix.h>
+ #include <rex/audio/flags.h>
++#include <string>
+ #include <string_view>
+ #include <rex/audio/sdl/sdl_audio_driver.h>
+ #include <rex/cvar.h>
+@@ -43,6 +44,11 @@ REXCVAR_DEFINE_BOOL(audio_force_silent, false, "Audio",
+ REXCVAR_DEFINE_BOOL(audio_restore_session_volume, true, "Audio",
+                     "Unmute / restore this game's own Windows volume-mixer slider when it is muted or at 0 on the "
+                     "output device in use (checked at start and whenever the Windows default device changes)");
++// COGBox patch 125 (Shagg 23 Nov, audio output mode; one launcher choice for all four games)
++REXCVAR_DEFINE_STRING(audio_channels, "auto", "Audio",
++                      "Sound output layout: auto (5.1 on a surround device, the stereo fold on a 1-2 channel one), "
++                      "1 (mono: the stereo fold, then left and right averaged, -3 dB), 2 (always the stereo fold), "
++                      "6 (always 5.1; Windows / SDL fold it for a stereo device)");
+ 
+ namespace {
+ #ifdef _WIN32
+@@ -191,7 +197,15 @@ bool SDLAudioDriver::OpenSdlOutput([[maybe_unused]] const char* driver) {
+ 
+   // A 1-channel device gets the stereo fold too, then SDL collapses to mono.
+   // Handing it a 6ch stream instead would use SDL's own downmix.
+-  if (obtained_spec.channels <= 2) {
++  // Patch 125: --audio_channels picks the layout instead of the device: 1 / 2 always take the stereo fold (1 then
++  // averages left and right in the callback), 6 always submits 5.1, auto (or anything else) is the rule above.
++  const std::string channels_mode = REXCVAR_GET(audio_channels);
++  const bool force_stereo = channels_mode == "1" || channels_mode == "2";
++  const bool force_surround = channels_mode == "6";
++  mono_ = channels_mode == "1";
++  if (channels_mode != "auto" && !force_stereo && !force_surround)
++    REXAPU_WARN("audio_channels '{}' is not auto, 1, 2 or 6 - using auto", channels_mode);
++  if (force_stereo || (!force_surround && obtained_spec.channels <= 2)) {
+     SDL_DestroyAudioStream(stream);
+     stream = nullptr;
+     desired_spec.channels = 2;
+@@ -216,6 +230,9 @@ bool SDLAudioDriver::OpenSdlOutput([[maybe_unused]] const char* driver) {
+   REXAPU_INFO("audio endpoint '{}': {} ch, {} Hz, format 0x{:04X}; submitting {} ch",
+               device_name ? device_name : "?", obtained_spec.channels, obtained_spec.freq,
+               static_cast<uint32_t>(obtained_spec.format), static_cast<int>(sdl_device_channels_));
++  REXAPU_INFO("audio_channels: {} -> {}", channels_mode,
++              mono_ ? "mono (stereo fold, L/R averaged, -3 dB)"
++                    : sdl_device_channels_ == 6 ? "5.1" : "stereo fold");
+ 
+   if (!SDL_ResumeAudioDevice(sdl_device)) {
+     if (log_failures_) REXAPU_ERROR("SDL_ResumeAudioDevice() failed: {}", SDL_GetError());
+@@ -431,6 +448,12 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
+           case 2:
+             conversion::sequential_6_BE_to_interleaved_2_LE(data, buffer, channel_samples_, fold,
+                                                             gain);
++            if (driver->mono_) {   // patch 125: average L/R, -3 dB headroom, the same sample to both speakers
++              for (uint32_t i = 0; i < channel_samples_; ++i) {
++                const float m = (data[2 * i] + data[2 * i + 1]) * (0.5f * 0.70710678f);
++                data[2 * i] = data[2 * i + 1] = m;
++              }
++            }
+             break;
+           case 6:
+             conversion::sequential_6_BE_to_interleaved_6_LE(data, buffer, channel_samples_, mix,
