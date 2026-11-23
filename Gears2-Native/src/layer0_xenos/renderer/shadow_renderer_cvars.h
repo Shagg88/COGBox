@@ -340,3 +340,4 @@ REXCVAR_DECLARE(std::string, gow2_renderer_resolve_readback);
 REXCVAR_DECLARE(int32_t, gow2_renderer_resolve_readback_max_kb);
 REXCVAR_DECLARE(bool, gow2_renderer_resolve_prepare_mirror);
 REXCVAR_DECLARE(int32_t, gow2_renderer_log_aliases);
+REXCVAR_DECLARE(bool, gow2_renderer_query_box_fast);

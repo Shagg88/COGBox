@@ -546,6 +546,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     ps_no_alpha_variant_ = REXCVAR_GET(gow2_renderer_ps_no_alpha_variant);
     ps_no_colour_variant_ = REXCVAR_GET(gow2_renderer_ps_no_colour_variant);
     query_chunk_ = uint32_t(std::clamp(REXCVAR_GET(gow2_renderer_query_chunk), 0, 4096));
+    box_fast_ = REXCVAR_GET(gow2_renderer_query_box_fast);  // O6
     front_copy_lean_ = REXCVAR_GET(gow2_renderer_front_copy_lean);
     vertex_watch_min_ = uint64_t(std::clamp(REXCVAR_GET(gow2_renderer_vertex_watch_min_bytes), 64, int32_t(kWatchMinBytes)));
     ps_noat_from_swap_ = uint64_t(std::max(REXCVAR_GET(gow2_renderer_ps_no_alpha_from_swap), 0));
@@ -1322,6 +1323,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t* r = regs.values;
     if (Bits(r[rr::reg::RB_MODECONTROL], 0, 3) == 6) {  // kCopy
       PartScope ps(*this, kPartResolve);
+      box_memo_.valid = false;  // O6: a resolve between two boxes - the next one goes through Draw
       Resolve(r);
     } else {
       PartScope ps(*this, kPartState);
@@ -1608,6 +1610,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
     // #399: the scene's height floor from this frame's front buffer (guest rows)
     scene_min_height_ = fb_height >= 240 && fb_height < kSceneMinHeight ? fb_height : kSceneMinHeight;
+    box_memo_.valid = false;  // O6
     XENOS_SITE(1);
     if (!backend_) return;
     if (!thread_cpu_base_) thread_cpu_base_ = ThreadCpuTicks();
@@ -8938,6 +8941,33 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     TraceDraw(reason);  // patch 0016
   }
 
+  // The float constants a shader can read (job 166 / job 240 / job 250+, see the call in Draw); shared by Draw and
+  // the query-box fast path (BoxFastDraw) so both upload exactly the same way.
+  void UploadFloatConstants(const uint32_t* r, const XenosConstGenerations& gens, gpu::ShaderStage stage, uint32_t base,
+                            const rr::GuestShader* sh, bool trim, uint64_t gen, uint64_t& gen_seen,
+                            uint32_t& layout_seen) {
+    uint32_t lo = 256, hi = 256, n = 256;
+    if (sh && sh->compacted()) {
+      lo = sh->float_constants_low, hi = sh->float_constants_high, n = sh->float_constants;
+    } else if (sh && trim) {
+      lo = hi = n = sh->float_constants;
+    }
+    const uint32_t layout = lo | (hi << 9) | (n << 18);  // each <= 256
+    if (gens.valid && gen == gen_seen && layout == layout_seen) {
+      ++stats_.const_gen_skips;
+      return;
+    }
+    if (lo == hi) {
+      backend_->SetConstants(stage, gpu::kCbFloat, &r[base], n * 16);
+    } else {
+      backend_->SetConstantsSplit(stage, gpu::kCbFloat, &r[base], lo * 16, &r[base + 4 * hi], (n - hi) * 16);
+      ++stats_.compacted_uploads;
+      stats_.compacted_bytes_saved += uint64_t(hi - lo) * 16;
+    }
+    gen_seen = gens.valid ? gen : ~0ull;
+    layout_seen = layout;
+  }
+
   // Patch 0016: where a --gow2_renderer_log_vs draw ends (drawn, or the skip / return that stopped it).
   void TraceDraw(const char* outcome) {
     if (!trace_draw_) return;
@@ -8945,10 +8975,139 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     REXLOG_INFO("gow2_renderer: vs-trace frame {} draw {}: {}", frame_ + 1, draw_index_, outcome);
   }
 
+  // O6 (layer0 sweep 22 Nov; --gow2_renderer_query_box_fast): UE3's occlusion boxes (~550 a frame in Gears 2 ch9) are
+  // 36-vertex non-indexed depth-only draws inside an open query, one after another with the same state; only their
+  // vertex data, the start vertex and the vertex shader's constants change. Draw spends ~2 us on each (shader and
+  // pipeline lookups, fog/HDR/upscaler/AO checks, ownership book-keeping). When the draw before this one was such a
+  // box, drawn in full by Draw, and nothing else has reached the renderer since (no other draw, resolve or swap; no
+  // render-target write, backend draw or dispatch), this box has the same state registers, so it is issued again with
+  // that box's pipeline, targets and viewport: the same backend calls Draw would make, minus the ownership work, which
+  // a repeat of the same depth-test-only rectangle on the same target does not change. The query's GPU count is the
+  // same: same pipeline (depth test, slope bias, no writes), same depth target, viewport and scissor, and this draw's
+  // own vertices, start vertex (VGT_INDX_OFFSET) and constants.
+  void RecordBoxMemo(const uint32_t* r, uint32_t prim, uint32_t index_count, bool explicit_major, uint64_t vs_hash,
+                     uint64_t ps_hash, const rr::PipelineState& ps, const rr::GuestShader& vsg, rr::RenderTarget& target,
+                     gpu::PipelineHandle pipeline, const SystemConstants& sc, uint32_t samples) {
+    BoxMemo& m = box_memo_;
+    m.vs_hash = vs_hash;
+    m.ps_hash = ps_hash;
+    m.prim = prim;
+    m.index_count = index_count;
+    m.explicit_major = explicit_major;
+    for (uint32_t i = 0; i < kBoxRegCount; ++i) m.regs[i] = r[kBoxRegs[i]];
+    m.ps = ps;
+    m.vsg = &vsg;
+    m.target = &target;
+    m.pipeline = pipeline;
+    m.sc = sc;
+    m.samples = samples;
+    m.xfer = xfer_draw_;
+    m.res_scale = res_scale_;
+    m.frame = frame_;
+    m.rt_gen = rt_write_gen_;
+    m.backend_draws = backend_->Stats().draws;
+    m.backend_dispatches = backend_->Stats().dispatches;
+    m.valid = true;
+  }
+  // True: drawn here (the caller returns). False: Draw does it in full (box_memo_ is dropped by the caller).
+  bool BoxFastDraw(const uint32_t* r, uint32_t prim, uint32_t index_count, const ObservedIndexBuffer* ib,
+                   bool explicit_major, uint64_t vs_hash, uint64_t ps_hash) {
+    BoxMemo& m = box_memo_;
+    if (!box_fast_ || !occ_open_.open || !occ_open_.handle || ib || prim != m.prim || index_count != m.index_count ||
+        explicit_major != m.explicit_major || vs_hash != m.vs_hash || ps_hash != m.ps_hash || !vs_.dwords)
+      return false;
+    const gpu::BackendStats& bs = backend_->Stats();
+    if (m.frame != frame_ || m.rt_gen != rt_write_gen_ || m.res_scale != res_scale_ || bs.draws != m.backend_draws ||
+        bs.dispatches != m.backend_dispatches || trace_on_ || log_vs_hash_ || report_on_ || ProbeFrame())
+      return false;
+    for (uint32_t i = 0; i < kBoxRegCount; ++i)
+      if (r[kBoxRegs[i]] != m.regs[i]) return false;
+    XENOS_SITE(1);
+    const rr::PipelineState& ps = m.ps;
+    const rr::DepthStencilState& ds = ps.depth_stencil;
+    const rr::GuestShader& vsg = *m.vsg;
+    rr::RenderTarget& target = *m.target;
+    // As Draw, in its order: counters, sample positions, (no) textures, constants, vertex data, the draw.
+    ++occ_stats_.proxies;
+    ++occ_stats_.fast_boxes;
+    fill_.valid = false;
+    fill_geom_.valid = false;
+    xfer_draw_ = m.xfer;
+    if (msaa_positions_mode_ == 1 && msaa_positions_ok_) {
+      static constexpr int8_t kX4[4][2] = {{-2, -2}, {2, 2}, {-6, 6}, {6, -6}};
+      static constexpr int8_t kX2[2][2] = {{4, -4}, {-4, 4}};
+      if (m.samples >= 4) backend_->SetSamplePositions(4, kX4);
+      else if (m.samples == 2) backend_->SetSamplePositions(2, kX2);
+      else backend_->SetSamplePositions(0, nullptr);
+    }
+    tex_memo_valid_ = false;
+    backend_->SetTextures(nullptr, nullptr);
+    native_hdr_ui_views_current_ = false;
+    if (occ_slope_bias_ > 0.0f && ds.depth_enable &&
+        (ds.depth_func == rr::CompareFunc::GreaterEqual || ds.depth_func == rr::CompareFunc::Greater ||
+         ds.depth_func == rr::CompareFunc::LessEqual || ds.depth_func == rr::CompareFunc::Less))
+      ++occ_stats_.slope_biased;  // already in the memo's pipeline; counted as Draw counts it
+    // Constants, as Draw builds them (no pixel shader runs: no depth output, no PS constants).
+    rr::ViewportState v = ps.viewport;
+    rr::NdcForBottomLeftOrigin(v);
+    if (up_active_ && !up_scene_done_) UpscaleJitter(r, vsg, ps, &target, false, v);
+    else if (up_active_) UpscaleLateDraw(r, ps, &target, v);
+    const bool remap24 = float24_remap_ && (target.key.storage_class & 1);
+    if (remap24) {
+      v.z_min *= 0.5f;
+      v.z_max *= 0.5f;
+    }
+    SystemConstants sc = m.sc;  // the rest (interpolator mask, exponent biases, alpha test, draw scale) as the memo's
+    sc.sys0[0] = (v.w_not_reciprocal ? 1u : 0u) | (v.xy_divided_by_w ? 2u : 0u) | (v.z_divided_by_w ? 4u : 0u) |
+                 (ps.raster.primitive_polygonal ? 8u : 0u) |
+                 (ps.alpha_test.func != rr::CompareFunc::Always ? 32u : 0u) | (remap24 ? 64u : 0u) |
+                 (memexport_ ? 128u : 0u);
+    sc.sys0[1] = r[kRegVgtIndxOffset];  // this box's start vertex
+    sc.sys2[0] = r[kRegVgtMinVtxIndx] & 0xFFFFFFu;
+    sc.sys2[1] = r[kRegVgtMaxVtxIndx] & 0xFFFFFFu;
+    if (!sc.sys2[1]) sc.sys2[1] = 0xFFFFFFu;
+    for (uint32_t i = 0; i < 3; ++i) {
+      sc.ndc_scale[i] = v.ndc_scale[i];
+      sc.ndc_offset[i] = v.ndc_offset[i];
+    }
+    sc.sys1[2] = XenosPcssMode();
+    sc.sys1[3] = std::bit_cast<uint32_t>(XenosPcssRadius());
+    backend_->SetConstants(gpu::ShaderStage::kVertex, gpu::kCbSystem, &sc, sizeof(sc));
+    backend_->SetConstants(gpu::ShaderStage::kVertex, gpu::kCbBoolLoop, &r[kRegBoolConst], 40 * 4);
+    const XenosConstGenerations gens = const_gen_skip_ ? XenosConstGens() : XenosConstGenerations{};
+    UploadFloatConstants(r, gens, gpu::ShaderStage::kVertex, kRegFloatConstVs, &vsg, float_constants_trim_, gens.vs,
+                         vs_gen_seen_, vs_size_seen_);
+    std::memcpy(fetch_, &r[kRegFetchConst], 192 * 4);
+    UploadVertexData(r, vsg);
+    backend_->SetConstants(gpu::ShaderStage::kVertex, gpu::kCbFetch, fetch_, FetchUploadBytes(vsg.texture_slots));
+    indices_.clear();
+    index_ptr_ = &indices_;
+    cached_ib_ = nullptr;
+    backend_->SetPipeline(m.pipeline);
+    backend_->SetStencilRef(ds.single_ref);
+    gpu::TextureHandle rts[gpu::GraphicsPipelineDesc::kMaxColor] = {};
+    backend_->SetRenderTargets(0, rts, target.texture);
+    if (gpu_by_target_) NoteDrawTarget(&target);
+    backend_->SetViewport({v.x, v.y, v.width, v.height, v.z_min, v.z_max});
+    backend_->SetScissor({int32_t(ps.scissor.x), int32_t(ps.scissor.y), int32_t(ps.scissor.x + ps.scissor.width),
+                          int32_t(ps.scissor.y + ps.scissor.height)});
+    backend_->Draw(index_count);
+    ++stats_.drawn;
+    ++drawn_since_copy_;
+    ++target.draws;
+    m.backend_draws = bs.draws;  // this box's own draw is not "something else"
+    m.backend_dispatches = bs.dispatches;
+    return true;
+  }
+
   void Draw(const uint32_t* r, uint32_t prim, uint32_t index_count, const ObservedIndexBuffer* ib, bool explicit_major) {
     XENOS_SITE(1);
     ++stats_.draws;
     const uint64_t vs_hash = vs_.dwords ? vs_.hash : 0, ps_hash = ps_.dwords ? ps_.hash : 0;
+    if (box_memo_.valid) {  // O6: a repeat of the occlusion box drawn just before (see BoxFastDraw)
+      if (BoxFastDraw(r, prim, index_count, ib, explicit_major, vs_hash, ps_hash)) return;
+      box_memo_.valid = false;
+    }
     trace_draw_ = log_vs_hash_ && vs_hash == log_vs_hash_ && trace_logged_ < log_vs_max_;  // patch 0016
     if (trace_draw_) ++trace_logged_;
     const uint32_t surface_info = r[rr::reg::RB_SURFACE_INFO];
@@ -9986,26 +10145,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const XenosConstGenerations gens = const_gen_skip_ ? XenosConstGens() : XenosConstGenerations{};
     const auto upload_floats = [&](gpu::ShaderStage stage, uint32_t base, const rr::GuestShader* sh, bool trim,
                                    uint64_t gen, uint64_t& gen_seen, uint32_t& layout_seen) {
-      uint32_t lo = 256, hi = 256, n = 256;
-      if (sh && sh->compacted()) {
-        lo = sh->float_constants_low, hi = sh->float_constants_high, n = sh->float_constants;
-      } else if (sh && trim) {
-        lo = hi = n = sh->float_constants;
-      }
-      const uint32_t layout = lo | (hi << 9) | (n << 18);  // each <= 256
-      if (gens.valid && gen == gen_seen && layout == layout_seen) {
-        ++stats_.const_gen_skips;
-        return;
-      }
-      if (lo == hi) {
-        backend_->SetConstants(stage, gpu::kCbFloat, &r[base], n * 16);
-      } else {
-        backend_->SetConstantsSplit(stage, gpu::kCbFloat, &r[base], lo * 16, &r[base + 4 * hi], (n - hi) * 16);
-        ++stats_.compacted_uploads;
-        stats_.compacted_bytes_saved += uint64_t(hi - lo) * 16;
-      }
-      gen_seen = gens.valid ? gen : ~0ull;
-      layout_seen = layout;
+      UploadFloatConstants(r, gens, stage, base, sh, trim, gen, gen_seen, layout_seen);
     };
     upload_floats(gpu::ShaderStage::kVertex, kRegFloatConstVs, &vsg, float_constants_trim_, gens.vs, vs_gen_seen_,
                   vs_size_seen_);
@@ -10284,6 +10424,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     for (rr::RenderTarget* c : colour_rt)
       if (c) ++c->draws;
     if (draw_colour) ++stats_.colour_drawn;
+    // O6: this box's state for the boxes that follow it (BoxFastDraw). Only the plain case: a non-indexed triangle
+    // list that tests depth and writes nothing, no colour target, no pixel shader, no textures, no export, no stand-in.
+    if (box_fast_ && query_proxy && !ib && prim == 0x04 && !is_clear && !tess_n && target && target->texture &&
+        !depth_writes && colour_count == 0 && !needs_ps && !d.ps && !d.gs && !(t2d | tcube | t3d) && !stand_ins &&
+        !export_shader && !trace_on_ && !log_vs_hash_ && !report_on_ && !ProbeFrame())
+      RecordBoxMemo(r, prim, index_count, explicit_major, vs_hash, ps_hash, ps, vsg, *target, pipeline, sc, d.samples);
     if (is_clear && target && !draw_colour) {
       ++stats_.clears;
       uint32_t c0, c1, r0, r1;
@@ -14099,7 +14245,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "0 -> {} ({:.1f}%), mean "
                   "{:.1f}, after {:.2f} frames; corrected {}, too late {}, estimate visibility wrong {}, dropped {} | "
                   "SDK answers: fake {}, host {} | draws {:.1f}/frame | backend: segments {} refused {} | reports known {} | "
-                  "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {} | box draws slope-biased {}",
+                  "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {} | box draws slope-biased {} | "
+                  "box fast path {} ({:.1f}/frame)",
                   queries_mode_ == QueriesMode::kStrict ? "strict" : queries_mode_ == QueriesMode::kAnswer ? "answer" : "shadow",
                   frame_ - uint64_t(log_every_) + 1, frame_,
                   o.ends, double(o.ends) / log_every_, o.ours, o.incomplete, o.refused, o.unended, o.proxies, o.answered,
@@ -14108,7 +14255,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   o.results ? double(o.latency_frames) / double(o.results) : 0.0, o.corrected, o.too_late,
                   o.visibility_changed, o.dropped, o.sdk_fake, o.sdk_host, double(stats_.draws) / log_every_,
                   b.occlusion_segments - occ_backend_segments_base_, b.occlusion_refused - occ_backend_refused_base_,
-                  occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted, o.slope_biased);
+                  occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted, o.slope_biased,
+                  o.fast_boxes, double(o.fast_boxes) / log_every_);
       if (queries_mode_ == QueriesMode::kStrict && o.results)
         REXLOG_INFO("gow2_renderer: query answers frames {}-{}: written {:.2f} ms after their end was recorded on average "
                     "(max {:.2f}); the last answer of a batch after {:.2f} ms ({:.1f} batches/frame)",
@@ -14551,6 +14699,29 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint32_t prim = 0, depth_func = 0, depth_write = 0, stencil = 0, stencil_wmask = 0, colour = 0;
   };
   XferDraw xfer_draw_;
+  // O6 (BoxFastDraw): the occlusion box drawn just before.
+  // The state registers Draw reads (pipeline_state.h's reg namespace, plus SQ_CONTEXT_MISC and the tessellation pair).
+  static constexpr uint16_t kBoxRegs[] = {
+      0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x200E, 0x200F, 0x2080, 0x2081, 0x2082,
+      0x2104, 0x2105, 0x2106, 0x2107, 0x2108, 0x2109, 0x210A, 0x210B, 0x210C, 0x210D, 0x210E, 0x210F,
+      0x2110, 0x2111, 0x2112, 0x2113, 0x2114, 0x2180, 0x2181,
+      0x2200, 0x2201, 0x2202, 0x2203, 0x2204, 0x2205, 0x2206, 0x2207, 0x2208, 0x2209, 0x220A, 0x220B,
+      0x2284, 0x2285, 0x2286, 0x2287, 0x2293, 0x2302, 0x2380, 0x2381, 0x2382, 0x2383};
+  static constexpr uint32_t kBoxRegCount = uint32_t(sizeof(kBoxRegs) / sizeof(kBoxRegs[0]));
+  struct BoxMemo {
+    bool valid = false;
+    uint64_t vs_hash = 0, ps_hash = 0, frame = 0, rt_gen = 0, backend_draws = 0, backend_dispatches = 0;
+    uint32_t prim = 0, index_count = 0, res_scale = 0, samples = 0;
+    bool explicit_major = false;
+    uint32_t regs[kBoxRegCount] = {};
+    rr::PipelineState ps{};
+    const rr::GuestShader* vsg = nullptr;
+    rr::RenderTarget* target = nullptr;
+    gpu::PipelineHandle pipeline = 0;
+    SystemConstants sc{};
+    XferDraw xfer{};
+  } box_memo_;
+  bool box_fast_ = false;  // --gow2_renderer_query_box_fast
   std::map<std::pair<uint32_t, uint32_t>, XferPair> xfer_pairs_;  // job 180: depth transfers by target pair (window)
 
   uint64_t xfer_px_base_[4] = {};
@@ -14611,7 +14782,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t ends = 0, ours = 0, incomplete = 0, refused = 0, unended = 0, answered = 0, from_cache = 0, fallback = 0,
              results = 0, zero = 0, samples = 0, latency_frames = 0, corrected = 0, too_late = 0,
              visibility_changed = 0, dropped = 0, sdk_fake = 0, sdk_host = 0, proxies = 0, zero_not_trusted = 0,
-             answered_hidden = 0, wrong_hidden = 0, slope_biased = 0;
+             answered_hidden = 0, wrong_hidden = 0, slope_biased = 0,
+             fast_boxes = 0;  // O6: boxes drawn by BoxFastDraw
     double latency_ms = 0, latency_ms_max = 0, batch_last_ms = 0;  // 19 Nov: strict answers, end recorded -> written
     uint64_t batches_landed = 0;
   };
