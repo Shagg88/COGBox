@@ -484,6 +484,11 @@ struct BackendStats {
   uint64_t texture_table_hits = 0, texture_table_misses = 0;  // upl-n109: texture descriptor tables reused / written
   uint64_t texture_table_hash_clashes = 0;  // perf 22 Nov (Vulkan): a cached view set with the same hash but another table
   uint64_t sampler_table_hash_clashes = 0;  // perf batch 2 (Vulkan): the same for sampler sets and sampler objects
+  // perf batch 2 (Vulkan): descriptor binds in PrepareDraw - all three sets / set 0 alone (constant offsets only);
+  // pipeline binds that no longer rebind the sets (each was a 3-set bind before batch 2); set lookups that found
+  // the set already bound (no rebind).
+  uint64_t vk_set_binds_all = 0, vk_set_binds_constants = 0, vk_set_binds_kept_on_pipeline = 0;
+  uint64_t vk_set_lookups_same = 0, vk_pipeline_binds = 0;
   uint64_t index_buffers = 0, index_buffer_bytes = 0, index_buffer_draws = 0;  // persistent index buffers (live)
   // Record profile (upl-n108): CPU ms inside the draw calls' state application, and the two costly parts of it.
   double prepare_draw_ms = 0.0, apply_textures_ms = 0.0, upload_constants_ms = 0.0;

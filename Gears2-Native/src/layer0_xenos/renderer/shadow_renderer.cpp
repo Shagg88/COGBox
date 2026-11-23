@@ -15304,6 +15304,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     double(bs.vk_dispatch_compute_barrier - b0.vk_dispatch_compute_barrier) / double(log_every_),
                     double(bs.vk_dispatch_runs - b0.vk_dispatch_runs) / double(log_every_),
                     double(bs.dispatches - b0.dispatches) / double(log_every_));
+        // perf batch 2: Vulkan descriptor work per frame - what the set-bind and set-cache changes save
+        auto pv = [&](uint64_t a, uint64_t b) { return double(a >= b ? a - b : a) / double(log_every_); };  // no wrap after a reset
+        REXLOG_INFO("gow2_renderer: frames {}-{}: Vulkan descriptors per frame: {:.1f} draws | binds of all 3 sets {:.1f}, "
+                    "of set 0 alone (constants only) {:.1f} | pipeline binds {:.1f}, of which kept the bound sets {:.1f} | "
+                    "set lookups that found the bound set {:.1f} | sets written: texture {:.1f} (found {:.1f}), sampler "
+                    "{:.1f} (found {:.1f}) | hash clashes texture {} sampler {} (totals) | constant uploads skipped {:.1f}",
+                    frame_ - uint64_t(log_every_) + 1, frame_, pv(bs.draws, b0.draws),
+                    pv(bs.vk_set_binds_all, b0.vk_set_binds_all), pv(bs.vk_set_binds_constants, b0.vk_set_binds_constants),
+                    pv(bs.vk_pipeline_binds, b0.vk_pipeline_binds),
+                    pv(bs.vk_set_binds_kept_on_pipeline, b0.vk_set_binds_kept_on_pipeline),
+                    pv(bs.vk_set_lookups_same, b0.vk_set_lookups_same),
+                    pv(bs.texture_table_misses, b0.texture_table_misses), pv(bs.texture_table_hits, b0.texture_table_hits),
+                    pv(bs.sampler_tables_written, b0.sampler_tables_written), pv(bs.sampler_table_hits, b0.sampler_table_hits),
+                    bs.texture_table_hash_clashes, bs.sampler_table_hash_clashes,
+                    pv(bs.constant_uploads_skipped, b0.constant_uploads_skipped));
       }
       if (bs.depth_decompressions != b0.depth_decompressions)  // patch 0089
         REXLOG_INFO("gow2_renderer: frames {}-{}: MSAA depth decompressed before reads (Xenos sample positions, patch "

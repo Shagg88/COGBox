@@ -2958,12 +2958,12 @@ class VulkanBackend final : public Backend {
     // before this submission; a new command buffer sets dirty_sets_ anyway.
     if (dirty_views_ || !cur_view_set_) {
       const VkDescriptorSet s = ViewSet();
-      if (s != cur_view_set_) { cur_view_set_ = s; dirty_sets_ = true; }
+      if (s != cur_view_set_) { cur_view_set_ = s; dirty_sets_ = true; } else if (s) ++stats_.vk_set_lookups_same;
       dirty_views_ = false;
     }
     if (dirty_samplers_ || !cur_sampler_set_) {
       const VkDescriptorSet s = SamplerSet();
-      if (s != cur_sampler_set_) { cur_sampler_set_ = s; dirty_sets_ = true; }
+      if (s != cur_sampler_set_) { cur_sampler_set_ = s; dirty_sets_ = true; } else if (s) ++stats_.vk_set_lookups_same;
       dirty_samplers_ = false;
     }
     if (!cur_view_set_ || !cur_sampler_set_) return false;
@@ -2976,6 +2976,8 @@ class VulkanBackend final : public Backend {
     if (bound_pipeline_ != p.pipeline) {
       vk_.vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipeline);
       bound_pipeline_ = p.pipeline;
+      ++stats_.vk_pipeline_binds;
+      if (!dirty_sets_) ++stats_.vk_set_binds_kept_on_pipeline;
       // perf batch 2: no descriptor rebind for a new pipeline. Every graphics pipeline of the game is built with the
       // one layout_ (Build / the library paths), and binding a pipeline never disturbs sets bound with an identical
       // layout (Vulkan spec, "Pipeline Layout Compatibility"), dynamic offsets included - as on D3D12, where
@@ -3022,9 +3024,11 @@ class VulkanBackend final : public Backend {
       const VkDescriptorSet sets[3] = {cb_set_, cur_view_set_, cur_sampler_set_};
       vk_.vkCmdBindDescriptorSets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 3, sets, 2 * kCbCount, cb_offset_);
       dirty_sets_ = dirty_cb_ = false;
+      ++stats_.vk_set_binds_all;
     } else if (dirty_cb_) {  // VKP1: only the constant offsets changed - set 0 alone (sets 1-2 stay bound, one layout)
       vk_.vkCmdBindDescriptorSets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &cb_set_, 2 * kCbCount, cb_offset_);
       dirty_cb_ = false;
+      ++stats_.vk_set_binds_constants;
     }
     GqTrack();   // 0.6.1: the game's open occlusion query counts this draw
     OccTrack();  // patch 0098
