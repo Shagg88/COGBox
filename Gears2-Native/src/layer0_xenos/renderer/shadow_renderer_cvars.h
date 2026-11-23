@@ -51,6 +51,7 @@ REXCVAR_DECLARE(int32_t, gow2_renderer_load_hold_max_ms);
 REXCVAR_DECLARE(int32_t, gow2_renderer_load_hold_draws);
 REXCVAR_DECLARE(bool, gow2_renderer_d3d12_sm65);
 REXCVAR_DECLARE(bool, gow2_renderer_chapter_hold);
+REXCVAR_DECLARE(bool, gow2_renderer_recipe_pack_current_first);
 REXCVAR_DECLARE(int32_t, gow2_renderer_chapter_hold_max_ms);
 REXCVAR_DECLARE(int32_t, gow2_renderer_play_hold_draws);
 REXCVAR_DECLARE(bool, gow2_renderer_shader_precreate);

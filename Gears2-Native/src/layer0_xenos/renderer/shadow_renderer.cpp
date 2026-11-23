@@ -12322,6 +12322,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     rcp_rec_hot_.assign(rcp_records_.size(), 0);
     rcp_rec_want_.assign(rcp_records_.size(), 0);  // 0.6.1
     chapter_hold_on_ = REXCVAR_GET(gow2_renderer_chapter_hold) && !REXCVAR_GET(gow2_renderer_prepare_all);
+    // GitHub #437: the chapter the game opens goes first (its map package), not only once it draws a marker shader.
+    rcp_current_first_ = REXCVAR_GET(gow2_renderer_recipe_pack_current_first) && !REXCVAR_GET(gow2_renderer_prepare_all);
     rcp_vs_found_ = std::make_unique<std::atomic<uint8_t>[]>(std::max<size_t>(1, rcp_.vertex.size()));
     rcp_on_ = true;
     if (REXCVAR_GET(gow2_renderer_prepare_all)) {  // job 641: every list now, no waiting for its marker shaders
@@ -12644,14 +12646,33 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     seen = h;
     const auto t = rcp_triggers_.find(h);
     if (t == rcp_triggers_.end()) return;
-    for (uint32_t c : t->second) {
-      if (rcp_ch_hot_[c]) continue;
-      rcp_ch_hot_[c] = 1;
-      ++rcp_hot_chapters_;
-      if (!rcp_ch_on_[c]) StartRecipeChapter(c);
-      for (uint32_t i : rcp_.chapters[c].records) rcp_rec_hot_[i] = 1;
-      REXLOG_INFO("gow2_renderer: chapter recipe pack: list {} is being played (frame {}) - its {} records go first",
-                  rcp_.chapters[c].name, frame_, rcp_.chapters[c].records.size());
+    for (uint32_t c : t->second) SetRecipeChapterHot(c, "is being played");
+  }
+  void SetRecipeChapterHot(uint32_t c, const char* why) {
+    if (rcp_ch_hot_[c]) return;
+    rcp_ch_hot_[c] = 1;
+    ++rcp_hot_chapters_;
+    if (!rcp_ch_on_[c]) StartRecipeChapter(c);
+    for (uint32_t i : rcp_.chapters[c].records) rcp_rec_hot_[i] = 1;
+    REXLOG_INFO("gow2_renderer: chapter recipe pack: list {} {} (frame {}) - its {} records go first",
+                rcp_.chapters[c].name, why, frame_, rcp_.chapters[c].records.size());
+  }
+  // GitHub #437 (Gears 3, 0.6.7: all 31 lists started at frame 1 from the start-up reading; the chapter being played
+  // became "hot" only ~56 s after its map opened, when it first drew a marker shader): a chapter is hot as soon as the
+  // game opens a map package holding at least a quarter of its marker pixel shaders, so its records are built first.
+  void HotRecipeChaptersOfFile(const std::vector<uint64_t>& ps, const std::string& name) {
+    std::unordered_map<uint32_t, uint32_t> hits;
+    for (uint64_t h : ps) {
+      const auto t = rcp_triggers_.find(h);
+      if (t == rcp_triggers_.end()) continue;
+      for (uint32_t c : t->second) ++hits[c];
+    }
+    for (const auto& [c, n] : hits) {
+      const size_t markers = rcp_.chapters[c].triggers.size();
+      if (rcp_ch_hot_[c] || size_t(n) * 4 < std::max<size_t>(1, markers)) continue;
+      REXLOG_INFO("gow2_renderer: chapter recipe pack: map {} holds {} of {} marker shaders of list {}", name, n, markers,
+                  rcp_.chapters[c].name);
+      SetRecipeChapterHot(c, "is in the map being opened");
     }
   }
   uint64_t rcp_ready_left_ = 0;  // job 633: for the shader note
@@ -12719,7 +12740,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::vector<RcpOpened> rcp_opened_in_;   // under rcp_mutex_ (from the game's file thread)
   // Recording thread from here on.
   std::unordered_map<uint64_t, std::vector<uint64_t>> rcp_file_ps_;  // package -> its needed pixel-shader keys
-  std::unordered_map<uint64_t, std::string> rcp_file_wait_;          // opened by the game, its list not here yet
+  struct RcpWait {
+    std::string name;
+    bool level = false;  // #437: a map package (sp_ / spe_ / mp_)
+  };
+  std::unordered_map<uint64_t, RcpWait> rcp_file_wait_;              // opened by the game, its list not here yet
+  bool rcp_current_first_ = false;                                   // #437: --gow2_renderer_recipe_pack_current_first
   std::unordered_set<uint64_t> rcp_file_marked_;                     // its records are wanted already
   std::vector<uint8_t> rcp_rec_want_;
   uint64_t rcp_want_n_ = 0, rcp_want_left_ = 0;  // wanted records; of those, not handed to the pipeline workers yet
@@ -12780,11 +12806,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       list = std::move(f.ps);
       const auto w = rcp_file_wait_.find(f.key);
       if (w == rcp_file_wait_.end()) continue;
-      if (chapter_hold_on_) WantRecipeFile(f.key, list, w->second);
+      if (chapter_hold_on_) WantRecipeFile(f.key, list, w->second.name);
+      if (rcp_current_first_ && w->second.level) HotRecipeChaptersOfFile(list, w->second.name);
       rcp_file_wait_.erase(w);
     }
     for (const RcpOpened& o : opened) {
-      if (!chapter_hold_on_) continue;
+      if (!chapter_hold_on_) {  // #437: only the current-chapter ordering
+        if (!rcp_current_first_ || !o.level) continue;
+        const auto it = rcp_file_ps_.find(o.key);
+        if (it != rcp_file_ps_.end()) HotRecipeChaptersOfFile(it->second, o.name);
+        else rcp_file_wait_.emplace(o.key, RcpWait{o.name, true});
+        continue;
+      }
       if (o.level) {
         ch_level_opened_ = true;
         if (rcp_depth_lists_ != rcp_n_.chapters_on) {  // (review) of the lists started so far only; again when more start
@@ -12798,8 +12831,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         }
       }
       const auto it = rcp_file_ps_.find(o.key);
-      if (it != rcp_file_ps_.end()) WantRecipeFile(o.key, it->second, o.name);
-      else rcp_file_wait_.emplace(o.key, o.name);
+      if (it != rcp_file_ps_.end()) {
+        WantRecipeFile(o.key, it->second, o.name);
+        if (rcp_current_first_ && o.level) HotRecipeChaptersOfFile(it->second, o.name);
+      } else {
+        rcp_file_wait_.emplace(o.key, RcpWait{o.name, o.level});
+      }
     }
   }
   // A package the game opened whose shader list has not come (still queued or being read), or anything in the inbox.
@@ -12834,7 +12871,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
  public:
   void OnPrebuildFileShaders(uint64_t key, const uint64_t* ps, size_t n) {  // any thread (layer 2's reader)
-    if (!rcp_on_ || !chapter_hold_on_) return;  // (set in Init, before the reader starts)
+    if (!rcp_on_ || (!chapter_hold_on_ && !rcp_current_first_)) return;  // (set in Init, before the reader starts)
     RcpFile f;
     f.key = key;
     for (size_t i = 0; i < n; ++i)
@@ -12845,7 +12882,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     rcp_files_in_.push_back(std::move(f));
   }
   void OnPrebuildGameOpened(uint64_t key, bool level, const char* name) {  // any thread (the game's file opens)
-    if (!rcp_on_ || !chapter_hold_on_) return;
+    if (!rcp_on_ || (!chapter_hold_on_ && !rcp_current_first_)) return;
+    if (!chapter_hold_on_ && !level) return;  // #437 alone needs only the map packages
     RcpOpened o;
     o.key = key;
     o.level = level;
