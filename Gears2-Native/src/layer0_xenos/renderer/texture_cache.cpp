@@ -37,7 +37,7 @@
 // stb_dxt (public domain, Fabian Giesen / Sean Barrett).
 #define STB_DXT_IMPLEMENTATION
 #define STB_DXT_STATIC
-#include "stb_dxt.h"
+#include "../third_party/stb_dxt/stb_dxt.h"
 
 // Player options: better texture filtering than the game asks for, on filtered textures that have mip levels.
 REXCVAR_DEFINE_INT32(gow2_renderer_force_aniso, 0, "Gears2",

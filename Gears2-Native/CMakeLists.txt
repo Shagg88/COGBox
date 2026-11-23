@@ -338,14 +338,14 @@ if(GN_WITH_REFLEX AND GN_NVAPI_FOUND)
     target_link_libraries(gn_layer0_xenos PRIVATE ${GN_NVAPI_DIR}/amd64/nvapi64.lib)
 endif()
 # NVIDIA DLSS frame generation through Streamline (renderer/dlss_framegen.cpp, --gow2_frame_generation=dlss,
-# experimental): the few public Streamline 2.14.16 headers it needs are vendored in src/layer0_xenos/streamline (MIT);
+# experimental): the few public Streamline 2.14.16 headers it needs are vendored in src/layer0_xenos/third_party/streamline (MIT);
 # there is no library to link - sl.interposer.dll is loaded at run time when the player has put NVIDIA's DLLs next to
 # the exe (never copied by the build). OFF builds keep the same file with empty functions.
 option(GN_WITH_STREAMLINE "Build NVIDIA DLSS frame generation (Streamline, loaded at run time) in" ${WIN32})
 message(STATUS "Gears2-Native: NVIDIA DLSS frame generation (Streamline) ${GN_WITH_STREAMLINE}")
 if(GN_WITH_STREAMLINE AND WIN32)
     target_compile_definitions(gn_layer0_xenos PRIVATE GN_HAVE_STREAMLINE)
-    target_include_directories(gn_layer0_xenos PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/layer0_xenos/streamline/include)
+    target_include_directories(gn_layer0_xenos PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/layer0_xenos/third_party/streamline/include)
 endif()
 # Patch 0136: AMD Anti-Lag 2 (github.com/GPUOpen-LibrariesAndSDKs/AntiLag2-SDK, header-only) in third_party/antilag2-sdk.
 set(GN_AL2_DIR ${CMAKE_SOURCE_DIR}/third_party/antilag2-sdk)

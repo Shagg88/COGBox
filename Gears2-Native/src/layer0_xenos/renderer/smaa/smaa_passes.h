@@ -9,7 +9,7 @@
 
 #include <string>
 
-#include "smaa_hlsl.h"
+#include "../../third_party/smaa/smaa_hlsl.h"
 
 namespace xenos::renderer::smaa {
 

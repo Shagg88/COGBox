@@ -52,13 +52,13 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #endif
 #include "builtin_shaders.h"
 #include "native_hdr_shaders.h"
-#include "smaa/smaa_area_tex.h"
+#include "../third_party/smaa/smaa_area_tex.h"
 #include "xenos/renderer/upscaler.h"
 #include "xenos/renderer/ao.h"
 #include "xegtao_shaders.h"
 #include "ssil_shaders.h"
 #include "smaa/smaa_passes.h"
-#include "smaa/smaa_search_tex.h"
+#include "../third_party/smaa/smaa_search_tex.h"
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>

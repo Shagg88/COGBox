@@ -54,7 +54,7 @@ POSSIBILITY OF SUCH DAMAGES. IN NO EVENT SHALL COPYRIGHT HOLDER OR ITS AUTHORIZE
 ALL DAMAGES, LOSSES, AND CAUSES OF ACTION (WHETHER IN CONTRACT, TORT (INCLUDING NEGLIGENCE) OR OTHERWISE) EXCEED THE
 AMOUNT OF US$10.
 
-## SMAA (src/layer0_xenos/renderer/smaa/)
+## SMAA (src/layer0_xenos/third_party/smaa/)
 
 https://github.com/iryoku/smaa - SMAA.hlsl and its area / search tables, unmodified apart from two non-ASCII comment characters.
 
@@ -84,7 +84,7 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-## stb_dxt (src/layer0_xenos/renderer/stb_dxt.h)
+## stb_dxt (src/layer0_xenos/third_party/stb_dxt/stb_dxt.h)
 
 https://github.com/nothings/stb - DXT1/DXT5 compressor by Fabian "ryg" Giesen, ported to C by Sean Barrett. Public
 domain (or MIT, at your choice); COGBox uses it under the public-domain option (Unlicense), unmodified. Used to re-encode a button-prompt sheet after COGBox's keyboard key caps

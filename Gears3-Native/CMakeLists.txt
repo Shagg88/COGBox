@@ -167,14 +167,14 @@ if(WIN32 AND EXISTS ${GN_NVAPI_DIR}/nvapi.h AND EXISTS ${GN_NVAPI_DIR}/amd64/nva
     set(GN_NVAPI_FOUND ON)
 endif()
 # NVIDIA DLSS frame generation through Streamline (renderer/dlss_framegen.cpp, --gow2_frame_generation=dlss,
-# experimental): the few public Streamline 2.14.16 headers it needs are vendored in src/layer0_xenos/streamline (MIT);
+# experimental): the few public Streamline 2.14.16 headers it needs are vendored in src/layer0_xenos/third_party/streamline (MIT);
 # there is no library to link - sl.interposer.dll is loaded at run time when the player has put NVIDIA's DLLs next to
 # the exe (never copied by the build). OFF builds keep the same file with empty functions.
 option(GN_WITH_STREAMLINE "Build NVIDIA DLSS frame generation (Streamline, loaded at run time) in" ${WIN32})
 message(STATUS "Gears3-Native: NVIDIA DLSS frame generation (Streamline) ${GN_WITH_STREAMLINE}")
 if(GN_WITH_STREAMLINE AND WIN32)
     target_compile_definitions(gn_layer0_xenos PRIVATE GN_HAVE_STREAMLINE)
-    target_include_directories(gn_layer0_xenos PRIVATE ${GN_LAYER0_DIR}/streamline/include)
+    target_include_directories(gn_layer0_xenos PRIVATE ${GN_LAYER0_DIR}/third_party/streamline/include)
 endif()
 option(GN_WITH_REFLEX "Build NVIDIA Reflex in (needs Gears 2's third_party/nvapi)" ${GN_NVAPI_FOUND})
 set(GN_AL2_DIR ${GN_THIRD_PARTY}/antilag2-sdk)
