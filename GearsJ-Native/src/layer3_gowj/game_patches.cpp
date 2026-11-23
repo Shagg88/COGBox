@@ -19,6 +19,7 @@
 #include <xenos/frame_limiter.h>
 #include <xenos/display_size.h>
 #include <ue3/shadow_cap.h>  // --gowj_shadow_cap (shared with Gears 3)
+#include <ue3/aspect.h>  // the ultrawide shape maths (shared)
 #include <ue3/menu_fps.h>  // GitHub #101 front-end cap (layer 2, shared with Gears 2)
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/tick_log.h>  // --gowj_tick_log (shared)
@@ -876,23 +877,13 @@ REXCVAR_DEFINE_BOOL(gowj_ultrawide, false, "Judgment",
 // The field-of-view factor is Canary's 21:9 value times how much more the shape widens than 21:9 does, at the half
 // angle (34.05 deg) where Canary's 21:9 factor is exact (the hooks don't see the game's own field of view).
 namespace uwshape {
-inline double ParseAspect(const std::string& v) {
-  double a = 0, b = 0;
-  if (std::sscanf(v.c_str(), "%lf:%lf", &a, &b) == 2 && a > 0 && b > 0) return a / b;
-  if (std::sscanf(v.c_str(), "%lf", &a) == 1 && a > 0) return a;
-  return 0.0;
-}
-inline double MonitorAspect() {
-  MONITORINFO mi{sizeof(mi)};
-  HMONITOR m = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
-  if (!m || !GetMonitorInfoW(m, &mi)) return 0.0;
-  const double w = double(mi.rcMonitor.right - mi.rcMonitor.left), h = double(mi.rcMonitor.bottom - mi.rcMonitor.top);
-  return h > 0 ? w / h : 0.0;
-}
+// Parse / Monitor / Widen / FovScale: layer 2 ue3/aspect.h (one copy for all four games, 23 Nov)
+using ue3::aspect::FovScale;
+using ue3::aspect::Widen;
 // 550 = Canary's shape; another height when --gowj_aspect asks for one
 inline uint32_t Height(const std::string& v, const char* tag) {
   if (v.empty()) return 550u;
-  const double aspect = v == "auto" ? MonitorAspect() : ParseAspect(v);
+  const double aspect = v == "auto" ? ue3::aspect::Monitor(tag) : ue3::aspect::Parse(v);
   if (!(aspect > 16.0 / 9.0 + 0.01)) {
     REXLOG_INFO("{}: aspect '{}' = {:.4f} is not wider than 16:9 - Canary's 21:9 is used", tag, v, aspect);
     return 550u;
@@ -901,13 +892,6 @@ inline uint32_t Height(const std::string& v, const char* tag) {
   const uint32_t h = std::clamp(uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u, 240u, 720u);
   REXLOG_INFO("{}: aspect '{}' = {:.4f} -> scene 1280x{}", tag, v, aspect, h);
   return h;
-}
-inline double Widen(uint32_t h) { return (1280.0 / double(h)) / (16.0 / 9.0); }
-// how much a shape of height h widens the view, relative to Canary's 550
-inline double FovScale(uint32_t h) {
-  constexpr double kRef = 34.046711 * 3.14159265358979 / 180.0;
-  auto k = [&](double w) { return std::atan(std::tan(kRef) * w) / kRef; };
-  return k(Widen(h)) / k(Widen(550));
 }
 }  // namespace uwshape
 // GitHub #396 (as Gears 3's #330, fixed there in 0.6.3): with the scene render targets kept at 1280x720 under a 1280xH

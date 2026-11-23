@@ -26,6 +26,7 @@
 #include <ue3/name_tags.h>
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/tick_log.h>  // --gow3_tick_log (shared)
+#include <ue3/aspect.h>  // the ultrawide shape maths (shared)
 #include <ue3/shadow_cap.h>  // --gow3_shadow_cap (shared with Judgment)
 #include <iterator>   // std::size  // GitHub #353
 #include "mouse_look.h"
@@ -157,33 +158,14 @@ namespace {
 // Canary's 21:9 scene height is 550; the game rounds its scene render targets up to 8 rows (sub_827D7AA8), so every
 // height here is a multiple of 8 and the targets match the picture exactly (GitHub #330): 550 -> 552.
 constexpr uint32_t kCanaryUltrawideHeight = 552;
-uint32_t SceneRows(double rows) { return std::clamp(uint32_t(std::lround(rows / 8.0)) * 8u, 240u, 720u); }
-
-double ParseAspect(const std::string& v) {  // "21:9", "3440:1440" or "2.4"; 0 when unreadable
-  char* end = nullptr;
-  const size_t colon = v.find(':');
-  if (colon == std::string::npos) {
-    const double x = std::strtod(v.c_str(), &end);
-    return end == v.c_str() ? 0.0 : x;
-  }
-  const double w = std::strtod(v.c_str(), &end), h = std::strtod(v.c_str() + colon + 1, nullptr);
-  return h > 0 ? w / h : 0.0;
-}
-double MonitorAspect() {  // layer 0 knows the monitor the game window is on (the primary one before the window exists)
-  uint32_t w = 0, h = 0;
-  if (!xenos::display::MonitorSize(w, h) || !h) {
-    REXLOG_INFO("gow3_aspect: monitor size unknown");
-    return 0.0;
-  }
-  REXLOG_INFO("gow3_aspect: monitor is {}x{}", w, h);
-  return double(w) / double(h);
-}
+// SceneRows / Parse / Monitor: layer 2 ue3/aspect.h (one copy for all four games, 23 Nov)
+using ue3::aspect::SceneRows;
 // The scene buffer height for the chosen shape, or 0 = the game's own 16:9. Worked out once.
 uint32_t WideHeight() {
   static const uint32_t height = [] {
     const std::string v = REXCVAR_GET(gow3_aspect);
     if (v.empty()) return REXCVAR_GET(gow3_ultrawide) ? kCanaryUltrawideHeight : 0u;
-    const double aspect = v == "auto" ? MonitorAspect() : ParseAspect(v);
+    const double aspect = v == "auto" ? ue3::aspect::Monitor("gow3_aspect") : ue3::aspect::Parse(v);
     if (!(aspect > 16.0 / 9.0 + 0.01)) {
       REXLOG_INFO("gow3_aspect: '{}' = {:.4f}, not wider than 16:9 - the game's 16:9 picture is kept", v, aspect);
       return 0u;

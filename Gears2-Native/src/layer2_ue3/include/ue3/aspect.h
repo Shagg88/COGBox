@@ -11,8 +11,9 @@
 #include <xenos/display_size.h>   // layer 0: the monitor the game window is on
 
 // The ultrawide picture-shape maths (23 Nov parity pass; first used by Gears 1's --gow1_ultrawide / --gow1_aspect).
-// Gears 2 / 3 / Judgment carry the same few lines in their own game_patches.cpp (ParseAspect / MonitorAspect /
-// SceneRows / the exact Hor+ factor) - they can move here without a behaviour change; not done in the same step.
+// Gears 2 / 3 / Judgment use it too (their own copies of Parse / Monitor / SceneRows / Widen / FovScale moved here); each
+// game keeps its own scene-height rules (Gears 2's render-target pool minimum, Judgment's 240-row floor, Gears 3's
+// multiples of 8).
 namespace ue3::aspect {
 
 // "21:9", "3440:1440" or "2.4"; 0 when unreadable.
@@ -58,13 +59,22 @@ inline uint32_t Rows(const char* tag, bool wide, const std::string& shape) {
   return h;
 }
 
+// How much a 1280 x h scene widens the view against 16:9.
+inline double Widen(uint32_t h) { return (1280.0 / double(h)) / (16.0 / 9.0); }
+// Gears 2 / Judgment: how much a shape of height h widens the view, relative to Canary's 550 rows, at the half angle
+// (34.05 deg) where Canary's 21:9 factor is exact.
+inline double FovScale(uint32_t h) {
+  constexpr double kRef = 34.046711 * 3.14159265358979 / 180.0;
+  auto k = [&](double w) { return std::atan(std::tan(kRef) * w) / kRef; };
+  return k(Widen(h)) / k(Widen(550));
+}
+
 // Exact Hor+: the factor the game multiplies a horizontal FOV in degrees by to get the half angle in radians (pi / 360
 // for 16:9), widened so the vertical view stays the 16:9 one: half' = atan(tan(half) * (1280 / rows) / (16 / 9)).
 // Returns `game` unchanged for an FOV outside 1..170 deg.
 inline double HorPlusFactor(double fov_deg, double game, uint32_t rows) {
   if (!(fov_deg > 1.0 && fov_deg < 170.0 && game > 0.0 && rows) || fov_deg * game >= 1.5) return game;
-  const double widen = (1280.0 / double(rows)) / (16.0 / 9.0);
-  return std::atan(std::tan(fov_deg * game) * widen) / fov_deg;
+  return std::atan(std::tan(fov_deg * game) * Widen(rows)) / fov_deg;
 }
 
 }  // namespace ue3::aspect
