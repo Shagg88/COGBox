@@ -27,7 +27,7 @@ non_volatile_as_local = true
 0x82ADAEB0 = {}   # from 0x82D39068
 
 # Job 673 first boot: "[FATAL] Call to invalid or unregistered function at guest address 0x82512E08" (both renderers).
-# Batch 1 (tools/funcscan.py on the TU5 image, notes/02): every entry that is reached only indirectly (a pointer in data,
+# Batch 1 (Gears2-Native/tools/xex/funcscan.py on the TU5 image, notes/02): every entry that is reached only indirectly (a pointer in data,
 # or an address built with lis+addi), lies outside every .pdata function, sits in .text/BINK, and directly follows a
 # terminating instruction (blr / bctr / b / padding) - 4,429 addresses, 0x82512E08 among them. None next to an
 # 'mr r8,r8' SEH marker (Judgment's rule).

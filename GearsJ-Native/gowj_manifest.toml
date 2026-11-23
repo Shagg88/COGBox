@@ -23,14 +23,14 @@ non_volatile_as_local = true
 [entrypoint.functions]
 # Job 002b codegen: "UnresolvedCall ... b <target> - target not in any function" (branches used as tail calls into
 # code no function claims). The same three addresses were the first three of OverkillLabs3's base-disc hints, mapped to
-# TU4 by tools/remap.py (notes/04).
+# TU4 by Gears2-Native/tools/xex/remap.py (notes/04).
 0x82E468F0 = {}   # from 0x82E5E238
 0x82E8ADF0 = {}   # from 0x82E8AF5C
 0x82EA0C80 = {}   # from 0x82EA5854
 
 # Job 004 first boot (both renderers): "[FATAL] Call to invalid or unregistered function at guest address 0x82C0F600".
-# Batch 1 (2026-10-24, notes/04): entries that BOTH our own scan (tools/funcscan.py: pointed to from data or built with
-# lis+addi, never a pdata/bl start) AND OverkillLabs3's base-disc hint list mapped to TU4 (tools/remap.py, OK matches)
+# Batch 1 (2026-10-24, notes/04): entries that BOTH our own scan (Gears2-Native/tools/xex/funcscan.py: pointed to from data or built with
+# lis+addi, never a pdata/bl start) AND OverkillLabs3's base-disc hint list mapped to TU4 (Gears2-Native/tools/xex/remap.py, OK matches)
 # name. 270 agree; 111 of them sit next to an 'mr r8,r8' SEH marker (Gears 3's rule: a split at an SEH resume point
 # broke its codegen) and are left out until the boot loop asks for one. 159 below, 0x82C0F600 among them.
 # Job 005: two of the 159 (0x830B3B70, 0x830B54B4) were jump-table ADDRESSES, not functions; they split two Bink
