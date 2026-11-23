@@ -18,6 +18,7 @@
 #include <xenos/dev_tools.h>
 #include <xenos/frame_limiter.h>
 #include <xenos/display_size.h>
+#include <ue3/menu_fps.h>  // GitHub #101 front-end cap (layer 2, shared with Gears 2)
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/objects.h>
 #include "mouse_look.h"   // 0.5.0: CogMouseLookNoteFov (aim / zoom sensitivity)
@@ -557,6 +558,18 @@ static void GowjExactLimit(PPCRegister& f1) {
   f1.f64 = 0.0;
 }
 
+// GitHub #101 (Gears 3's --gow3_menu_fps, 23 Nov parity pass): the title screen and its menus ran at the player's limit
+// - with none, hundreds of fps on a still menu. While GearStart*.xxx (Judgment's front end too: GearStart.xxx /
+// GearStartTransition.xxx in CookedXbox360) is the last level package the game opened (layer 2 ue3/menu_fps.h, the
+// file-open signal only), the limit is held at this. The loading-screen cap above comes first.
+REXCVAR_DEFINE_INT32(gowj_menu_fps, 60, "Judgment",
+                     "GitHub #101: the engine's frame-rate limit on the title screen and its menus (0 = the player's)");
+// Gears 3's GitHub #55 #68 #79 #80 #120 (23 Nov parity pass): with no limit (--gowj_max_fps=-1, MaxSmoothedFrameRate
+// 1000 through the ini) the engine may tick up to 1000 times a second where nothing is presented (checkpoint saves).
+REXCVAR_DEFINE_INT32(gowj_tick_floor_fps, 0, "Judgment",
+                     "With no frame-rate limit: the engine still ticks at most N times a second (no sub-millisecond ticks "
+                     "while nothing is presented, e.g. checkpoint saves). 0 = off");
+
 void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E220: f1 = the engine's limit (fps)
   if (g_gowj_tick_caller.load(std::memory_order_relaxed) != kServerTickClientsTickRateRet) TickTimeline();  // once per frame
   const int32_t cap = REXCVAR_GET(gowj_loading_fps);
@@ -570,8 +583,13 @@ void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E2
     if (LiveMaxFps() != 0) GowjExactLimit(f1);
     return;
   }
-  // GitHub #77: outside a loading screen the game may lower its own limit (30) and keep it; the player's limit wins.
   const int32_t want = LiveMaxFps();
+  if (const int32_t m = REXCVAR_GET(gowj_menu_fps); m > 0 && ue3::InMenuFront()) {  // GitHub #101 (as Gears 3)
+    f1.f64 = ue3::MenuCappedLimit(want, f1.f64, m);
+    if (want != 0) GowjExactLimit(f1);
+    return;
+  }
+  // GitHub #77: outside a loading screen the game may lower its own limit (30) and keep it; the player's limit wins.
   if (want != 0 && f1.f64 > 0.0 && f1.f64 < (want < 0 ? 1000.0 : double(want)) - 0.5) {
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true))
@@ -584,6 +602,15 @@ void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E2
   if (want > 0) {
     f1.f64 = double(want);
     GowjExactLimit(f1);
+  } else if (const int32_t floor_fps = REXCVAR_GET(gowj_tick_floor_fps); floor_fps > 0 && (want < 0 || !(f1.f64 > 0.0))) {
+    // --gowj_tick_floor_fps (as Gears 3): "no limit" (the ini's 1000, or 0 after the game lowered it) and the game's own
+    // "none" tick at most N times a second. ServerTickClients only reads the value (0 -> DeltaSeconds): left as it is.
+    if (g_gowj_tick_caller.load(std::memory_order_relaxed) != kServerTickClientsTickRateRet) {
+      static std::atomic<bool> s_floor_logged{false};
+      if (!s_floor_logged.exchange(true))
+        REXLOG_INFO("gowj_max_fps: no limit - tick floor {}/s (--gowj_tick_floor_fps)", floor_fps);
+      f1.f64 = ue3::TickFloorLimit(floor_fps, f1.f64);
+    }
   }
 }
 
@@ -674,6 +701,7 @@ static std::string GowjLevelSelectEdits() {
 
 void GowjAddBuiltInIniEdits() {
   GowjInstallLoadingClamp();  // GitHub #38 (runs once, at start-up, before the game opens any file)
+  ue3::InstallMenuFpsCap("gowj_menu_fps", REXCVAR_GET(gowj_menu_fps));  // GitHub #101 (as Gears 3)
   std::string add;
   if (REXCVAR_GET(gowj_level_select)) add += GowjLevelSelectEdits();
   if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xbox360-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;";

@@ -33,8 +33,8 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `option loading_max_s` | J | G1 G2 G3 | (with loading_fps) |
 | `option loading_stream_s` | J | G1 G2 G3 | (with loading_fps) |
 | `option loading_tail_s` | J | G1 G2 G3 | (with loading_fps) |
-| `option menu_fps` | G3 | G1 G2 J | menu frame-rate cap (GitHub #101) - frame-rate pattern |
-| `option tick_floor_fps` | G3 | G1 G2 J | engine tick floor with no fps limit - frame-rate pattern |
+| `option menu_fps` | G2 G3 J | G1 | menu frame-rate cap (GitHub #101); G2 / J share layer 2 `ue3/menu_fps.h` since 23 Nov. G1 needs a MaxTickRate hook first |
+| `option tick_floor_fps` | G2 G3 J | G1 | engine tick floor with no fps limit (G2 / J since 23 Nov). G1 needs a MaxTickRate hook first |
 | `hook MaxTickRate` | G2 G3 J | G1 | the engine's frame-rate limit read; G1 limits through PresentInterval |
 | `option checkpoint_stream_wait` | G3 | G1 G2 J | GitHub #226: streamed sections fully loaded after a checkpoint load |
 | `option checkpoint_stream_wait_ms` | G3 | G1 G2 J | (with checkpoint_stream_wait) |
