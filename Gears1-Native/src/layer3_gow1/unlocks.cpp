@@ -60,7 +60,8 @@ ue3::Profile100 g_p100;   // --gow1_profile_100
 // The audio menu's sliders (ue3/audio_menu.h). Ids (WarProfileSettings MusicVolume / FxVolume / DialogueVolume consts): not known yet for this build - the test job reads them from the
 // game's ProfileMappings (as GearsJ-Native/tools/gj100_profile_ids.ps1 does) or --gow1_profile_log while each slider is
 // moved; until then --gow1_audio_menu_ids=<music>,<effects>,<dialogue> sets them and the launcher's values are skipped.
-constexpr ue3::AudioMenuSlider kAudioSliders[ue3::kAudioMenuSliders] = {{"music", -1}, {"effects", -1}, {"dialogue", -1}};
+// G1: b2382 profile log 23 Nov read 31=6, 32=8, 33=8 at start-up, in WarProfileSettings const order (Subtitles, MusicVolume, FxVolume, DialogueVolume) - to be confirmed by the audio test's menu screenshot.
+constexpr ue3::AudioMenuSlider kAudioSliders[ue3::kAudioMenuSliders] = {{"music", 31}, {"effects", 32}, {"dialogue", 33}};
 ue3::AudioMenu g_audio;   // --gow1_audio_music / _effects / _dialogue
 int32_t g_id = -1;
 uint32_t g_mask = 1;

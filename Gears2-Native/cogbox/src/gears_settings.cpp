@@ -31,7 +31,7 @@ const char* const k_procNames[kGameCount] = { "gow2", "gow3", "gowj", "gow1" }; 
 // table) - false greys the sliders ("not found yet") so they never promise what the game would skip.
 const char* const k_audioMenuIds[3] = { "AudioMusic", "AudioEffects", "AudioDialogue" };
 const char* const k_audioMenuKeys[3] = { "music", "effects", "dialogue" };
-constexpr bool kAudioMenuIdsKnown[kGameCount] = { false, false, false, false };   // Gears2, Gears3, Judgment, Gears1
+constexpr bool kAudioMenuIdsKnown[kGameCount] = { true, true, true, true };   // Gears2, Gears3, Judgment, Gears1
 // Gears 1 (UE3 2006) has one flat Coalesced.ini; --ue3_ini_edits goes to it when gow1.exe has gow1_ini_edits (can() "iniedit").
 const char* const k_engineIni[kGameCount] = { "Xe-GearEngine.ini", "Xbox360-GearEngine.ini", "Xbox360-GearEngine.ini", "Xe-WarEngine.ini" };   // PS1 101
 

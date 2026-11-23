@@ -72,7 +72,8 @@ ue3::ProfileLogSeen g_seen;    // --gow2_profile_log
 // The audio menu's sliders (ue3/audio_menu.h). Ids: not known yet for this build - the test job reads them from the
 // game's ProfileMappings (as GearsJ-Native/tools/gj100_profile_ids.ps1 does) or --gow2_profile_log while each slider is
 // moved; until then --gow2_audio_menu_ids=<music>,<effects>,<dialogue> sets them and the launcher's values are skipped.
-constexpr ue3::AudioMenuSlider kAudioSliders[ue3::kAudioMenuSliders] = {{"music", -1}, {"effects", -1}, {"dialogue", -1}};
+// G2: ProfileMappings in GearGame.xxx (23 Nov): Id=41 "Music Volume", 42 "FX Volume", 43 "Dialogue Volume".
+constexpr ue3::AudioMenuSlider kAudioSliders[ue3::kAudioMenuSliders] = {{"music", 41}, {"effects", 42}, {"dialogue", 43}};
 ue3::AudioMenu g_audio;   // --gow2_audio_music / _effects / _dialogue
 
 void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
