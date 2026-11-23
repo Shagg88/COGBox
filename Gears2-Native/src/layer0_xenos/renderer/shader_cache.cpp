@@ -238,6 +238,17 @@ uint64_t Fnv1a64(const void* data, size_t size, uint64_t seed) {
 
 namespace {
 
+// 23 Nov (#437 stutter): one line per translation of 20 ms or more (the first 300), so the shaders that make the
+// "ms translating in all" total jump in play can be named and pulled out for tests. where: game = a draw's lookup on the
+// render thread (the frame waits for it), warm = the start-up / recipe warm-up's workers (thread time).
+void NoteSlowTranslate(uint64_t hash, bool is_vertex, double ms, size_t dwords, const char* where, const char* path) {
+  if (ms < 20.0) return;
+  static std::atomic<uint32_t> logged{0};
+  const uint32_t n = logged.fetch_add(1, std::memory_order_relaxed);
+  if (n >= 300) return;
+  REXLOG_INFO("gow2_renderer: slow translation {}: {}-{:016X} {:.1f} ms ({} microcode dwords, {}, {}){}", n + 1,
+              is_vertex ? "vs" : "ps", hash, ms, dwords, path, where, n + 1 == 300 ? " - no more of these lines" : "");
+}
 double MsSince(std::chrono::steady_clock::time_point t0) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
@@ -1823,6 +1834,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
         if (it.dwords.empty() || !made[i].s || !made[i].dt.ok || shaders_[it.is_vertex ? 1 : 0].count(it.hash)) continue;
         ++stats_.lookups;
         ++stats_.translated;
+        NoteSlowTranslate(it.hash, it.is_vertex, made[i].ms, it.dwords.size(), "warm", "DXBC");
         stats_.translate_ms += made[i].ms;
         const GuestShader& gs = AdoptDxbc(it.hash, std::move(made[i].s), made[i].dt.bytecode, made[i].dt.meta,
                                           (made[i].spv_flags & 4u) != 0, made[i].spv_flags & 3u);
@@ -1913,6 +1925,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     } else if (dxbc_path && made[i].s && made[i].dt.ok && !shaders_[it.is_vertex ? 1 : 0].count(it.hash)) {
       ++stats_.lookups;
       ++stats_.translated;
+      NoteSlowTranslate(it.hash, it.is_vertex, made[i].ms, it.dwords.size(), "warm", "DXBC");
       stats_.translate_ms += made[i].ms;
       const GuestShader& s = AdoptDxbc(it.hash, std::move(made[i].s), made[i].dt.bytecode, made[i].dt.meta,
                                        (made[i].spv_flags & 4u) != 0, made[i].spv_flags & 3u);
@@ -2242,6 +2255,7 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
     bool spv_pending = false;  // 0.6.2: on Vulkan a store miss is converted on a background thread, not here
     dxbc_gen::DxbcTranslation dt = TranslateDxbcFor(program, options, spirv, &spv_pending,   // patch 0084: shared with the warm-up
         DxbcStoreKey(dwords, dword_count, is_vertex, decode_options, options));             // 0.6.5: the DXBC store
+    NoteSlowTranslate(ucode_hash, is_vertex, MsSince(t0), dword_count, warm ? "warm" : "game", spirv ? "DXBC->SPIR-V" : "DXBC");
     stats_.translate_ms += MsSince(t0);
     ++stats_.translated;
     if (dt.ok) return AdoptDxbc(key, std::move(s), dt.bytecode, dt.meta, spv_pending, options.spirv_precise ? 1u : 0u);
@@ -2257,6 +2271,7 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
     else
       REXLOG_WARN("gow2_pcss: ps-{:016X} is not the shape the PCSS patch expects - it keeps the game's filter", ucode_hash);
   }
+  NoteSlowTranslate(ucode_hash, is_vertex, MsSince(t0), dword_count, warm ? "warm" : "game", "HLSL");
   stats_.translate_ms += MsSince(t0);
   ++stats_.translated;
   s->texture_slots |= tr.texture_slots_2d | tr.texture_slots_3d | tr.texture_slots_cube;
