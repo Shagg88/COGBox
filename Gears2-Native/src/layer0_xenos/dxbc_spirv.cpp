@@ -15,6 +15,7 @@
 #include <cstring>
 #include <format>
 #include <map>
+#include <unordered_map>
 #include <optional>
 #include <vector>
 
@@ -225,30 +226,68 @@ class Module {
     v.insert(v.end(), w.begin(), w.end());
   }
   // A type or constant, shared by identical declarations.
-  uint32_t Cached(uint32_t op, std::vector<uint32_t> args, bool result_type_first = false) {
-    std::vector<uint32_t> key = args;
-    key.insert(key.begin(), op);
-    auto it = cache_.find(key);
+  // perf 23 Nov (translator benchmark: this lookup was 57 % of the DXBC -> SPIR-V time - a std::map keyed by a freshly
+  // allocated vector per call): the key is a small inline array in a hash map; the same ids in the same order as before
+  // (the module bytes are unchanged - checked on every recorded shader of Gears 1, Gears 3 and Judgment).
+  uint32_t Cached(uint32_t op, std::initializer_list<uint32_t> args, bool result_type_first = false) {
+    return CachedN(op, args.begin(), args.size(), result_type_first);
+  }
+  uint32_t Cached(uint32_t op, const std::vector<uint32_t>& args, bool result_type_first = false) {
+    return CachedN(op, args.data(), args.size(), result_type_first);
+  }
+  uint32_t CachedN(uint32_t op, const uint32_t* a, size_t n, bool result_type_first) {
+    if (n + 1 > kKeyWords) return CachedSlow(op, a, n, result_type_first);
+    Key k{};
+    k.n = uint32_t(n + 1);
+    k.w[0] = op;
+    for (size_t i = 0; i < n; ++i) k.w[i + 1] = a[i];
+    auto it = cache_.find(k);
     if (it != cache_.end()) return it->second;
-    const uint32_t id = Id();
-    std::vector<uint32_t> w;
-    if (result_type_first) {
-      w.push_back(args[0]);
-      w.push_back(id);
-      w.insert(w.end(), args.begin() + 1, args.end());
-    } else {
-      w.push_back(id);
-      w.insert(w.end(), args.begin(), args.end());
-    }
-    PutV(types, op, w);
-    cache_[key] = id;
+    const uint32_t id = Emit(op, a, n, result_type_first);
+    cache_.emplace(k, id);
     return id;
   }
   std::vector<uint32_t> caps, ext, modes, annot, types, globals, fn, entry_ifaces;
   uint32_t next_ = 1;
 
  private:
-  std::map<std::vector<uint32_t>, uint32_t> cache_;
+  static constexpr size_t kKeyWords = 12;
+  struct Key {
+    uint32_t n = 0;
+    std::array<uint32_t, kKeyWords> w{};
+    bool operator==(const Key& o) const { return n == o.n && std::equal(w.begin(), w.begin() + n, o.w.begin()); }
+  };
+  struct KeyHash {
+    size_t operator()(const Key& k) const {
+      uint64_t h = 0xCBF29CE484222325ull ^ k.n;
+      for (uint32_t i = 0; i < k.n; ++i) h = (h ^ k.w[i]) * 0x100000001B3ull;
+      return size_t(h ^ (h >> 29));
+    }
+  };
+  uint32_t Emit(uint32_t op, const uint32_t* a, size_t n, bool result_type_first) {
+    const uint32_t id = Id();
+    types.push_back(op | (uint32_t(n + 2) << 16));
+    if (result_type_first && n) {
+      types.push_back(a[0]);
+      types.push_back(id);
+      types.insert(types.end(), a + 1, a + n);
+    } else {
+      types.push_back(id);
+      types.insert(types.end(), a, a + n);
+    }
+    return id;
+  }
+  uint32_t CachedSlow(uint32_t op, const uint32_t* a, size_t n, bool result_type_first) {
+    std::vector<uint32_t> key(a, a + n);
+    key.insert(key.begin(), op);
+    auto it = slow_.find(key);
+    if (it != slow_.end()) return it->second;
+    const uint32_t id = Emit(op, a, n, result_type_first);
+    slow_.emplace(std::move(key), id);
+    return id;
+  }
+  std::unordered_map<Key, uint32_t, KeyHash> cache_;
+  std::map<std::vector<uint32_t>, uint32_t> slow_;  // keys longer than kKeyWords (rare)
 };
 
 struct Resource {
@@ -268,15 +307,18 @@ class Converter {
     return false;
   }
   // Types / constants.
-  uint32_t TVoid() { return m_.Cached(kOpTypeVoid, {}); }
-  uint32_t TBool() { return m_.Cached(kOpTypeBool, {}); }
-  uint32_t TU() { return m_.Cached(kOpTypeInt, {32, 0}); }
-  uint32_t TI() { return m_.Cached(kOpTypeInt, {32, 1}); }
-  uint32_t TF() { return m_.Cached(kOpTypeFloat, {32}); }
+  // perf 23 Nov: the basic types are looked up thousands of times a shader - each id is kept after its first lookup
+  // (made at the same moment as before, so the module is unchanged).
+  uint32_t TVoid() { return t_void_ ? t_void_ : (t_void_ = m_.Cached(kOpTypeVoid, {})); }
+  uint32_t TBool() { return t_bool_ ? t_bool_ : (t_bool_ = m_.Cached(kOpTypeBool, {})); }
+  uint32_t TU() { return t_u_ ? t_u_ : (t_u_ = m_.Cached(kOpTypeInt, {32, 0})); }
+  uint32_t TI() { return t_i_ ? t_i_ : (t_i_ = m_.Cached(kOpTypeInt, {32, 1})); }
+  uint32_t TF() { return t_f_ ? t_f_ : (t_f_ = m_.Cached(kOpTypeFloat, {32})); }
   uint32_t TVec(uint32_t t, uint32_t n) { return m_.Cached(kOpTypeVector, {t, n}); }
-  uint32_t TU4() { return TVec(TU(), 4); }
-  uint32_t TF4() { return TVec(TF(), 4); }
-  uint32_t TB4() { return TVec(TBool(), 4); }
+  uint32_t TU4() { if (!t_u4_) { const uint32_t u = TU(); t_u4_ = TVec(u, 4); } return t_u4_; }
+  uint32_t TF4() { if (!t_f4_) { const uint32_t f = TF(); t_f4_ = TVec(f, 4); } return t_f4_; }
+  uint32_t TB4() { if (!t_b4_) { const uint32_t b = TBool(); t_b4_ = TVec(b, 4); } return t_b4_; }
+  uint32_t t_void_ = 0, t_bool_ = 0, t_u_ = 0, t_i_ = 0, t_f_ = 0, t_u4_ = 0, t_f4_ = 0, t_b4_ = 0;
   uint32_t TPtr(uint32_t sc, uint32_t t) { return m_.Cached(kOpTypePointer, {sc, t}); }
   uint32_t CU(uint32_t v) { return m_.Cached(kOpConstant, {TU(), v}, true); }
   uint32_t CI(int32_t v) { return m_.Cached(kOpConstant, {TI(), uint32_t(v)}, true); }
@@ -293,27 +335,28 @@ class Converter {
   }
   uint32_t SplatU(uint32_t v) { return CU4(v, v, v, v); }
   uint32_t SplatF(float v) { return CF4(v, v, v, v); }
+  // perf 23 Nov: the instruction writers put their words straight into the module (no temporary vector each).
   void Decorate(uint32_t id, uint32_t dec, std::initializer_list<uint32_t> args = {}) {
-    std::vector<uint32_t> w{id, dec};
-    w.insert(w.end(), args.begin(), args.end());
-    Module::PutV(m_.annot, kOpDecorate, w);
+    m_.annot.push_back(kOpDecorate | (uint32_t(args.size() + 3) << 16));
+    m_.annot.push_back(id);
+    m_.annot.push_back(dec);
+    m_.annot.insert(m_.annot.end(), args.begin(), args.end());
   }
   // Function code.
-  uint32_t Op(uint32_t op, uint32_t type, std::initializer_list<uint32_t> args) {
+  uint32_t OpN(uint32_t op, uint32_t type, const uint32_t* a, size_t n) {
     Open();
     const uint32_t id = m_.Id();
-    std::vector<uint32_t> w{type, id};
-    w.insert(w.end(), args.begin(), args.end());
-    Module::PutV(m_.fn, op, w);
+    m_.fn.push_back(op | (uint32_t(n + 3) << 16));
+    m_.fn.push_back(type);
+    m_.fn.push_back(id);
+    m_.fn.insert(m_.fn.end(), a, a + n);
     return id;
   }
+  uint32_t Op(uint32_t op, uint32_t type, std::initializer_list<uint32_t> args) {
+    return OpN(op, type, args.begin(), args.size());
+  }
   uint32_t OpV(uint32_t op, uint32_t type, const std::vector<uint32_t>& args) {
-    Open();
-    const uint32_t id = m_.Id();
-    std::vector<uint32_t> w{type, id};
-    w.insert(w.end(), args.begin(), args.end());
-    Module::PutV(m_.fn, op, w);
-    return id;
+    return OpN(op, type, args.data(), args.size());
   }
   void Void(uint32_t op, std::initializer_list<uint32_t> args) {
     Open();
@@ -324,9 +367,17 @@ class Converter {
     return id;
   }
   uint32_t Glsl(uint32_t type, uint32_t inst, std::initializer_list<uint32_t> args) {
-    std::vector<uint32_t> w{glsl_, inst};
-    w.insert(w.end(), args.begin(), args.end());
-    return OpV(kOpExtInst, type, w);
+    if (args.size() > 14) {  // (never seen; kept exact rather than cut)
+      std::vector<uint32_t> v{glsl_, inst};
+      v.insert(v.end(), args.begin(), args.end());
+      return OpV(kOpExtInst, type, v);
+    }
+    uint32_t w[16];
+    const size_t n = args.size();
+    w[0] = glsl_;
+    w[1] = inst;
+    std::copy(args.begin(), args.begin() + n, w + 2);
+    return OpN(kOpExtInst, type, w, n + 2);
   }
   uint32_t ToF(uint32_t u4) { return Op(kOpBitcast, TF4(), {u4}); }
   uint32_t ToU(uint32_t f4) { return Op(kOpBitcast, TU4(), {f4}); }
