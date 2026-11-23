@@ -281,6 +281,14 @@ name = "Gow3UltrawideNoConstrain"
 registers = []
 jump_address_on_true = 0x8262CE80
 
+# Performance option: per-object dynamic shadow cap (--gow3_shadow_cap; game_patches.cpp has the why). Before
+# `addi r11,r11,1` at 0x827E2AF0; true = skip this shadow (the game's own skip path at 0x827E2B4C).
+[[entrypoint.midasm_hook]]
+address = 0x827E2AF0
+name = "Gow3ShadowCap"
+registers = ["r16", "r30"]
+jump_address_on_true = 0x827E2B4C
+
 # Experiment --gow3_native_lines (game_patches.cpp): the screen width, at its two stores.
 [[entrypoint.midasm_hook]]
 address = 0x82971C80  # `stw r11,...(r10)`: the width when below 1280 (before the store)
