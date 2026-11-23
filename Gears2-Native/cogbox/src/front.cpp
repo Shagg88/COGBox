@@ -972,7 +972,7 @@ void front_draw(App &a, ImVec2 size)
             const bool hit = th_button("ACHIEVEMENTS", ImVec2(aw, bh), true, F_HEAD, sel2);
             hover_tip(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), tr("Your achievements in all four games."));
             if (hit || (nav && padA && a.frontSel == 2)) {
-                a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 4; a.barSel = -1;   // gs::Tab::Achievements
+                a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = (int)gs::Tab::Achievements; a.barSel = -1;
                 achievements_tab_open_all();
             }
             // social step 3: SOCIAL, right of ACHIEVEMENTS, opens the SOCIAL tab (friends, invites, the multiplayer server)
@@ -980,7 +980,7 @@ void front_draw(App &a, ImVec2 size)
             const bool socialPressed = th_button("SOCIAL", ImVec2(sw, bh), true, F_HEAD, sel3);
             hover_tip(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), tr("Friends, invites and online play."));
             if (socialPressed || (nav && padA && a.frontSel == 3)) {
-                a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 5; a.barSel = -1;   // page.cpp k_tabSocial
+                a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = kTabSocial; a.barSel = -1;
             }
             // FABRICATOR, right of SOCIAL: the local mod manager (LIBRARY, STORE, CREATOR). While it adds or packs a mod,
             // the figure shows in the button's corner and a thin bar along its bottom.

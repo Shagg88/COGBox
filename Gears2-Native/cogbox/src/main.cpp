@@ -885,6 +885,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (getenv("COGBOX_BORDERLESS")) { a.borderless = true; SDL_SetWindowBordered(win, false); }   // test switch (not saved)
     a.gpus = report_gpu_names();
     a.gpuCards = report_gpu_cards();   // 0.6.2 (GitHub #304)
+    a.audioDevices = audio_output_devices();   // GitHub #425 (again when the AUDIO tab opens)
     a.proton = proton::detect_here(a.gpus);   // proton049: Proton version, SteamOS, Steam Deck model (empty on Windows)
     a.hasAvx2 = cpu_has_avx2();
     refresh_games(a, true);
@@ -907,7 +908,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (const char *t = getenv("COGBOX_PAGE")) {
         a.page = std::max(0, std::min(G_ALL - 1, atoi(t)));
         const char *c = strchr(t, ':');
-        a.tab = c ? std::max(0, std::min(7, atoi(c + 1))) : 0;   // 0-4 gs::Tab, 5 SOCIAL, 6 MODS, 7 ABOUT
+        a.tab = c ? std::max(0, std::min(kTabCount - 1, atoi(c + 1))) : 0;   // 0-5 gs::Tab, 6 SOCIAL, 7 MODS, 8 ABOUT
         a.screen = a.zoomTo = SCR_PAGE;
     }
     if (const char *t = getenv("COGBOX_FABRICATOR")) {   // test switch: only picks the screen and its tab
