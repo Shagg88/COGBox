@@ -77,7 +77,8 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 add_library(gn_layer2_ue3 STATIC ${GN_LAYER0_HOME}/src/layer2_ue3/launch_command_line.cpp  # shared (--ue3_launch)
             ${GN_LAYER0_HOME}/src/layer2_ue3/config_bundle.cpp  # shared
             src/layer2_ue3/config_install.cpp
-            src/layer2_ue3/objects.cpp src/layer2_ue3/script_input.cpp)   # developer mode's scripted controller
+            ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp  # shared ue3::obj (Gears 2 / Judgment / Gears 1)
+            src/layer2_ue3/script_input.cpp)   # developer mode's scripted controller
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 # The shared layer 2 headers (ue3/console.h, chat.h, name_tags.h...): ONE copy, in GN_LAYER0_HOME. Listed after this
 # game's own folder, so a header this game still keeps its own copy of (objects.h, launch.h...) is found first.

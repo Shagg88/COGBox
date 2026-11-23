@@ -2,8 +2,8 @@
 // works with them by name (Gears 2's and Judgment's DualSense adaptive triggers, GitHub #245). Gears1-Native's ue3/objects.h (the
 // engine's object layout as data, found in memory by Discover unless given) with Gears3-Native's slice-at-a-time
 // lookups (FindClassRange, FindInstancesOfRange) and PropertyType. From KiltedKernel's Gears 3 port. Our code (MIT).
-// Gears 2 and Judgment build this file (Judgment from here, with this include folder on objects.cpp and its
-// adaptive_triggers.cpp only; Gears 1 and 3 have their own) - no other shared layer 2 source includes it.
+// Gears 2, Judgment and Gears 1 build this file (the last two from GN_LAYER0_HOME; Gears 3 still has its own,
+// fixed-layout copy - see the unify audit). Gears 1 gives its layout (layer3_gow1), as Judgment does.
 //   FNameEntry  {u32 Index (= n * 2, bit 0 = 16-bit text), u32 HashNext, char Name[]} (text at Layout::name_text);
 //               GNames = TArray of entry pointers, its first names the engine's hardcoded ones (None, ByteProperty...)
 //   UObject     ObjectInternalInteger (its own GObjObjects slot), Outer, Name (index, number), Class

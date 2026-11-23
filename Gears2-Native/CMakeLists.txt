@@ -148,7 +148,7 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/main_menu_exit.cpp
     src/layer2_ue3/package_exports.cpp
     src/layer2_ue3/console.cpp  # GitHub #264: engine console commands (--gow2_cheats, --ue3_hotkeys, --ue3_exec); Gears 3 builds it too
-    src/layer2_ue3/objects.cpp  # GitHub #245: the engine's objects by name (ue3/objects.h; Gears 2 only - Gears 1 / 3 have their own)
+    src/layer2_ue3/objects.cpp  # GitHub #245: the engine's objects by name (ue3/objects.h; Gears 1 and Judgment build it too - Gears 3 has its own)
     src/layer2_ue3/name_tags.cpp  # GitHub #353: COGBox tags after the players' names (Gears 1 / 3 / J build it too)
     src/layer2_ue3/chat.cpp  # in-match chat: Say / TeamSay and the HUD's received lines (Gears 1 / 3 / J build it too)
     src/layer2_ue3/mod_extras.cpp  # --ue3_mods extras on modcore (KiltedKernel's, shared with Gears 3): mod.ini rules, bare files, config fragments
