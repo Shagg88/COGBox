@@ -21,9 +21,6 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `option fast_mip_fade` | G3 J | G2 (G1 n/a) | G2: its Coalesced_int.bin has no MipFadeInSpeed key (J's has) [V]; whether G2's engine reads the key if added is unknown (packages compressed) - an ini edit is harmless to try, needs a test run. G1 doesn't apply: its Coalesced.ini has no mip-fade or MipFilter keys [V] |
 | `option shadow_cap` | G2 G3 J | G1 | Smart Shadow Cuts (J since 23 Nov: G3's gather function, layer 2 `ue3/shadow_cap.h`). G1: no shadow counter of the G2 or G3/J shape in its code - its 2006 shadow pass needs its own look |
 | `hook ShadowCap` | G2 G3 J | G1 | |
-| `option skip_coalesced_check` | G2 | G1 G3 J | faster start-up config load; G1 has the hooks without the option |
-| `hook CoalescedResult` | G1 G2 | G3 J | |
-| `hook CoalescedSkip` | G1 G2 | G3 J | |
 | `option texture_stats_off` | G2 | G3 J (G1 n/a) | Canary's G2-only patch (RHIGetTextureMemoryStats -> FALSE); no leaf of its shape in J's code [V]; G3 / J need the streamer's budget call found first. G1 doesn't apply: Canary's G1 texture patch is only the pool size [S notes], no such leaf in G1 [V] |
 | `hook TextureStatsOff` | G2 | G3 J | |
 | `option show_fps` | G2 G3 J | G1 | the engine's own FPS display (J since 23 Nov: its `stat fps` / `stat unit` through the shared console exec). G1: no STAT toggle of that shape found in its code - needs another way |
@@ -178,4 +175,7 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `hook QueryPollYield` | G2 G3 J | (with query_poll_yield) |
 | `option query_wait` | G1 G2 | (see query_poll_yield: G3 / J have the same loop hook under that name) |
 | `hook QueryWaitStep` | G1 G2 | (with query_wait) |
+| `hook CoalescedResult` | G1 G2 | G1 / G2 skip the game's start-up hash check of an edited Coalesced; G3 / J don't need to: their layer 2 config_install.cpp gives each edited bundle its new SHA-1 in the image's start-up hash table (and the TOC's size / MD5), so the game's own check passes [V code] |
+| `hook CoalescedSkip` | G1 G2 | (with CoalescedResult) |
+| `option skip_coalesced_check` | G2 | (with CoalescedResult; G1 turns its hooks on whenever config edits are applied, gow1_app.h, so it has no option) |
 | `hook ShaderCreatedVertex` | - | (all four since 23 Nov: patch 0066) |
