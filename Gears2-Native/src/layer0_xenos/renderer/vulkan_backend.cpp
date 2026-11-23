@@ -2947,7 +2947,11 @@ class VulkanBackend final : public Backend {
     if (bound_pipeline_ != p.pipeline) {
       vk_.vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipeline);
       bound_pipeline_ = p.pipeline;
-      dirty_sets_ = true;
+      // perf batch 2: no descriptor rebind for a new pipeline. Every graphics pipeline of the game is built with the
+      // one layout_ (Build / the library paths), and binding a pipeline never disturbs sets bound with an identical
+      // layout (Vulkan spec, "Pipeline Layout Compatibility"), dynamic offsets included - as on D3D12, where
+      // SetPipelineState leaves the root arguments alone. Only the present pass binds another layout on this bind
+      // point, and it sets dirty_sets_ itself afterwards (as do a new command buffer and the native hand-back).
       // (review) This relies on every description having its own VkPipeline: if linked pipelines are ever shared by
       // descriptions that differ only in dynamic state, the state below must be set outside this handle test.
       if (p.linked) {  // 0.6.2 (pipeline libraries): its dynamic state, all of it on every bind (a pipeline built
