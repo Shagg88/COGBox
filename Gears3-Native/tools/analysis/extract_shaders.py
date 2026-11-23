@@ -3,7 +3,7 @@
 # header {flags, virtualSize, physicalSize, fieldC, constantTableOffset, definitionTableOffset, shaderOffset, ...};
 # the Shader record at +shaderOffset gives {physicalOffset, size}; microcode = container + virtualSize + physicalOffset.
 # Output (same naming as Gears 2's --gow2_shader_dump_dir): <out>/<vs|ps>-<XXH3-64 of big-endian bytes>.ucode with
-# host-order (little-endian) dwords, so tools/gn_disasm_check and gn_hlsl_check can read them. Game-derived output:
+# host-order (little-endian) dwords, so Gears2-Native/tools/gn_disasm_check and gn_hlsl_check can read them. Game-derived output:
 # keep it under out\ and never commit it.
 import sys,struct,os,xxhash
 def extract(data,out,stats):

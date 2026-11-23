@@ -384,7 +384,7 @@ endif()
 # Game-free shader tools (Gears 2 S3.2 / S3.3 + Gears 3 census).
 add_executable(gn_census tools/gn_census.cpp ${GN_LAYER0_DIR}/ucode.cpp)
 target_include_directories(gn_census PRIVATE ${GN_LAYER0_DIR}/include)
-add_executable(gn_hlsl_check tools/gn_hlsl_check.cpp ${GN_LAYER0_DIR}/ucode.cpp ${GN_LAYER0_DIR}/hlsl.cpp)
+add_executable(gn_hlsl_check ${GN_LAYER0_HOME}/tools/gn_hlsl_check.cpp ${GN_LAYER0_DIR}/ucode.cpp ${GN_LAYER0_DIR}/hlsl.cpp)
 target_include_directories(gn_hlsl_check PRIVATE ${GN_LAYER0_DIR}/include)
 
 # 0.6.6: Intel's upscaler DLLs are no longer built in or shipped. A build folder made before that still holds the
