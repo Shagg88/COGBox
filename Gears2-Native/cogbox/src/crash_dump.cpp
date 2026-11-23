@@ -21,6 +21,7 @@ struct Watch {
     HANDLE proc, req, ack, done;
     DWORD pid;
     std::wstring folder;
+    DWORD extra;   // docs/logging.md: the Everything logging level's extra dump flags (kDumpTypeExtraAllowed)
     std::shared_ptr<CrashDumpStatus> status;
 };
 
@@ -40,7 +41,7 @@ DWORD WINAPI watch_main(void *p)
     // r76 L6: a request that isn't a valid one (stray, or one the game already gave up on) doesn't use the watcher up
     while (WaitForMultipleObjects(2, waits, FALSE, INFINITE) == WAIT_OBJECT_0) {
         DWORD err = 0;
-        const int r = crash_dump_write(w->proc, w->pid, w->folder, w->ack, &err);
+        const int r = crash_dump_write(w->proc, w->pid, w->folder, w->ack, &err, w->extra);
         if (!r) continue;
         w->status->error = err;
         InterlockedExchange(&w->status->state, r);
@@ -90,7 +91,7 @@ bool crash_dump_path_ok(const wchar_t *path, const std::wstring &folder)
            std::wstring(f + 21, 4) == L".dmp";
 }
 
-int crash_dump_write(HANDLE proc, DWORD pid, const std::wstring &folder, HANDLE ack, DWORD *error)
+int crash_dump_write(HANDLE proc, DWORD pid, const std::wstring &folder, HANDLE ack, DWORD *error, DWORD extraType)
 {
     *error = 0;
     wchar_t name[64];
@@ -109,6 +110,9 @@ int crash_dump_write(HANDLE proc, DWORD pid, const std::wstring &folder, HANDLE 
         const DWORD tid = info->thread_id;
         const uint64_t ep = info->exception_pointers;
         const DWORD type = info->dump_type & ipc::kDumpTypeAllowed;   // r76 M1: the game's flags, nothing more
+        // docs/logging.md (Everything): a few more of the game's own details - globals, handles, unloaded modules, thread
+        // and memory-region info (tens of MB, no full memory: that would be GBs and hold the player's data)
+        const DWORD type2 = type | (extraType & kDumpTypeExtraAllowed);
         DWORD err = ERROR_INVALID_PARAMETER;   // a path that isn't the play's crash-*.dmp
         bool ok = false;
         if (crash_dump_path_ok(path, folder)) {
@@ -128,7 +132,7 @@ int crash_dump_write(HANDLE proc, DWORD pid, const std::wstring &folder, HANDLE 
                     mei.ThreadId = tid;
                     mei.ExceptionPointers = reinterpret_cast<PEXCEPTION_POINTERS>(static_cast<uintptr_t>(ep));
                     mei.ClientPointers = TRUE;   // the pointer is in the game's memory
-                    ok = fn(proc, pid, f, static_cast<MINIDUMP_TYPE>(type), ep ? &mei : nullptr, nullptr, nullptr) != FALSE;
+                    ok = fn(proc, pid, f, static_cast<MINIDUMP_TYPE>(type2), ep ? &mei : nullptr, nullptr, nullptr) != FALSE;
                     err = ok ? 0 : GetLastError();
                     CloseHandle(f);
                 }
@@ -146,10 +150,11 @@ int crash_dump_write(HANDLE proc, DWORD pid, const std::wstring &folder, HANDLE 
     return r;
 }
 
-std::shared_ptr<CrashDumpStatus> crash_dump_watch(HANDLE proc, DWORD pid, const std::string &logDir)
+std::shared_ptr<CrashDumpStatus> crash_dump_watch(HANDLE proc, DWORD pid, const std::string &logDir, DWORD extraType)
 {
     Watch *w = new Watch{};
     w->pid = pid;
+    w->extra = extraType;
     w->folder = crash_dump_folder(logDir);
     w->status = std::make_shared<CrashDumpStatus>();
     if (w->folder.empty() ||

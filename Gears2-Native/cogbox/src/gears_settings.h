@@ -323,6 +323,20 @@ using PromptComposer = std::string (*)(const std::string &promptDir, const std::
                                        const std::map<std::string, std::string> &keys);
 extern PromptComposer g_prompt_composer;
 
+// Shagg 23 Nov (docs/logging.md): the logging level (option LogLevel, Shared): 0 Normal, 1 Detailed, 2 Everything. One
+// table (log_switches) for all four games; log_level_args gives this game's switches for a level (build_args adds them),
+// each only when the exe / runtime has it. `notes` gets the level and the switches this build lacks.
+constexpr int kLogLevelMax = 2;
+struct LogSwitch {
+    int level;            // the lowest level that sends it
+    const char* cvar;     // {P} = gow1 / gow2 / gow3 / gowj
+    const char* value;    // {LOG} = this play's folder, {SEP} = its path separator
+    const char* needle;   // text the exe (runtime: the SDK runtime DLL) must contain - the cvar's description
+    bool runtime;
+};
+const std::vector<LogSwitch>& log_switches();
+std::vector<std::string> log_level_args(Game g, int level, const Environment& env, std::vector<std::string>* notes = nullptr);
+
 // PS1 788-961 (Play): the game's command-line arguments, in the PS1's order. `ver` is the chosen version (see
 // effective_version); `notes`, if given, gets the "launcher: ..." lines the PS1 adds to args.txt.
 std::vector<std::string> build_args(Game g, Version ver, const Settings& s, const Environment& env,

@@ -485,18 +485,26 @@ static bool read_whole(const std::string &path, std::string &out, size_t limit, 
     return ok;
 }
 
-bool report_write(const std::vector<ReportFile> &files, const std::string &system, const std::string &zipPath, std::string &err)
+bool report_write(const std::vector<ReportFile> &files, const std::string &system, const std::string &zipPath, std::string &err,
+                  const std::vector<std::string> &names)
 {
+    // Shagg 23 Nov (docs/logging.md): the bug-report zip also takes the profiles' gamertags out of the text files
+    auto masked = [&](std::string t) {
+        t = report_anonymise(t);
+        for (const std::string &n : names)
+            if (n.size() >= 3 && !generic_name(n)) replace_word_ci(t, n, "<gamertag>");
+        return t;
+    };
     mz_zip_archive z;
     memset(&z, 0, sizeof z);
     if (!mz_zip_writer_init_heap(&z, 0, 1 << 20)) { err = "The report couldn't be started."; return false; }
     bool ok = true;
-    std::string about = report_anonymise(system);
+    std::string about = masked(system);
     ok &= mz_zip_writer_add_mem(&z, "report.txt", about.data(), about.size(), MZ_DEFAULT_COMPRESSION) != 0;
     for (auto &f : files) {
         std::string data;
         if (!read_whole(f.path, data, f.text ? 24u << 20 : 160u << 20, f.text)) continue;   // not there: left out
-        if (f.text) data = report_anonymise(data); else blank_binary(data);
+        if (f.text) data = masked(data); else blank_binary(data);
         ok &= mz_zip_writer_add_mem(&z, f.name.c_str(), data.data(), data.size(), MZ_DEFAULT_COMPRESSION) != 0;
     }
     void *buf = nullptr;

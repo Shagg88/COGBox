@@ -476,7 +476,25 @@ void play_start(App &a, int g, bool prepare)
         runEnv.online_server.clear();
         runEnv.identity_dir.clear();
     }
-    std::vector<std::string> args = gs::build_args(G, ver, a.cur[g], runEnv, &notes);
+    // Shagg 23 Nov (docs/logging.md): the logging level. A "Prepare all shaders" run logs normally. Everything needs room:
+    // with under 4 GB free where the logs go it starts as Detailed, and says so.
+    gs::Settings runSet = a.cur[g];
+    int logLevel = prepare ? 0 : std::max(0, std::min(gs::kLogLevelMax, runSet.i("LogLevel")));
+    if (logLevel == 2) {
+        ULARGE_INTEGER freeBytes{};
+        if (GetDiskFreeSpaceExW(widen(logDir).c_str(), &freeBytes, nullptr, nullptr) && freeBytes.QuadPart < (4ull << 30)) {
+            logLevel = 1;
+            notes.push_back("launcher: logging level Everything -> Detailed (under 4 GB free for the logs)");
+        }
+    }
+    runSet.set("LogLevel", logLevel);
+    std::vector<std::string> args = gs::build_args(G, ver, runSet, runEnv, &notes);
+    if (logLevel > 0) {   // options.txt: every setting of this play by its id, for the bug report
+        std::string ot = "COGBox " COGBOX_VERSION " - " + std::string(d.name) + " - logging level " + std::to_string(logLevel) + "\r\n";
+        for (const gs::Option &o : gs::options(G))
+            ot += o.id + "=" + (o.kind == gs::Kind::Text ? runSet.str(o.id) : std::to_string(runSet.f(o.id))) + "\r\n";
+        write_file(join(logDir, "options.txt"), ot);
+    }
     std::string shared = join(exe_dir(), "shared");
     bool useShared = dir_exists(shared);
     if (useShared) args.push_back("--gow2_dxc_dir=\"" + shared + "\"");
@@ -572,7 +590,8 @@ void play_start(App &a, int g, bool prepare)
     }
     CloseHandle(pi.hThread);
     // GitHub #286: a crash's minidump written from out here (only into this play's folder)
-    a.run.crashDump = crash_dump_watch(pi.hProcess, pi.dwProcessId, logDir);
+    // docs/logging.md: the Everything level asks for a fuller dump (crash_dump.h kDumpTypeExtraAllowed)
+    a.run.crashDump = crash_dump_watch(pi.hProcess, pi.dwProcessId, logDir, logLevel == 2 ? kDumpTypeExtraAllowed : 0);
     if (!a.run.crashDump)
         append_line(join(logDir, "args.txt"), "launcher: the crash minidump watcher couldn't be started (the game writes its own)");
     a.run.proc = pi.hProcess;
@@ -581,6 +600,7 @@ void play_start(App &a, int g, bool prepare)
     a.run.logDir = logDir;
     a.run.exe = exe;
     a.run.prepare = prepare;
+    a.run.logLevel = logLevel;
     if (prepare) return;   // job 641: the launcher stays up and shows the progress
     a.ini.seti("LastPlayed", d.key, a.run.started);
     a.ini.save();
@@ -683,6 +703,15 @@ void play_poll(App &a)
         refresh_games(a, false);
         return;
     }
+    // docs/logging.md: Everything is for one play (it is slow and writes a lot) - back to Detailed for every game
+    if (a.run.logLevel == 2) {
+        for (int k = 0; k < G_COUNT; k++) if (a.cur[k].i("LogLevel") == 2) { a.cur[k].set("LogLevel", 1); a.dirty[k] = true; }
+        settings_save(a, g);
+        append_line(join(a.run.logDir, "args.txt"), "launcher: logging level Everything ended with this play - back to Detailed");
+        set_message(a, "Everything logging was for that one play - it is back to Detailed. Press \"Collect logs for a bug report\" "
+                       "on the Gameplay tab to make the zip.", false);
+    }
+    a.run.logLevel = 0;
     // play time: only plays that got going (a start that fails at once isn't play)
     if (secs >= 20) a.ini.seti("PlayTime", d.key, a.ini.geti64("PlayTime", d.key, 0) + secs);
     a.ini.save();
@@ -798,7 +827,7 @@ static std::string displays_text()
     return s;
 }
 
-bool make_report(App &a, int g, const std::string &session, const std::string &what, std::string &zip, std::string &err)
+bool make_report(App &a, int g, const std::string &session, const std::string &what, std::string &zip, std::string &err, bool collect)
 {
     const GameDef &d = game_def(g);
     GameState &st = a.st[g];
@@ -811,10 +840,25 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
             if (fd.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) continue;   // no links (review 15)
             std::string n = narrow(fd.cFileName), lo = n;
             for (char &c : lo) c = (char)tolower((unsigned char)c);
-            bool text = lo.size() > 4 && (lo.rfind(".txt") == lo.size() - 4 || lo.rfind(".log") == lo.size() - 4 || lo.rfind(".toml") == lo.size() - 5);
+            bool text = lo.size() > 4 && (lo.rfind(".txt") == lo.size() - 4 || lo.rfind(".log") == lo.size() - 4 || lo.rfind(".toml") == lo.size() - 5 ||
+                                          lo.rfind(".csv") == lo.size() - 4);   // .csv: the frame log's per-frame file
             files.push_back({ "session/" + n, join(session, n), text });
         } while (FindNextFileW(f, &fd));
         FindClose(f);
+    }
+    if (collect) {   // Shagg 23 Nov (docs/logging.md): the bug-report zip - the Everything level's screenshots too (newest 40)
+        std::vector<std::string> shots;
+        HANDLE s = FindFirstFileW(widen(join(join(session, "shots"), "*.png")).c_str(), &fd);
+        if (s != INVALID_HANDLE_VALUE) {
+            do {
+                if (!(fd.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) shots.push_back(narrow(fd.cFileName));
+            } while (FindNextFileW(s, &fd));
+            FindClose(s);
+        }
+        std::sort(shots.begin(), shots.end());
+        for (size_t i = shots.size() > 40 ? shots.size() - 40 : 0; i < shots.size(); i++)
+            files.push_back({ "session/shots/" + shots[i], join(join(session, "shots"), shots[i]), false });
+        files.push_back({ "launcher/padlog.txt", join(exe_dir(), "padlog.txt"), true });   // COGBOX_PADLOG=1 (front.cpp), when there
     }
     files.push_back({ "settings.ini", join(exe_dir(), "settings.ini"), true });
     std::string sys = "Game: " + std::string(d.name) + "\r\nSession: " + session.substr(session.find_last_of('\\') + 1) + "\r\n";
@@ -845,10 +889,13 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
                        st.xexpConfirmed ? "a different update the player confirmed works" : "a different update") +
            " (default.xexp " + xexpSha + ", " + std::to_string(file_size(xexpPath)) + " bytes)") + "\r\n";
     sys += "\r\nMade by COGBox at " + now_stamp() + ". Your Windows user name and PC name are replaced (x's in crash dumps).\r\n";
-    std::string name = std::string("CogBox-report-") + d.dir + "-" + now_stamp() + ".zip";
-    // 0.2.1: under Proton / Wine the "desktop" is hidden inside the game's prefix - use COGBox's own reports folder
-    std::string dir = a.wine ? join(exe_dir(), "reports") : desktop_dir();
-    if (a.wine) make_dirs(dir);
+    std::string name = std::string(collect ? "CogBox-logs-" : "CogBox-report-") + d.dir + "-" + now_stamp() + ".zip";
+    // 0.2.1: under Proton / Wine the "desktop" is hidden inside the game's prefix - use COGBox's own reports folder.
+    // The bug-report zip (collect) always goes there (Shagg 23 Nov: "under the COGBox folder").
+    std::string dir = (a.wine || collect) ? join(exe_dir(), "reports") : desktop_dir();
+    if (a.wine || collect) make_dirs(dir);
     zip = join(dir, name);
-    return report_write(files, sys, zip, err);
+    // the profiles' gamertags are taken out too (docs/logging.md)
+    const gs::Environment &e = a.env[g];
+    return report_write(files, sys, zip, err, { e.gamertag, e.gamertags[0], e.gamertags[1], e.gamertags[2] });
 }

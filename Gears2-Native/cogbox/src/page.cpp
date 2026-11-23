@@ -1538,6 +1538,34 @@ static void mods_tab(App &a, int g)
 
 // 0.6.4 (Shagg 16 Nov: "the saves button should be under the gameplay tab"): import, back up and open the saves, and a
 // line when saves copied in by hand are waiting (save_import::find_misplaced) with a button that brings them in.
+// Shagg 23 Nov (docs/logging.md): the logging level (option LogLevel, one value for all games) and the bug-report zip -
+// the last play's log, args / options, system report, crash files and screenshots in one zip under <COGBox>\reports,
+// with user names, PC name, gamertags and public IP addresses masked. Nothing is uploaded.
+static void bug_report_section(App &a, int g)
+{
+    const GameDef &d = game_def(g);
+    const gs::Option *lv = gs::find_option((gs::Game)g, "LogLevel");
+    ui_section("BUG REPORTS");
+    if (lv) option_row(a, g, *lv);
+    if (lv && a.cur[g].i("LogLevel") == 2 && gs::available(*lv, (gs::Game)g, gs::effective_version((gs::Game)g, a.cur[g], a.env[g]),
+                                                           a.cur[g], a.env[g]).ok)
+        ui_note("Everything: the game runs slower and writes large files (up to a few hundred MB). Keep the play short - "
+                "just long enough to show the bug. It goes back to Detailed after one play.");
+    if (small_button("Collect logs for a bug report")) {
+        const std::string s = newest_session(g);
+        std::string zip, err;
+        if (a.run.proc && a.run.game == g) set_message(a, std::string(d.name) + " is running - close it first, then collect the logs.", true);
+        else if (s.empty()) set_message(a, std::string("No play of ") + d.name + " yet - play once, then collect the logs.", false);
+        else if (make_report(a, g, s, "", zip, err, true)) {
+            shell_select(zip);
+            set_message(a, "Logs collected: " + shown_path(a, zip) + ". Nothing was sent - attach the zip to your GitHub ticket.", false);
+        } else set_message(a, "Couldn't collect the logs: " + err, true);
+    }
+    ui_tip("One zip in COGBox's reports folder with the last play's log, arguments, settings, PC description, crash files "
+           "and screenshots. Your user name, PC name, gamertags and internet addresses are masked; no saves, no game files. "
+           "Nothing is uploaded.");
+}
+
 static void saves_section(App &a, int g)
 {
     const GameDef &d = game_def(g);
@@ -1996,6 +2024,7 @@ void page_draw(App &a, ImVec2 size)
         for (const gs::Option &o : gs::options((gs::Game)g)) {
             if (o.tab != want) continue;
             if (o.id == "WineApi" && !a.env[g].wine) continue;   // Shagg 13:16: Proton / Wine only
+            if (o.id == "LogLevel") continue;   // docs/logging.md: in its own BUG REPORTS section (bug_report_section)
             mine.push_back(&o);
         }
         const TabGroups &tg = k_groups[(int)want];
@@ -2034,6 +2063,7 @@ void page_draw(App &a, ImVec2 size)
                 groups(side);
                 if (side != 0) {   // the tab's own sections go on the right
                     if (want == gs::Tab::Gameplay) saves_section(a, g);   // 0.6.4 (Shagg 16 Nov): saves on the Gameplay tab
+                    if (want == gs::Tab::Gameplay) bug_report_section(a, g);   // Shagg 23 Nov: logging levels, docs/logging.md
                     if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
                     if (want == gs::Tab::Controls) window_key_section(a, g);   // 0.6.3, GitHub #316
                     if (want == gs::Tab::Graphics) dlss_file_section(a, g);   // 0.4.9

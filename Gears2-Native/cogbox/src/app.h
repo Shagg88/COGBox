@@ -51,6 +51,7 @@ struct Running {
     std::string exe;        // GitHub #194: the port program started (play_poll's missing-DLL check)
     bool prepare = false;   // job 641: a "Prepare all shaders" run (the game builds the pack, then exits)
     std::shared_ptr<CrashDumpStatus> crashDump;   // GitHub #286: the crash minidump watcher (crash_dump.h)
+    int logLevel = 0;       // docs/logging.md: the logging level this play started with (0 Normal, 1 Detailed, 2 Everything)
 };
 
 enum Screen { SCR_FRONT, SCR_PAGE, SCR_FABRICATOR };   // SCR_FABRICATOR: the local mod manager (fabricator_ui.cpp)
@@ -270,7 +271,9 @@ std::string shown_path(const App &a, const std::string &p);   // under Wine Z:\h
 // manager, and inside Steam's container xdg-open may open nothing)
 void open_folder(App &a, const std::string &dir);
 void auto_settings_apply(App &a, int g);    // Shagg 29 Oct: the "Detect best settings" answer (page.cpp)   // the "crash" question answered
-bool make_report(App &a, int g, const std::string &sessionDir, const std::string &what, std::string &zip, std::string &err);
+// collect (docs/logging.md): the "Collect logs for a bug report" zip - into <COGBox>\\reports, with the session's screenshots
+bool make_report(App &a, int g, const std::string &sessionDir, const std::string &what, std::string &zip, std::string &err,
+                 bool collect = false);
 std::string newest_session(int g);
 // main.cpp
 void refresh_games(App &a, bool hash);

@@ -24,4 +24,6 @@ bool cpu_has_avx2();
 // The Windows user folder, user name and PC name replaced in text
 std::string report_anonymise(const std::string &text);
 // Writes the zip: "report.txt" with 'system', then the files that exist.
-bool report_write(const std::vector<ReportFile> &files, const std::string &system, const std::string &zipPath, std::string &err);
+// names (docs/logging.md, the bug-report zip): more words replaced by "<gamertag>" in the text files (whole words, 3+ letters).
+bool report_write(const std::vector<ReportFile> &files, const std::string &system, const std::string &zipPath, std::string &err,
+                  const std::vector<std::string> &names = {});

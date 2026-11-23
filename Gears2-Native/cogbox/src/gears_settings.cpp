@@ -615,6 +615,17 @@ std::vector<Option> make_options(Game g) {
              "The developers' keys in game: F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / "
              "show the HUD." CHEAT_RULES, 327), "cheats");
 #undef CHEAT_RULES
+    // Shagg 23 Nov (docs/logging.md): how much the game writes to its log for a bug report - one value for all four games,
+    // the same switches in each (log_switches(), one table). Everything is for one play: it goes back to Detailed after it.
+    add(choice("LogLevel", "Logging for bug reports", Tab::Gameplay, SH,
+               { "Normal", "Detailed (for a bug report)", "Everything (hard bugs, short plays)" }, 0,
+               "Normal: the usual log. Detailed: extra lines that help us find a bug - frame time spikes, slow texture "
+               "loads, renderer reports every 300 frames, mouse input, weapon and gameplay state - for a few MB more per "
+               "hour and no visible slowdown. Everything: all of that plus heavy traces, a screenshot every 15 seconds "
+               "(for the first 10 minutes), a bigger crash dump and a per-frame timing file - slower, and it writes up "
+               "to a few hundred MB. Everything lasts for one play, then goes back to Detailed. Then press "
+               "\"Collect logs for a bug report\" (BUG REPORTS, on this tab).", 0),
+        "loglevel");
     add(make("Mutators", "Unlock all mutators", Tab::Gameplay, Kind::Bool, SH, 0,
              "Every mutator (gameplay modifier) available from the start. Writes nothing to your profile.", 328), "mutators");
     // First-person camera (Gears 3, Gears 2, Judgment; layer3 first_person.cpp): the game's own camera moved to the
@@ -887,6 +898,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "start" || f == "prebuild") {
         if ((g == Game::Judgment || g == Game::Gears1) && start_names(g).size() < 2)
             return no(not_yet(gi, f == "start" ? "its chapter list is coming" : "needs its chapter list"));
+    } else if (f == "loglevel") {   // docs/logging.md: the shared renderer's frame log (layer 0) marks an exe that has the switches
+        if (!cap_exe(env, "Frame log: every frame's time and its cause")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "achpopups") {   // achievements part 2: the text is in cogbox_ach_style's description
         if (!cap_exe(env, "COGBox achievement popups")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "hdrhighlights") {   // 0.6.2: the native HDR scene (PsychoV35) of Gears 2 and Gears 3 only
@@ -1774,6 +1787,80 @@ std::string Store::save_ini() const {
 
 // ---- The command line (PS1 788-961) ---------------------------------------------------------------------------------
 PromptComposer g_prompt_composer = nullptr;   // job 661: set by keycaps.cpp
+
+// ---- Logging levels (Shagg 23 Nov, docs/logging.md) ---------------------------------------------------------------
+// One table for all four games. {P} = the game's prefix (gow1 / gow2 / gow3 / gowj), {LOG} = this play's folder. A row
+// is sent only when the exe (or, `runtime`, the SDK runtime DLL) has its needle - mostly the cvar's description, a long
+// literal (short names can be built a few letters at a time, cap_exe) - so an older build just gets fewer switches; the
+// skipped ones are named in args.txt. For one cvar the row with the highest level up to the chosen one wins.
+// gow2_ names in layer 0 / layer 1 are the shared renderer's: the same name in all four games.
+const std::vector<LogSwitch>& log_switches() {
+    static const std::vector<LogSwitch> k = {
+        // Detailed (1): cheap, bounded, useful in any bug report
+        { 1, "gow2_hitch_report_ms", "50", "Patch 0010 diagnostic: log every frame whose renderer time", false },   // first 200 only
+        { 1, "gow2_texture_phase_log_ms", "20", "Diagnostic (job 299): log a frame whose texture loads", false },
+        { 1, "gow2_renderer_log_every", "300", "Our renderer's summary line every N frames", false },
+        { 1, "gow2_frame_log", "true", "Frame log: every frame's time and its cause", false },   // a summary per 600 frames + spikes
+        { 1, "gow2_frame_times", "600", "Log swap interval and observer callback time every N swaps", false },
+        { 1, "gow2_draw_stats", "600", "Log per-frame draw/copy counts every N frames", false },
+        { 1, "{P}_log_weapon_state", "true", "(co-op weapon / turret reports) - log only", false },
+        { 1, "cogbox_test_state", "true", "Tests: log once a second whether the first player is in gameplay", false },
+        { 1, "ue3_mouse_log", "true", "Native mouse look: log what was sent, once a second", false },
+        { 1, "log_flush_interval", "1", "Periodic flush interval in seconds", true },   // the log survives a hard crash
+        // Everything (2): heavy or large, for short plays
+        { 2, "log_level", "debug", "Global log level: trace, debug, info", true },
+        { 2, "gow2_hitch_report_ms", "33", "Patch 0010 diagnostic: log every frame whose renderer time", false },
+        { 2, "gow2_texture_phase_log_ms", "8", "Diagnostic (job 299): log a frame whose texture loads", false },
+        { 2, "gow2_frame_log_csv", "true", "Frame log: also write the per-frame CSV file", false },   // ~45 MB an hour
+        { 2, "gow2_frame_timeline", "true", "Speed study diagnostic: one log line per 600 frames", false },
+        { 2, "gow2_frame_times", "60", "Log swap interval and observer callback time every N swaps", false },
+        { 2, "gow2_draw_stats", "60", "Log per-frame draw/copy counts every N frames", false },
+        { 2, "gow2_d3d_watch", "600", "Log resource-call counts (XG headers, lock/unlock, defrag)", false },   // layer 1: Gears 2 only
+        { 2, "gow2_renderer_camera_log", "300", "Diagnostic (GitHub #132): every N frames, the scene camera", false },   // max 2000 lines
+        { 2, "gow2_renderer_bc_gpu_page_log", "200", "Diagnostic (#202 / #185): log BC texture loads", false },
+        { 2, "gow2_renderer_texture_stale_log", "600", "Job 150 diagnostic: log textures that stayed unchanged", false },   // first 400
+        { 2, "gow2_profile", "20", "Sampling profiler: profile S seconds of every busy thread", false },   // once, from frame 600
+        { 2, "{P}_profile_log", "true", "{P}_profile_log", false },
+        { 2, "xam_stats_log", "true", "Log every stats write and read with its views", true },
+        // periodic screenshots (the "scout" idea): every 900th frame (15 s at 60 fps) into <play>\shots, none after frame 36000
+        { 2, "gow2_frame_shots", "900", "Save every Nth finished frame as PNG", false },
+        { 2, "gow2_frame_shots_last", "36000", "With --gow2_frame_shots: last frame saved", false },
+        { 2, "gow2_frame_dir", "\"{LOG}{SEP}shots\"", "Folder for --gow2_frame_shots", false },
+    };
+    return k;
+}
+
+std::vector<std::string> log_level_args(Game g, int level, const Environment& env, std::vector<std::string>* notes) {
+    static const char* const k_prefix[kGameCount] = { "gow2", "gow3", "gowj", "gow1" };   // Game's order
+    const std::string pre = k_prefix[static_cast<int>(g)];
+    auto expand = [&](std::string t) {
+        for (size_t p; (p = t.find("{P}")) != std::string::npos;) t.replace(p, 3, pre);
+        for (size_t p; (p = t.find("{SEP}")) != std::string::npos;) t.replace(p, 5, std::string(1, env.path_sep));
+        for (size_t p; (p = t.find("{LOG}")) != std::string::npos;) t.replace(p, 5, env.log_dir);
+        return t;
+    };
+    level = std::max(0, std::min(kLogLevelMax, level));
+    std::vector<std::string> names, values, a;   // in table order, one entry per cvar
+    std::string skipped;
+    for (const LogSwitch& r : log_switches()) {
+        if (r.level > level) continue;
+        const std::string name = expand(r.cvar), needle = expand(r.needle);
+        if (!(r.runtime ? cap_rt(env, needle) : cap_exe(env, needle))) {
+            if (skipped.find(" " + name + ",") == std::string::npos) skipped += " " + name + ",";
+            continue;
+        }
+        auto it = std::find(names.begin(), names.end(), name);
+        if (it == names.end()) { names.push_back(name); values.push_back(expand(r.value)); }
+        else values[it - names.begin()] = expand(r.value);   // a higher level's value
+    }
+    for (size_t i = 0; i < names.size(); ++i) a.push_back("--" + names[i] + "=" + values[i]);
+    if (notes && level > 0) {
+        notes->push_back(std::string("launcher: logging level ") + (level == 2 ? "Everything" : "Detailed") + " (" +
+                         std::to_string(a.size()) + " switches, docs/logging.md)");
+        if (!skipped.empty()) notes->push_back("launcher: logging switches this build doesn't have:" + skipped.substr(0, skipped.size() - 1));
+    }
+    return a;
+}
 
 std::vector<std::string> build_args(Game g, Version ver, const Settings& s, const Environment& env, std::vector<std::string>* notesOut) {
     const int gi = static_cast<int>(g);
@@ -2708,6 +2795,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
         if (isGJ && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gowj_max_fps=" + std::to_string(cap)); }
         if (isG1 && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gow1_max_fps=" + std::to_string(cap)); }
+    }
+    // Shagg 23 Nov (docs/logging.md): the logging level's switches - before extra-args.txt, so a player's own line wins
+    if (avail("LogLevel") && s.i("LogLevel") > 0) {
+        const std::vector<std::string> la = log_level_args(g, s.i("LogLevel"), env, &notes);
+        a.insert(a.end(), la.begin(), la.end());
     }
     // PS1 960-961: out\extra-args.txt, one switch per line (# = comment, {LOG} = this session's folder)
     for (const std::string& raw : env.extra_args_lines) {
