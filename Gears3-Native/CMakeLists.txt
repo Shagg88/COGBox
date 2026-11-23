@@ -77,7 +77,8 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 add_library(gn_layer2_ue3 STATIC ${GN_LAYER0_HOME}/src/layer2_ue3/launch_command_line.cpp  # shared (--ue3_launch)
             ${GN_LAYER0_HOME}/src/layer2_ue3/config_bundle.cpp  # shared
             src/layer2_ue3/config_install.cpp src/layer2_ue3/package_patch.cpp src/layer2_ue3/lzx.cpp
-            src/layer2_ue3/mod_extras.cpp src/layer2_ue3/objects.cpp src/layer2_ue3/script_input.cpp
+            ${GN_LAYER0_HOME}/src/layer2_ue3/mod_extras.cpp  # shared with Gears 2 (defaults: gears3, mod chapters on)
+            src/layer2_ue3/objects.cpp src/layer2_ue3/script_input.cpp
             src/layer2_ue3/modcore/modcore.cpp
             src/layer2_ue3/playlist_names.cpp)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)

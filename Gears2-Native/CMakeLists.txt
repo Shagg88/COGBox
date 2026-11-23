@@ -158,6 +158,9 @@ add_library(gn_layer2_ue3 STATIC
 set_source_files_properties(src/layer2_ue3/console.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_CONSOLE_GEARS2=1)
 # The shared launch_command_line.cpp keeps Gears 2's option name (--gow2_launch); the other games get --ue3_launch.
 set_source_files_properties(src/layer2_ue3/launch_command_line.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_LAUNCH_GOW2=1)
+# The shared mod_extras.cpp (Gears 3 builds it too): Gears 2's mod.ini game name, and no mod chapters loaded here yet.
+set_source_files_properties(src/layer2_ue3/mod_extras.cpp PROPERTIES COMPILE_DEFINITIONS
+    "GN_UE3_MODS_GAME=\"gears2\";GN_UE3_MODS_CHAPTERS=0")
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 # modcore's headers (modcore/modcore.h, modcore/campaigns.h) live next to Gears 3's layer 2
 target_include_directories(gn_layer2_ue3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Gears3-Native/src/layer2_ue3)

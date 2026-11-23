@@ -1,21 +1,23 @@
 // Layer 2 (Unreal Engine 3): what --ue3_mods does beyond replacing and adding files (from KiltedKernel's Gears 3 port,
-// its modcore rules; mod_extras.cpp). Our code (MIT).
+// its modcore rules; mod_extras.cpp). ONE copy, Gears 2's layer 2 (Gears 2 and 3). Gears 2 does not load mod chapters
+// yet: a mod that declares chapters has its settings merged as usual, and a note says its chapters are not loaded.
+// Our code (MIT).
 //
 // - mod.ini rules: a mod's optional mod.ini ([Mod] / [mod]; keys are case-blind) may also say
 //     requires = Other Mod, Another     mods (by name or folder) that must be on and loaded, else this one is left out
-//     game = gears2                      the game it is made for (gears2 if not given); a mod for another game is left out
+//     game = gears3                      the game it is made for (this game's own name - gears2 / gears3 - if not
+//                                        given); a mod for another game is left out
 //     enabled = false                    off without removing it from the list
+//     content = MPCH_COGMarcusG2MP_SF    the game's own content packages its levels need (ModContentPackages)
 //     side = everyone | host | client    who needs it in co-op / System Link (the logged fingerprint: "everyone" mods)
 // - bare files: mods made for the Xbox 360 are often shared as the bare files; a package (.xxx/.upk), texture cache
-//   (.tfc) or Coalesced_*.bin at a mod's top goes to the bundle folder (GearGame\CookedXenon), a movie (.bik) to
+//   (.tfc) or Coalesced_*.bin at a mod's top goes to the bundle folder (CookedXenon / CookedXbox360), a movie (.bik) to
 //   GearGame\Movies.
 // - config fragments: <mod>\config\*.ini are merged, in load order, into every Coalesced_*.bin (the game's, or a mod's
 //   whole copy), so several mods can change the game's settings; the merged copies join the mods' files (their table of
 //   contents lines and start-up hashes are then updated as for any replaced file). Fragment syntax: '##### <ini file>'
 //   picks the packed file whose name ends with it, then [Section] and Key=v (replace), +Key=v (add), -Key=v (remove),
 //   *Key=v (replace the value with the same first field, e.g. a menu entry "(Identifier=X,...)").
-//   Gears 2 has no mod chapters yet (Gears 3's [Campaign] registry is game-side there): a mod that declares chapters
-//   has its settings merged as usual, and a note says its chapters are not loaded.
 #pragma once
 
 #include <cstdint>
@@ -41,8 +43,19 @@ std::string ModGameKey(const std::string& rel_in_mod, const std::string& bundle_
 int MergeModConfigFragments(const std::filesystem::path& game_root, const std::string& bundle_rel,
                             const std::filesystem::path& out_dir, std::map<std::string, std::filesystem::path>& files);
 
+// The largest SquadCatchUp an active mod's campaign asks for ([Campaign] SquadCatchUp = <distance>; 0: none).
+int ModSquadCatchUp();
+
+// The co-op players a chapter map takes: its campaign's [Campaign] MaxPlayers (any of the campaign's mods may give it;
+// the smallest wins), 0 for a map no active campaign has, or a campaign that does not say.
+int ModMaxPlayersForMap(const std::string& map);
+
+// [ClassDefaults] Class.Property = value of the campaign whose chapter this map is (every active mod of the campaign;
+// a later mod's entry for the same property wins). Empty for a map no active campaign has.
+struct ClassDefaultEdit { std::string cls, prop, value; };
+std::vector<ClassDefaultEdit> ModClassDefaultsForMap(const std::string& map);
+
 // The game's own content packages the active mods name (mod.ini content = ...), in load order, without repeats.
-// (Nothing reads them yet: Gears 2 has no mod-chapter loader. Kept for that port.)
 const std::vector<std::string>& ModContentPackages();
 
 }  // namespace ue3

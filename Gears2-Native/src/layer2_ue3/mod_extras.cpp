@@ -1,6 +1,17 @@
-// Layer 2 (Unreal Engine 3): --ue3_mods extras (ue3/mod_extras.h) on modcore (Gears3-Native's src/layer2_ue3/modcore,
-// MIT, from KiltedKernel's Gears 3 port, where the same rules run its mods folder). Our code (MIT).
+// Layer 2 (Unreal Engine 3): --ue3_mods extras (ue3/mod_extras.h) on modcore (modcore/, MIT, from KiltedKernel's
+// Gears 3 port, where the same rules run its mods folder). Our code (MIT).
+// ONE copy (Gears 2 and Gears 3; Gears 3 builds it from GN_LAYER0_HOME). Per game, set at build time:
+//   GN_UE3_MODS_GAME      mod.ini's default / accepted game ("gears2" for Gears 2, "gears3" otherwise)
+//   GN_UE3_MODS_CHAPTERS  1: the game loads mod chapters (Gears 3's mod_chapters.cpp), so the campaign registry's
+//                         config is merged; 0 (Gears 2): a mod's chapters are not registered, and a note says so
 #include <ue3/mod_extras.h>
+
+#ifndef GN_UE3_MODS_GAME
+#define GN_UE3_MODS_GAME "gears3"
+#endif
+#ifndef GN_UE3_MODS_CHAPTERS
+#define GN_UE3_MODS_CHAPTERS 1
+#endif
 
 #include <modcore/campaigns.h>
 #include <modcore/modcore.h>
@@ -55,17 +66,20 @@ std::vector<fs::path> ActiveModFolders(const std::string& spec) {
     dirs.push_back(d);
   }
   std::lock_guard lock(g_mutex);
-  g_mods = modcore::FromFolders(dirs, "gears2");
+  g_mods = modcore::FromFolders(dirs, GN_UE3_MODS_GAME);
   g_content.clear();
   std::vector<fs::path> active;
   for (const modcore::Manifest& m : g_mods) {
     for (const std::string& w : m.warnings) REXLOG_WARN("mod_api: {}: {}", m.name, w);
+    if (m.api > modcore::kModApiLevel)
+      REXLOG_WARN("mod_api: {} is made for mod API {} - this COGBox has {}: what it needs from {} may be missing", m.name,
+                  m.api, modcore::kModApiLevel, m.api);
+    if (!GN_UE3_MODS_CHAPTERS && m.Active() && !m.chapters.empty())
+      REXLOG_WARN("mod_api: {}: this game does not load mod chapters yet - its [Campaign] chapters are not registered", m.name);
     if (!m.Active()) {
       REXLOG_WARN("ue3_mods: {} ({}) left out: {}", m.name, rex::path_to_utf8(m.dir), m.enabled ? m.problem : "enabled = false in its mod.ini");
       continue;
     }
-    if (!m.chapters.empty())
-      REXLOG_WARN("mod_api: {}: Gears 2 does not load mod chapters yet - its [Campaign] chapters are not registered", m.name);
     active.push_back(m.dir);
     for (const std::string& c : m.content)
       if (std::find(g_content.begin(), g_content.end(), c) == g_content.end()) g_content.push_back(c);
@@ -89,16 +103,21 @@ std::string ModGameKey(const std::string& rel_in_mod, const std::string& bundle_
 int MergeModConfigFragments(const fs::path& game_root, const std::string& bundle_rel, const fs::path& out_dir,
                             std::map<std::string, fs::path>& files) {
   std::vector<std::pair<std::string, fs::path>> fragments;
+  std::vector<modcore::Manifest> mods;
+  bool campaigns = false;  // a mod declares chapters ([Campaign] / [Chapter.N]): the registry writes their config
   {
     std::lock_guard lock(g_mutex);
+    mods = g_mods;
     for (const modcore::Manifest& m : g_mods)
-      if (m.Active())
+      if (m.Active()) {
         for (const fs::path& f : modcore::Fragments(m)) fragments.emplace_back(m.name, f);
+        campaigns = campaigns || (GN_UE3_MODS_CHAPTERS && !m.chapters.empty());
+      }
   }
   std::error_code ec;
-  if (fragments.empty()) {
-    // no fragments this run - a merged bundle left from an earlier run with mods must go (the folder holds nothing
-    // else of ours)
+  if (fragments.empty() && !campaigns) {
+    // COGBox review (0.4.3): no fragments this run - a merged bundle left from an earlier run with mods must go, or
+    // mod_chapters.cpp would read that run's chapters (the folder holds nothing else of ours)
     for (const auto& e : fs::directory_iterator(out_dir, ec)) {
       const std::string low = Lower(rex::path_to_utf8(e.path().filename()));
       if (low.rfind("coalesced_", 0) == 0) { std::error_code rm; fs::remove(e.path(), rm); }
@@ -120,6 +139,24 @@ int MergeModConfigFragments(const fs::path& game_root, const std::string& bundle
     std::vector<uint8_t> merged = modcore::MergeConfig(base, fragments, [&](const std::string& line) {
       if (log_this) REXLOG_INFO("ue3_mods: {}: {}", name, line);
     });
+    if (campaigns && !merged.empty()) {
+      // the campaign registry (modcore/campaigns.h): slots after every act and chapter the config now has (the game's
+      // and those of mods that write their own), the same in every bundle; its config merged last
+      const modcore::Allocation a = modcore::AllocateCampaigns(mods, modcore::UsedCampaignSlots(merged));
+      if (log_this) {
+        for (const std::string& l : a.log) REXLOG_INFO("mod_api: {}", l);
+        for (const std::string& p : a.problems) REXLOG_WARN("mod_api: {}", p);
+      }
+      const std::string text = modcore::CampaignFragment(a, modcore::LocalizedGearGameFile(merged));
+      const fs::path frag = out_dir / (name.substr(0, name.size() - 4) + ".campaigns.ini");
+      if (!text.empty() && (std::ofstream(frag, std::ios::binary | std::ios::trunc) << text)) {
+        std::vector<uint8_t> with = modcore::MergeConfig(merged, {{"campaign registry", frag}}, [&](const std::string& line) {
+          if (log_this) REXLOG_INFO("mod_api: {}: {}", name, line);
+        });
+        if (!with.empty()) merged = std::move(with);
+        else REXLOG_WARN("mod_api: {}: the campaigns' config could not be merged", name);
+      }
+    }
     if (merged.empty()) {
       REXLOG_WARN("ue3_mods: {} is not a config bundle - mods' config fragments not applied to it", name);
       continue;
@@ -139,5 +176,58 @@ int MergeModConfigFragments(const fs::path& game_root, const std::string& bundle
 }
 
 const std::vector<std::string>& ModContentPackages() { return g_content; }
+
+int ModSquadCatchUp() {
+  std::lock_guard lock(g_mutex);
+  int d = 0;
+  for (const modcore::Manifest& m : g_mods)
+    if (m.Active()) d = std::max(d, m.campaign.squad_catch_up);
+  return d;
+}
+
+int ModMaxPlayersForMap(const std::string& map) {
+  auto same = [](const std::string& a, const std::string& b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+             return std::tolower(uint8_t(x)) == std::tolower(uint8_t(y));
+           });
+  };
+  std::lock_guard lock(g_mutex);
+  std::string campaign;
+  for (const modcore::Manifest& m : g_mods)
+    if (m.Active())
+      for (const modcore::ChapterDecl& c : m.chapters)
+        if (same(c.map, map)) campaign = m.campaign.id;
+  if (campaign.empty()) return 0;
+  int n = 0;
+  for (const modcore::Manifest& m : g_mods)
+    if (m.Active() && m.campaign.id == campaign && m.campaign.max_players > 0)
+      n = n ? std::min(n, m.campaign.max_players) : m.campaign.max_players;
+  return n;
+}
+
+std::vector<ClassDefaultEdit> ModClassDefaultsForMap(const std::string& map) {
+  auto same = [](const std::string& a, const std::string& b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+             return std::tolower(uint8_t(x)) == std::tolower(uint8_t(y));
+           });
+  };
+  std::lock_guard lock(g_mutex);
+  std::string campaign;
+  for (const modcore::Manifest& m : g_mods)
+    if (m.Active())
+      for (const modcore::ChapterDecl& c : m.chapters)
+        if (same(c.map, map)) campaign = m.campaign.id;
+  std::vector<ClassDefaultEdit> out;
+  if (campaign.empty()) return out;
+  for (const modcore::Manifest& m : g_mods) {
+    if (!m.Active() || m.campaign.id != campaign) continue;
+    for (const auto& d : m.class_defaults) {
+      auto it = std::find_if(out.begin(), out.end(), [&](const ClassDefaultEdit& e) { return same(e.cls, d.cls) && same(e.prop, d.prop); });
+      if (it != out.end()) it->value = d.value;
+      else out.push_back({d.cls, d.prop, d.value});
+    }
+  }
+  return out;
+}
 
 }  // namespace ue3
