@@ -6,7 +6,7 @@
 #include <xenos/dev_tools.h>
 #include <xenos/achievement_popup_assets.h>   // the translated notes' font
 #include <xenos/ui_lang.h>   // --cogbox_ui_lang
-#include "renderer/fg_shown_frames.h"  // frames on screen with frame generation
+#include "../renderer/fg_shown_frames.h"  // frames on screen with frame generation
 
 #include <rex/cvar.h>
 #include <rex/logging.h>

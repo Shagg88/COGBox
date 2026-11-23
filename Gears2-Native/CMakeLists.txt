@@ -16,27 +16,27 @@ include(cmake/rexglue.cmake)
 
 # Layer 0: Xbox 360 GPU core and game-free developer tooling.
 add_library(gn_layer0_xenos STATIC
-    src/layer0_xenos/achievements_data.cpp
-    src/layer0_xenos/achievements_export.cpp
-    src/layer0_xenos/window_icon.cpp
-    src/layer0_xenos/achievements_popup_logic.cpp
-    src/layer0_xenos/achievements_browser_model.cpp
-    src/layer0_xenos/achievements_browser.cpp
-    src/layer0_xenos/achievement_popup_assets.cpp
-    src/layer0_xenos/achievement_popup.cpp
-    src/layer0_xenos/ui_lang.cpp
-    src/layer0_xenos/popup_common.cpp
-    src/layer0_xenos/popup_x360.cpp
-    src/layer0_xenos/popup_xbox.cpp
-    src/layer0_xenos/popup_ps5.cpp
-    src/layer0_xenos/crash_report.cpp
-    src/layer0_xenos/system_report.cpp
-    src/layer0_xenos/save_watch.cpp
-    src/layer0_xenos/cpu_check.cpp
+    src/layer0_xenos/ui/achievements_data.cpp
+    src/layer0_xenos/ui/achievements_export.cpp
+    src/layer0_xenos/ui/window_icon.cpp
+    src/layer0_xenos/ui/achievements_popup_logic.cpp
+    src/layer0_xenos/ui/achievements_browser_model.cpp
+    src/layer0_xenos/ui/achievements_browser.cpp
+    src/layer0_xenos/ui/achievement_popup_assets.cpp
+    src/layer0_xenos/ui/achievement_popup.cpp
+    src/layer0_xenos/ui/ui_lang.cpp
+    src/layer0_xenos/ui/popup_common.cpp
+    src/layer0_xenos/ui/popup_x360.cpp
+    src/layer0_xenos/ui/popup_xbox.cpp
+    src/layer0_xenos/ui/popup_ps5.cpp
+    src/layer0_xenos/devtools/crash_report.cpp
+    src/layer0_xenos/devtools/system_report.cpp
+    src/layer0_xenos/devtools/save_watch.cpp
+    src/layer0_xenos/devtools/cpu_check.cpp
     src/layer0_xenos/latency_reflex.cpp
     src/layer0_xenos/renderer/frame_generation.cpp
     src/layer0_xenos/renderer/dlss_framegen.cpp
-    src/layer0_xenos/draw_stats.cpp
+    src/layer0_xenos/devtools/draw_stats.cpp
     src/layer0_xenos/renderer/d3d12_backend.cpp
     src/layer0_xenos/renderer/vulkan_backend.cpp
     src/layer0_xenos/renderer/dxc_compiler.cpp
@@ -47,41 +47,42 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/renderer/texture_pack.cpp
     src/layer0_xenos/renderer/prompt_atlas_catalog.cpp
     src/layer0_xenos/renderer/prompt_overlay_compositor.cpp
-    src/layer0_xenos/input/prompt_device_monitor.cpp
+    src/layer0_xenos/ui/input/prompt_device_monitor.cpp
     src/layer0_xenos/renderer/shadow_renderer.cpp
+    src/layer0_xenos/renderer/shadow_renderer_cvars.cpp
     src/layer0_xenos/renderer/upscaler.cpp
     src/layer0_xenos/renderer/ao.cpp
-    src/layer0_xenos/hold_guest.cpp
-    src/layer0_xenos/draw_log.cpp
+    src/layer0_xenos/devtools/hold_guest.cpp
+    src/layer0_xenos/devtools/draw_log.cpp
     src/layer0_xenos/ucode.cpp
     src/layer0_xenos/hlsl.cpp
     src/layer0_xenos/dxbc_gen.cpp
     src/layer0_xenos/dxbc_spirv.cpp
-    src/layer0_xenos/shader_dump.cpp
-    src/layer0_xenos/resolve_log.cpp
+    src/layer0_xenos/devtools/shader_dump.cpp
+    src/layer0_xenos/devtools/resolve_log.cpp
     src/layer0_xenos/pm4.cpp
     src/layer0_xenos/pm4_shadow.cpp
     src/layer0_xenos/display_gamma.cpp
     src/layer0_xenos/gpu_system.cpp
-    src/layer0_xenos/frame_capture.cpp
+    src/layer0_xenos/devtools/frame_capture.cpp
     src/layer0_xenos/observer_hub.cpp
-    src/layer0_xenos/frame_log.cpp
-    src/layer0_xenos/image_dump.cpp
-    src/layer0_xenos/script_pad.cpp
-    src/layer0_xenos/fps_bar.cpp
-    src/layer0_xenos/ao_debug.cpp
-    src/layer0_xenos/ingame_menu.cpp
-    src/layer0_xenos/window_hotkey.cpp   # GitHub #316
-    src/layer0_xenos/menu_look.cpp
-    src/layer0_xenos/social_ingame.cpp
-    src/layer0_xenos/player_tags.cpp  # GitHub #353: the COGBox tags of the players in a match
-    src/layer0_xenos/social_page.cpp
-    src/layer0_xenos/social_popup.cpp
-    src/layer0_xenos/cheat_popup.cpp
-    src/layer0_xenos/chat_logic.cpp          # in-match chat (Y / U)
-    src/layer0_xenos/chat_panel.cpp
-    src/layer0_xenos/social_shared.cpp
-    src/layer0_xenos/profiler.cpp
+    src/layer0_xenos/devtools/frame_log.cpp
+    src/layer0_xenos/devtools/image_dump.cpp
+    src/layer0_xenos/devtools/script_pad.cpp
+    src/layer0_xenos/ui/fps_bar.cpp
+    src/layer0_xenos/devtools/ao_debug.cpp
+    src/layer0_xenos/ui/ingame_menu.cpp
+    src/layer0_xenos/ui/window_hotkey.cpp   # GitHub #316
+    src/layer0_xenos/ui/menu_look.cpp
+    src/layer0_xenos/ui/social_ingame.cpp
+    src/layer0_xenos/ui/player_tags.cpp  # GitHub #353: the COGBox tags of the players in a match
+    src/layer0_xenos/ui/social_page.cpp
+    src/layer0_xenos/ui/social_popup.cpp
+    src/layer0_xenos/ui/cheat_popup.cpp
+    src/layer0_xenos/ui/chat_logic.cpp          # in-match chat (Y / U)
+    src/layer0_xenos/ui/chat_panel.cpp
+    src/layer0_xenos/ui/social_shared.cpp
+    src/layer0_xenos/devtools/profiler.cpp
 )
 target_include_directories(gn_layer0_xenos PUBLIC src/layer0_xenos/include)
 include(${CMAKE_SOURCE_DIR}/cmake/spirv_opt.cmake)  # 0.6.1: SPIRV-Tools' optimiser for the Vulkan shader path
@@ -226,7 +227,7 @@ if(GN_CPU_ARCH)
         endif()
     endforeach()
     # Patch 0134: the too-old-CPU check is built for the plain baseline (so it runs on any x64 CPU) and told the level.
-    set_source_files_properties(src/layer0_xenos/cpu_check.cpp PROPERTIES
+    set_source_files_properties(src/layer0_xenos/devtools/cpu_check.cpp PROPERTIES
         COMPILE_OPTIONS "-march=x86-64" COMPILE_DEFINITIONS "GN_CPU_LEVEL=\"${GN_CPU_ARCH}\"")
 endif()
 # Patch 0159 (Shagg 12:04: "start with the ones that will make the biggest difference"): profile-guided optimisation of
@@ -338,14 +339,14 @@ if(GN_WITH_REFLEX AND GN_NVAPI_FOUND)
     target_link_libraries(gn_layer0_xenos PRIVATE ${GN_NVAPI_DIR}/amd64/nvapi64.lib)
 endif()
 # NVIDIA DLSS frame generation through Streamline (renderer/dlss_framegen.cpp, --gow2_frame_generation=dlss,
-# experimental): the few public Streamline 2.14.16 headers it needs are vendored in src/layer0_xenos/streamline (MIT);
+# experimental): the few public Streamline 2.14.16 headers it needs are vendored in src/layer0_xenos/third_party/streamline (MIT);
 # there is no library to link - sl.interposer.dll is loaded at run time when the player has put NVIDIA's DLLs next to
 # the exe (never copied by the build). OFF builds keep the same file with empty functions.
 option(GN_WITH_STREAMLINE "Build NVIDIA DLSS frame generation (Streamline, loaded at run time) in" ${WIN32})
 message(STATUS "Gears2-Native: NVIDIA DLSS frame generation (Streamline) ${GN_WITH_STREAMLINE}")
 if(GN_WITH_STREAMLINE AND WIN32)
     target_compile_definitions(gn_layer0_xenos PRIVATE GN_HAVE_STREAMLINE)
-    target_include_directories(gn_layer0_xenos PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/layer0_xenos/streamline/include)
+    target_include_directories(gn_layer0_xenos PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/layer0_xenos/third_party/streamline/include)
 endif()
 # Patch 0136: AMD Anti-Lag 2 (github.com/GPUOpen-LibrariesAndSDKs/AntiLag2-SDK, header-only) in third_party/antilag2-sdk.
 set(GN_AL2_DIR ${CMAKE_SOURCE_DIR}/third_party/antilag2-sdk)
@@ -433,18 +434,18 @@ if(GN_BUILD_TESTS)
         src/layer0_xenos/renderer/prompt_overlay_compositor.cpp
         tests/layer0_device_monitor_test.cpp
         tests/layer0_window_hotkey_test.cpp   # GitHub #316 (header only)
-        src/layer0_xenos/input/prompt_device_monitor.cpp
+        src/layer0_xenos/ui/input/prompt_device_monitor.cpp
         tests/layer0_ao_test.cpp
         tests/layer2_config_bundle_test.cpp
         src/layer2_ue3/config_bundle.cpp
         tests/layer2_prebuild_lzx_test.cpp
         src/layer2_ue3/prebuild_lzx.cpp
         tests/layer0_achievements_popup_test.cpp
-        src/layer0_xenos/achievements_popup_logic.cpp
+        src/layer0_xenos/ui/achievements_popup_logic.cpp
         tests/layer0_achievements_browser_test.cpp
-        src/layer0_xenos/achievements_browser_model.cpp
+        src/layer0_xenos/ui/achievements_browser_model.cpp
         tests/layer0_achievements_data_test.cpp
-        src/layer0_xenos/achievements_data.cpp
+        src/layer0_xenos/ui/achievements_data.cpp
         tests/layer2_mouse_carry_test.cpp
         tests/layer2_main_menu_exit_test.cpp
         src/layer2_ue3/main_menu_exit.cpp

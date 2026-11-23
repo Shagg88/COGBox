@@ -7,8 +7,8 @@ Gears2-Native's own code is MIT-licensed (`LICENSE`). It contains or builds agai
 | rexglue SDK (Tom Clay; portions from the Xenia project, Ben Vanik and contributors) | `third_party/rexglue-sdk` (downloaded, not committed); `cmake/rexglue.cmake`, `src/main.cpp`, parts of `src/gow2_app.h` come from its project template | BSD-3-Clause |
 | Xenia Canary (e6cd2e4) and Xenia Edge (5045c19) (Ben Vanik and the Xenia project contributors) | ported or adapted pieces of `src/layer0_xenos` (texture loading and formats, tiling and mip layout, resolve and gamma rules, the rectangle-list geometry shader, PM4 and shader-translation rules); each such file carries the notice | BSD-3-Clause |
 | XeGTAO (Intel Corporation) | `src/layer0_xenos/renderer/xegtao_shaders.h` (ported shaders, notes/80) | MIT (notice below) |
-| SMAA (Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro, Diego Gutierrez) | `src/layer0_xenos/renderer/smaa/` (SMAA.hlsl and its area / search tables) | MIT (notice below) |
-| stb_dxt (Fabian Giesen, Sean Barrett) | `src/layer0_xenos/renderer/stb_dxt.h` | Public domain (note below) |
+| SMAA (Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro, Diego Gutierrez) | `src/layer0_xenos/third_party/smaa/` (SMAA.hlsl and its area / search tables) | MIT (notice below) |
+| stb_dxt (Fabian Giesen, Sean Barrett) | `src/layer0_xenos/third_party/stb_dxt/stb_dxt.h` | Public domain (note below) |
 | PsychoV35 (Carlos Lopez / ShortFuse / clshortfuse; self-contained edition modifications by Musa Haji / mqhaji) | Gears 2 and Gears 3 native HDR scene mapping, `src/layer0_xenos/include/xenos/renderer/psychov35_source.h` | MIT ([full notice](cogbox/licenses/PsychoV35-LICENSE.txt); also copied beside each game EXE under `licenses/`) |
 | Libraries bundled by the SDK (SDL3, Dear ImGui, Tracy, fmt, spdlog, FFmpeg, ...) | inside the SDK | their own licences, listed in the SDK's `licenses/` folder |
 | gow3-recomp (Flippage and the gow3-recomp contributors) and gears-of-war-2-pc-port / gow2-recomp (Santiago Quiroz Upegui and the gow2-recomp contributors) | the native mouse look method and the Gears 3 / Gears 2 base-disc addresses in `ue3_mouse_look.h` and `mouse_look.cpp` (layer 3 of all three ports, COGBox 0.2.1), plus the multi-controller 4x prompt overlay catalog and live device monitor (`prompt_atlas_catalog.*`, `prompt_overlay_compositor.*`, `prompt_device_monitor.*`) | BSD-3-Clause (notices below) |
@@ -26,7 +26,7 @@ committed (`third_party/` is ignored; `notes/65-broad-hardware.md` item 6):
 |---|---|---|
 | NVIDIA DLSS SDK (`third_party/dlss-sdk`; `nvngx_dlss.dll` at run time) | DLSS / DLAA | NVIDIA RTX SDKs License (binary redistribution inside an application; the SDK must not be made subject to an open-source licence, so it stays a separate binary next to our MIT code) |
 | AMD FidelityFX SDK (`third_party/fidelityfx-sdk`; `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll`) | FSR | The `ffx_api` headers we compile against: MIT (AMD). The signed DLLs: AMD's FidelityFX licence (`docs/license.md`) - redistribution in binary form only, no reverse engineering, and its copyright notice, permission notice and disclaimers reproduced (below) |
-| NVIDIA Streamline SDK v2.14.16 headers (`src/layer0_xenos/streamline/include`, vendored unchanged; licence in `src/layer0_xenos/streamline/LICENSE.txt`) | Experimental DLSS frame generation (`renderer/dlss_framegen.cpp`, `--gow2_frame_generation=dlss`) with Reflex through Streamline | Headers: MIT (NVIDIA). Shipped unmodified from 0.4.8 beside each port exe built with Streamline: `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll` (Streamline 2.14, MIT, NVIDIA-signed; Reflex parts under the Reflex SDK licence) and `nvngx_dlssg.dll` (NVIDIA RTX SDKs License). Release `licenses\NVIDIA-Streamline-DLSS-G-NOTICE.txt`, `licenses\streamline-sdk\`, `licenses\streamline-release\`. This product uses the NVIDIA DLSS SDK, NVIDIA Streamline SDK and NVIDIA Reflex SDK; NVIDIA, GeForce RTX, DLSS and Reflex are trademarks of NVIDIA Corporation |
+| NVIDIA Streamline SDK v2.14.16 headers (`src/layer0_xenos/third_party/streamline/include`, vendored unchanged; licence in `src/layer0_xenos/third_party/streamline/LICENSE.txt`) | Experimental DLSS frame generation (`renderer/dlss_framegen.cpp`, `--gow2_frame_generation=dlss`) with Reflex through Streamline | Headers: MIT (NVIDIA). Shipped unmodified from 0.4.8 beside each port exe built with Streamline: `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll` (Streamline 2.14, MIT, NVIDIA-signed; Reflex parts under the Reflex SDK licence) and `nvngx_dlssg.dll` (NVIDIA RTX SDKs License). Release `licenses\NVIDIA-Streamline-DLSS-G-NOTICE.txt`, `licenses\streamline-sdk\`, `licenses\streamline-release\`. This product uses the NVIDIA DLSS SDK, NVIDIA Streamline SDK and NVIDIA Reflex SDK; NVIDIA, GeForce RTX, DLSS and Reflex are trademarks of NVIDIA Corporation |
 | SPIRV-Tools (Khronos Group; built from the rexglue SDK's vendored source, `third_party/rexglue-sdk/thirdparty/spirv-tools`) | Vulkan: the optimiser run over each shader after it is converted to SPIR-V (0.6.1) | Apache-2.0 (`LICENSE` in that folder; shipped with the SDK licences) |
 
 A release that ships these DLLs must include the notices below (and NVIDIA's DLSS attribution when DLSS ships).
@@ -96,7 +96,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## SMAA (src/layer0_xenos/renderer/smaa/)
+## SMAA (src/layer0_xenos/third_party/smaa/)
 
 https://github.com/iryoku/smaa - SMAA.hlsl and its area / search tables, unmodified apart from two non-ASCII comment characters.
 
@@ -126,7 +126,7 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-## stb_dxt (src/layer0_xenos/renderer/stb_dxt.h)
+## stb_dxt (src/layer0_xenos/third_party/stb_dxt/stb_dxt.h)
 
 https://github.com/nothings/stb - DXT1/DXT5 compressor by Fabian "ryg" Giesen, ported to C by Sean Barrett. Public
 domain (or MIT, at your choice); COGBox uses it under the public-domain option (Unlicense), unmodified. Used to re-encode a button-prompt sheet after COGBox's keyboard key caps

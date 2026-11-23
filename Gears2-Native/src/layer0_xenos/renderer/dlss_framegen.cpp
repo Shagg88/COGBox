@@ -5,7 +5,7 @@
 // Targets the Streamline SDK v2.14.16 (github.com/NVIDIA-RTX/Streamline, tag v2.14.16, the newest public tag on
 // 2026-11-07; DLSS-G plugin for DLSS SDK 310.x / DLSS 4.5 - DLSSGOptions v5 with numFramesToGenerate and
 // DLSSGMode::eDynamic, DLSSGState v4 with numFramesToGenerateMax and bIsDynamicMFGSupported). The headers this needs are
-// vendored, unchanged, in src/layer0_xenos/streamline/include (NVIDIA, MIT licence: streamline/LICENSE.txt). There is no
+// vendored, unchanged, in src/layer0_xenos/third_party/streamline/include (NVIDIA, MIT licence: streamline/LICENSE.txt). There is no
 // link-time dependency: sl.interposer.dll is loaded at run time from the exe's folder (after its NVIDIA signature is
 // checked) and every sl* function comes from GetProcAddress / slGetFeatureFunction. An older plugin simply leaves the
 // newer state fields at their defaults (no dynamic mode, at most 2x).

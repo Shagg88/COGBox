@@ -1,6 +1,6 @@
-// CogBox - test of the in-match chat's game-free logic (../src/layer0_xenos/chat_logic.cpp). Plain checks, like
+// CogBox - test of the in-match chat's game-free logic (../src/layer0_xenos/ui/chat_logic.cpp). Plain checks, like
 // achievements_tab_test. Build and run from Gears2-Native/cogbox (clang++ from LLVM):
-//   clang++ -std=c++20 -I../src/layer0_xenos/include test/chat_logic_test.cpp ../src/layer0_xenos/chat_logic.cpp
+//   clang++ -std=c++20 -I../src/layer0_xenos/include test/chat_logic_test.cpp ../src/layer0_xenos/ui/chat_logic.cpp
 //     -o out/chat_logic_test.exe && out\chat_logic_test.exe
 #include <xenos/chat_logic.h>
 

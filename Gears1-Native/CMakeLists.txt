@@ -30,7 +30,7 @@ include(cmake/rexglue.cmake)
 # Layer 0: Xbox 360 GPU core and game-free developer tooling (the shared copy in Gears2-Native).
 # PR #117: input/ holds the button-prompt monitor the shared texture cache and in-game menu use. GitHub #214: Gears 1's
 # button font and HUD sheets are in the shared prompt catalog; the glyphs come from the package's shared assets\glyphs.
-file(GLOB GN_LAYER0_SOURCES CONFIGURE_DEPENDS ${GN_LAYER0_DIR}/*.cpp ${GN_LAYER0_DIR}/renderer/*.cpp ${GN_LAYER0_DIR}/input/*.cpp)
+file(GLOB GN_LAYER0_SOURCES CONFIGURE_DEPENDS ${GN_LAYER0_DIR}/*.cpp ${GN_LAYER0_DIR}/renderer/*.cpp ${GN_LAYER0_DIR}/ui/*.cpp ${GN_LAYER0_DIR}/ui/input/*.cpp ${GN_LAYER0_DIR}/devtools/*.cpp)
 # The vendor-SDK wrappers are added below only when their SDK is there (job 052).
 list(FILTER GN_LAYER0_SOURCES EXCLUDE REGEX "(dlss|fsr)_upscaler\\.cpp$")
 add_library(gn_layer0_xenos STATIC ${GN_LAYER0_SOURCES})
@@ -204,14 +204,14 @@ if(WIN32 AND EXISTS ${GN_NVAPI_DIR}/nvapi.h AND EXISTS ${GN_NVAPI_DIR}/amd64/nva
     set(GN_NVAPI_FOUND ON)
 endif()
 # NVIDIA DLSS frame generation through Streamline (renderer/dlss_framegen.cpp, --gow2_frame_generation=dlss,
-# experimental): the few public Streamline 2.14.16 headers it needs are vendored in src/layer0_xenos/streamline (MIT);
+# experimental): the few public Streamline 2.14.16 headers it needs are vendored in src/layer0_xenos/third_party/streamline (MIT);
 # there is no library to link - sl.interposer.dll is loaded at run time when the player has put NVIDIA's DLLs next to
 # the exe (never copied by the build). OFF builds keep the same file with empty functions.
 option(GN_WITH_STREAMLINE "Build NVIDIA DLSS frame generation (Streamline, loaded at run time) in" ${WIN32})
 message(STATUS "Gears1-Native: NVIDIA DLSS frame generation (Streamline) ${GN_WITH_STREAMLINE}")
 if(GN_WITH_STREAMLINE AND WIN32)
     target_compile_definitions(gn_layer0_xenos PRIVATE GN_HAVE_STREAMLINE)
-    target_include_directories(gn_layer0_xenos PRIVATE ${GN_LAYER0_DIR}/streamline/include)
+    target_include_directories(gn_layer0_xenos PRIVATE ${GN_LAYER0_DIR}/third_party/streamline/include)
 endif()
 option(GN_WITH_REFLEX "Build NVIDIA Reflex in (needs Gears 2's third_party/nvapi)" ${GN_NVAPI_FOUND})
 message(STATUS "Gears1-Native: NVIDIA Reflex ${GN_WITH_REFLEX} (NVAPI found: ${GN_NVAPI_FOUND})")
@@ -282,7 +282,7 @@ foreach(gn_t gow1_recomp gow1 gn_layer0_xenos gn_layer2_ue3)
         target_compile_options(${gn_t} PRIVATE -march=${GN_CPU_ARCH} -ffp-contract=off)
     endif()
 endforeach()
-set_source_files_properties(${GN_LAYER0_DIR}/cpu_check.cpp PROPERTIES
+set_source_files_properties(${GN_LAYER0_DIR}/devtools/cpu_check.cpp PROPERTIES
     COMPILE_OPTIONS "-march=x86-64" COMPILE_DEFINITIONS "GN_CPU_LEVEL=\"${GN_CPU_ARCH}\"")
 set(gn_pgo_targets gow1_recomp gow1 gn_layer0_xenos gn_layer2_ue3)
 set(gn_pgo_gen_flag -fprofile-instr-generate)

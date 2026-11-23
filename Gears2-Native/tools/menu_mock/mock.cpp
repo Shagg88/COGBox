@@ -1,4 +1,4 @@
-// Offline mock-up of the in-game menu (0.4.9): runs src/layer0_xenos/menu_look.cpp - the code the game draws the menu
+// Offline mock-up of the in-game menu (0.4.9): runs src/layer0_xenos/ui/menu_look.cpp - the code the game draws the menu
 // with - on Dear ImGui with no window, rasterises the draw lists in software and writes RGBA (composited onto a game
 // screenshot by mock.py). Build: see mock.sh. Our code (MIT).
 #include <xenos/menu_look.h>
