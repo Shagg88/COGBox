@@ -25,7 +25,8 @@ set(GN_LAYER0_TESTS "${GN_LAYER0_HOME}/tests")
 message(STATUS "Gears1-Native: layer 0 (renderer) from ${GN_LAYER0_DIR}")
 
 # SDK boilerplate copied from the template's generated/rexglue.cmake (generated/ is never committed).
-include(cmake/rexglue.cmake)
+set(GN_GAME gow1)   # read by the shared cmake/rexglue.cmake (generated/default, gow1_manifest.toml)
+include(${GN_LAYER0_HOME}/cmake/rexglue.cmake)  # ONE copy (Gears 2's), shared by all four games
 
 # Layer 0: Xbox 360 GPU core and game-free developer tooling (the shared copy in Gears2-Native).
 # PR #117: input/ holds the button-prompt monitor the shared texture cache and in-game menu use. GitHub #214: Gears 1's

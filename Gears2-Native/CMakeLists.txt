@@ -12,7 +12,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY ON)
 
 # SDK boilerplate, copied from the template's generated/rexglue.cmake (see the header of that file).
-include(cmake/rexglue.cmake)
+set(GN_GAME gow2)
+# Gears 2: Title Update 6 is the only version built (0.6.6, Shagg 20 Nov: "There should be NO DISC VERSION, only TU
+# versions"); a build folder that cached "base" is moved to tu6. Read by the shared cmake/rexglue.cmake.
+set(GN_GAME_VERSION "tu6" CACHE STRING "Game version: tu6 (Title Update 6) - the only one" FORCE)
+set(GN_GEN_DIR generated/tu6)
+set(GN_MANIFEST gow2_manifest_tu6.toml)
+include(cmake/rexglue.cmake)  # ONE copy, shared by all four games
 
 # Layer 0: Xbox 360 GPU core and game-free developer tooling.
 add_library(gn_layer0_xenos STATIC

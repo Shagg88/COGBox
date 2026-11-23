@@ -28,7 +28,13 @@ set(GN_LAYER0_TESTS "${GN_LAYER0_HOME}/tests")
 message(STATUS "Gears3-Native: layer 0 (renderer) from ${GN_LAYER0_DIR}")
 
 # SDK boilerplate copied from the template's generated/rexglue.cmake (generated/ is never committed).
-include(cmake/rexglue.cmake)
+set(GN_GAME gow3)
+# Gears 3: Title Update 6 is the only version built (0.6.6, Shagg 20 Nov: "There should be NO DISC VERSION, only TU
+# versions"); a build folder that cached "base" is moved to tu6. Read by the shared cmake/rexglue.cmake.
+set(GN_GAME_VERSION "tu6" CACHE STRING "Game version: tu6 (Title Update 6) - the only one" FORCE)
+set(GN_GEN_DIR generated/tu6)
+set(GN_MANIFEST gow3_manifest_tu6.toml)
+include(${GN_LAYER0_HOME}/cmake/rexglue.cmake)  # ONE copy (Gears 2's), shared by all four games
 
 # Layer 0: Xbox 360 GPU core and game-free developer tooling (the shared copy in Gears2-Native).
 file(GLOB GN_LAYER0_SOURCES CONFIGURE_DEPENDS ${GN_LAYER0_DIR}/*.cpp ${GN_LAYER0_DIR}/renderer/*.cpp ${GN_LAYER0_DIR}/ui/*.cpp ${GN_LAYER0_DIR}/ui/input/*.cpp ${GN_LAYER0_DIR}/devtools/*.cpp)
