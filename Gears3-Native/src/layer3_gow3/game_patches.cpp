@@ -949,27 +949,32 @@ void Gow3NoteTickCall(uint32_t hits_before, double result, uint32_t caller) {
   }
 }
 
+// The game-thread work done once per engine frame. GitHub #435 / #422: it ran only inside the limiter hook, so when
+// GetMaxTickRate stopped reaching the hook (split screen, the #422 log) the split-layout watcher, the timeline and the
+// other ticks stopped with the limit. Gow3MaxTickRateFallback runs it in those frames too.
+static void Gow3EngineFrameTicks() {
+  g_frame_wait_ms = 0.0;  // GitHub #313 pace check: set by Gow3ExactLimit when it waits in this frame
+  TickTimeline();
+  Gow3ModChaptersTick();
+  Gow3PathChoiceTick();
+  Gow3SplitLayoutTick();       // GitHub #269
+  Gow3NativeUiViewportTick();  // 0.6.6 true 1080p: menus in the larger screen (off: one test)
+  Gow3CheckpointStreamTick();  // GitHub #226
+  Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
+  Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
+  // GitHub #353: COGBox tags after the players' names.
+  // No colour for now (Flippage / Shagg): the grey markup showed as text wherever the game draws a name as plain
+  // text (kill feed, names over heads, TacCom), and not every such place is found yet - plain on every screen.
+  Ue3NameTagsTick([] { return ue3::obj::Ready() || ue3::obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar); },
+                  Ue3NameTagStyle{});
+}
+
 void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9B0
   g_tick_hook_hits.fetch_add(1, std::memory_order_relaxed);
   // 0.6.3: UWorld::ServerTickClients' call (a host with remote players, every frame after the engine loop's): the same
   // value, no wait, and none of the per-frame ticks below (they ran twice per frame on a host before).
   const bool engine_loop = g_tick_caller.load(std::memory_order_relaxed) != gow3::addr::kServerTickClientsTickRateRet;
-  if (engine_loop) {
-    g_frame_wait_ms = 0.0;  // GitHub #313 pace check: set by Gow3ExactLimit when it waits in this frame
-    TickTimeline();
-    Gow3ModChaptersTick();
-    Gow3PathChoiceTick();
-    Gow3SplitLayoutTick();       // GitHub #269
-    Gow3NativeUiViewportTick();  // 0.6.6 true 1080p: menus in the larger screen (off: one test)
-    Gow3CheckpointStreamTick();  // GitHub #226
-    Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
-    Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
-    // GitHub #353: COGBox tags after the players' names.
-    // No colour for now (Flippage / Shagg): the grey markup showed as text wherever the game draws a name as plain
-    // text (kill feed, names over heads, TacCom), and not every such place is found yet - plain on every screen.
-    Ue3NameTagsTick([] { return ue3::obj::Ready() || ue3::obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar); },
-                    Ue3NameTagStyle{});
-  }
+  if (engine_loop) Gow3EngineFrameTicks();
   const int32_t v = LiveMaxFps();
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)
@@ -993,6 +998,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
 // GetMaxTickRate that skips the hook, and the limit is gone. extras.cpp's override calls this after the original for the
 // engine loop's call when the hook did not run: the same exact limiter waits here (the menu limit included).
 void Gow3MaxTickRateFallback(PPCRegister& f1) {
+  Gow3EngineFrameTicks();  // GitHub #422: the split-layout watcher (and the rest) keeps running in these frames
   int32_t v = LiveMaxFps();
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed))
     v = (v <= 0 || v > m) ? m : v;
