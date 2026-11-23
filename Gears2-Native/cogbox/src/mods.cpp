@@ -7,6 +7,7 @@
 // Order and on/off are in CogBox.ini [Mods] <game>Order / <game>Enabled ("name|name|...").
 #include "app.h"
 #include "fabricator_model.h"
+#include "mod_conflicts.h"
 #include "mod_file_rules.h"
 #include "i18n.h"   // 0.6.4: the Mods tab lines built here (trf)
 #include "../third_party/miniz/miniz.h"
@@ -222,6 +223,7 @@ std::vector<ModItem> mods_list(App &a, int g)
     }
     apply_mod_rules(g, out);
     for (ModItem &m : out) m.textures = pack_textures(m.path);
+    mod_conflicts_request(g, out, a.st[g].dataDir);   // KiltedKernel: which mods change the same files (worked out on a worker)
     return out;
 }
 

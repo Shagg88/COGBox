@@ -10,6 +10,7 @@
 #include "i18n.h"
 #include "fabricator_state.h"
 #include "fabricator_pack.h"
+#include "mod_conflicts.h"
 #include "mod_ini_edit.h"
 #include "imgui_internal.h"   // ImGui::FindRenderedTextEnd
 
@@ -211,9 +212,28 @@ void library_row(App &a, int g, const FabLibRow &r, size_t i, size_t n)
     const ImVec2 r0 = ImGui::GetCursorScreenPos();
     const float rw = ui_row_x1() - r0.x;
     // the lines under the name: what the game makes of it (mods.cpp apply_mod_rules), what mod.ini has it doesn't know
-    std::vector<std::pair<std::string, ImVec4>> lines;
-    if (m.enabled && !m.problem.empty()) lines.push_back({ trf("Left out by the game: {1}", { m.problem }), col::bad });
-    for (const std::string &x : m.notes) lines.push_back({ "mod.ini: " + x, col::amber });
+    struct Line { std::string text; ImVec4 c; std::vector<std::string> tip; };
+    std::vector<Line> lines;
+    if (m.enabled && !m.problem.empty()) lines.push_back({ trf("Left out by the game: {1}", { m.problem }), col::bad, {} });
+    for (const std::string &x : m.notes) lines.push_back({ "mod.ini: " + x, col::amber, {} });
+    // KiltedKernel: the files and textures it shares with other enabled mods (mod_conflicts.h), and which one wins
+    if (m.enabled) {
+        const std::shared_ptr<const ModConflictSet> cs = mod_conflicts_get(g);
+        if (const ModConflicts *c = cs ? cs->find(m.folder) : nullptr) {
+            std::vector<Line> cl;
+            for (const ModConflictPair &p : c->replaced_by) cl.push_back({ mod_conflict_text(p, 0), col::amber, mod_conflict_tip(p, 0) });
+            for (const ModConflictPair &p : c->tex_loses) cl.push_back({ mod_conflict_text(p, 2), col::amber, mod_conflict_tip(p, 2) });
+            for (const ModConflictPair &p : c->replaces) cl.push_back({ mod_conflict_text(p, 1), col::amber, mod_conflict_tip(p, 1) });
+            for (const ModConflictPair &p : c->tex_wins) cl.push_back({ mod_conflict_text(p, 3), col::amber, mod_conflict_tip(p, 3) });
+            if (cl.size() > 4) {   // a long list: the first three, then one line for the rest (its tip lists them)
+                Line more{ trf("And {1} more overlaps with other mods", { std::to_string(cl.size() - 3) }), col::amber, {} };
+                for (size_t k = 3; k < cl.size(); k++) more.tip.push_back(cl[k].text);
+                cl.resize(3);
+                cl.push_back(std::move(more));
+            }
+            lines.insert(lines.end(), cl.begin(), cl.end());
+        }
+    }
     const float lineH = FS(F_SMALL) * kRowText + S(3);
     const float top = T(54), rh = top + (lines.empty() ? 0 : lines.size() * lineH + S(6));
     const ImVec2 r1(r0.x + rw, r0.y + rh);
@@ -296,9 +316,16 @@ void library_row(App &a, int g, const FabLibRow &r, size_t i, size_t n)
         else if (bs[k].what <= 1) ui_tip("The lower mod wins where two change the same file.");
     }
     float ly = r0.y + top;
-    for (auto &l : lines) {
-        const std::string f = fit(F_SMALL, FS(F_SMALL) * kRowText, l.first, rw - S(20) - (tx - r0.x));
-        dl->AddText(F_SMALL, FS(F_SMALL) * kRowText, ImVec2(tx, ly), U(l.second), f.c_str());
+    for (const Line &l : lines) {
+        const std::string f = fit(F_SMALL, FS(F_SMALL) * kRowText, l.text, rw - S(20) - (tx - r0.x));
+        dl->AddText(F_SMALL, FS(F_SMALL) * kRowText, ImVec2(tx, ly), U(l.c), f.c_str());
+        if (!l.tip.empty() && ImGui::IsMouseHoveringRect(ImVec2(tx, ly), ImVec2(r1.x, ly + lineH))) {
+            // file names come from the mods' folders: drawn as they are, never as a format
+            ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(S(640), FLT_MAX));
+            ImGui::BeginTooltip();
+            for (const std::string &t : l.tip) ImGui::TextUnformatted(t.c_str());
+            ImGui::EndTooltip();
+        }
         ly += lineH;
     }
     ImGui::SetCursorScreenPos(r0);

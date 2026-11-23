@@ -8,6 +8,7 @@
 //   g++ -std=c++17 -Wall -Wextra -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX -Ithird_party/imgui -I$SDL
 //       -Ithird_party -Isrc -I../src/layer2_ue3/include -I../src/layer0_xenos/include -I../../Gears3-Native/src/layer2_ue3
 //       test/fabricator_install_test.cpp src/fabricator_install.cpp src/mods.cpp src/fabricator_model.cpp src/mod_file_rules.cpp src/util.cpp
+//       src/mod_conflicts.cpp src/mod_conflicts_scan.cpp   (mods_list asks for the mods' conflicts)
 //       src/gears_settings.cpp src/i18n.cpp ../../Gears3-Native/src/layer2_ue3/modcore/modcore.cpp miniz.o
 //       -static-libgcc -static-libstdc++ <SDL3 mingw>/x86_64-w64-mingw32/lib/libSDL3.dll.a -lshell32 -lole32 -luuid
 //       -lbcrypt -ladvapi32 -o fabricator_install_test.exe   (SDL3.dll beside it: mods.cpp's texture-pack count uses SDL_GetTicks)
