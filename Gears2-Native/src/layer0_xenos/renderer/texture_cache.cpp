@@ -46,11 +46,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_force_trilinear, false, "Gears2",
                     "Blend between mip levels (trilinear) on filtered, mipmapped textures the game samples with point mips");
 REXCVAR_DEFINE_INT32(gow2_texture_cpu_threads, 0, "Gears2",
                      "0.5.1: threads for a big CPU-path texture level (0 = automatic, up to 8; 1 = one thread, as before)");
-REXCVAR_DEFINE_DOUBLE(gow2_renderer_texture_load_budget_ms, 0.0, "Gears2",
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_texture_load_budget_ms, 4.0, "Gears2",
                       "23 Nov (first-play stutter: G2 loaded 377 new textures in one frame = 59 ms at gameplay start): once "
                       "new-texture loads in a frame have taken this many ms, further NEW textures wait for a later frame "
                       "(a stand-in is drawn meanwhile; each one loads within 8 frames at most). Textures already loaded are "
-                      "never held back. 0 = off (load everything at once, as before)");
+                      "never held back. 0 = off (load everything at once, as before). Default 4 (jobs 2378e / 2378i: G2 level start 112 -> 64 ms, no visible stand-ins after the fade-in; G1 / G3 / J unchanged)");
 REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
                       "Diagnostic (job 299): log a frame whose texture loads took longer than this many ms, split into "
                       "phases - page watch arming, page hashing, host texture creation, GPU-path copy + untile, CPU-path "
