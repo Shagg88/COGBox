@@ -1,8 +1,8 @@
 // CogBox - test of the ACHIEVEMENTS tab's helpers (src/achievements_tab_logic.h). Plain checks, like settings_test.
 // Build (llvm-mingw):
 //   x86_64-w64-mingw32-g++ -std=c++17 -DUNICODE -D_UNICODE -DNOMINMAX -Isrc -I../src/layer0_xenos/include
-//     test/achievements_tab_test.cpp src/achievements_tab_logic.cpp ../src/layer0_xenos/achievements_data.cpp
-//     ../src/layer0_xenos/achievements_browser_model.cpp ../src/layer0_xenos/achievements_popup_logic.cpp
+//     test/achievements_tab_test.cpp src/achievements_tab_logic.cpp ../src/layer0_xenos/ui/achievements_data.cpp
+//     ../src/layer0_xenos/ui/achievements_browser_model.cpp ../src/layer0_xenos/ui/achievements_popup_logic.cpp
 // Run it from any folder: it writes only under test-scratch\ next to the exe.
 #include "../src/achievements_tab_logic.h"
 

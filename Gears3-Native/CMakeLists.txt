@@ -31,7 +31,7 @@ message(STATUS "Gears3-Native: layer 0 (renderer) from ${GN_LAYER0_DIR}")
 include(cmake/rexglue.cmake)
 
 # Layer 0: Xbox 360 GPU core and game-free developer tooling (the shared copy in Gears2-Native).
-file(GLOB GN_LAYER0_SOURCES CONFIGURE_DEPENDS ${GN_LAYER0_DIR}/*.cpp ${GN_LAYER0_DIR}/renderer/*.cpp ${GN_LAYER0_DIR}/input/*.cpp)
+file(GLOB GN_LAYER0_SOURCES CONFIGURE_DEPENDS ${GN_LAYER0_DIR}/*.cpp ${GN_LAYER0_DIR}/renderer/*.cpp ${GN_LAYER0_DIR}/ui/*.cpp ${GN_LAYER0_DIR}/ui/input/*.cpp ${GN_LAYER0_DIR}/devtools/*.cpp)
 # The vendor-SDK wrappers are added below only when their SDK is there (job 052).
 list(FILTER GN_LAYER0_SOURCES EXCLUDE REGEX "(dlss|fsr)_upscaler\\.cpp$")
 add_library(gn_layer0_xenos STATIC ${GN_LAYER0_SOURCES})
@@ -294,7 +294,7 @@ foreach(gn_t gow3_recomp gow3 gn_layer0_xenos gn_layer2_ue3)
         target_compile_options(${gn_t} PRIVATE -march=${GN_CPU_ARCH} -ffp-contract=off)
     endif()
 endforeach()
-set_source_files_properties(${GN_LAYER0_DIR}/cpu_check.cpp PROPERTIES
+set_source_files_properties(${GN_LAYER0_DIR}/devtools/cpu_check.cpp PROPERTIES
     COMPILE_OPTIONS "-march=x86-64" COMPILE_DEFINITIONS "GN_CPU_LEVEL=\"${GN_CPU_ARCH}\"")
 set(gn_pgo_targets gow3_recomp gow3 gn_layer0_xenos gn_layer2_ue3)
 set(gn_pgo_gen_flag -fprofile-instr-generate)

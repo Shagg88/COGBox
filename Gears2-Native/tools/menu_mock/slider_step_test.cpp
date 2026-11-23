@@ -2,7 +2,7 @@
 // step 5) and a float one, driven through xenos::menu::DrawSettings on Dear ImGui with no window, the way
 // InGameMenu::FeedPad drives it (own focus on the rows; A enters a slider, then Dear ImGui's gamepad navigation adjusts it).
 //   I=../../cogbox/third_party/imgui; g++ -std=c++17 -O1 -I../../src/layer0_xenos/include -I$I slider_step_test.cpp \
-//     ../../src/layer0_xenos/menu_look.cpp $I/imgui.cpp $I/imgui_draw.cpp $I/imgui_widgets.cpp $I/imgui_tables.cpp \
+//     ../../src/layer0_xenos/ui/menu_look.cpp $I/imgui.cpp $I/imgui_draw.cpp $I/imgui_widgets.cpp $I/imgui_tables.cpp \
 //     -o slider_step_test && ./slider_step_test ../../assets/fonts
 #include <xenos/menu_look.h>
 #include <imgui.h>

@@ -8,7 +8,7 @@
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
 
-#include "../../cogbox/third_party/nlohmann/json.hpp"
+#include "../../../cogbox/third_party/nlohmann/json.hpp"
 
 #include <chrono>
 #include <cstdio>
