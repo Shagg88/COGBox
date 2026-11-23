@@ -18,22 +18,7 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 
 | Name | Has it | Missing | Note |
 |---|---|---|---|
-| `option first_person` | G2 G3 J | G1 | first-person mode and its 8 sub-options |
-| `option first_person_body` | G2 G3 J | G1 | |
-| `option first_person_diag` | G2 G3 J | G1 | |
-| `option first_person_fov` | G2 G3 J | G1 | |
-| `option first_person_head` | G2 G3 J | G1 | |
-| `option first_person_offset` | G2 G3 J | G1 | |
-| `option first_person_third_person_moves` | G2 G3 J | G1 | |
-| `option first_person_weapon` | G2 G3 J | G1 | |
-| `option first_person_head_control` | G2 | G1 G3 J | |
 | `option fast_mip_fade` | G3 J | G2 (G1 n/a) | G2: its Coalesced_int.bin has no MipFadeInSpeed key (J's has) [V]; whether G2's engine reads the key if added is unknown (packages compressed) - an ini edit is harmless to try, needs a test run. G1 doesn't apply: its Coalesced.ini has no mip-fade or MipFilter keys [V] |
-| `option loading_fps` | J | G1 G2 G3 | frame-rate cap while loading (GitHub #38: endless loads at high fps) - frame-rate pattern |
-| `option loading_max_s` | J | G1 G2 G3 | (with loading_fps) |
-| `option loading_stream_s` | J | G1 G2 G3 | (with loading_fps) |
-| `option loading_tail_s` | J | G1 G2 G3 | (with loading_fps) |
-| `option checkpoint_stream_wait` | G3 | G1 G2 J | GitHub #226: streamed sections fully loaded after a checkpoint load |
-| `option checkpoint_stream_wait_ms` | G3 | G1 G2 J | (with checkpoint_stream_wait) |
 | `option shadow_cap` | G2 G3 | G1 J | Smart Shadow Cuts (parked for G1 / J on 23 Nov - reopen) |
 | `hook ShadowCap` | G2 G3 | G1 J | |
 | `option shadow_value_cap` | G2 | G1 G3 J | |
@@ -68,6 +53,22 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `hook UltrawideSharedMemory` | G3 J | G1 G2 | |
 | `hook NativeSceneWidthMax` | G2 G3 | G1 J | |
 | `option log_weapon_state` | G1 | G2 G3 J | co-op weapon desync diagnostics (notes: G2 / G3 / J need it) |
+
+## On hold (Shagg)
+
+Reviewed and deliberately not done for now (Shagg's call); they count as reviewed, not as open gaps.
+
+| Name | Has it | Missing | Note |
+|---|---|---|---|
+| `option first_person` | G2 G3 J | G1 | first-person mode and its 8 sub-options. On hold (Shagg 23 Nov). Groundwork found: G1's WarfareGame script has the same members the other ports drive (WarCameraMode.ViewOffset / ViewOffset_ViewportAdjustments / FOVAngle / strafe and run adjustments / bDoPredictiveAvoidance; WarPlayerCamera.CurrentCamMode; Camera.HiddenActors; PrimitiveComponent.bIgnoreHiddenActorsMembership); modes WarCameraMode_Default, WarCam_Crouch / _Targeting / _TargetingGrenade plus split-screen *SSHoriz / *SSVert classes; no HeadScaler / bIsHiddenByCamera / MyWarPawn (head hiding needs another way); G1's ue3::obj has no range lookups |
+| `option first_person_body` | G2 G3 J | G1 | |
+| `option first_person_diag` | G2 G3 J | G1 | |
+| `option first_person_fov` | G2 G3 J | G1 | |
+| `option first_person_head` | G2 G3 J | G1 | |
+| `option first_person_offset` | G2 G3 J | G1 | |
+| `option first_person_third_person_moves` | G2 G3 J | G1 | |
+| `option first_person_weapon` | G2 G3 J | G1 | |
+| `option first_person_head_control` | G2 | G1 G3 J | |
 
 ## Only where it applies
 
@@ -171,4 +172,10 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `option tick_floor_fps` | G2 G3 J | G1: no engine tick-rate read to floor (no GetMaxTickRate, see above); its limiter is the render thread's present interval |
 | `option trilinear` | G1 G3 J | G2 does it as a launcher ini edit (`~=MipFilter=point>MipFilter=linear`, gears_settings.cpp) |
 | `option skip_logos` | G1 J | G2 / G3 skip the logo films through the launcher's ini edit (`-StartupMovies=EpicLogo` / `MGSLogo`, `Open_Logos`; gears_settings.cpp) [V] |
+| `option loading_fps` | J | Shagg 23 Nov: only Judgment has the endless-load reports (#38/#318/#405) |
+| `option loading_max_s` | J | (with loading_fps) |
+| `option loading_stream_s` | J | (with loading_fps) |
+| `option loading_tail_s` | J | (with loading_fps) |
+| `option checkpoint_stream_wait` | G3 | Shagg 23 Nov: one G3 DLC scene (RAAM's Shadow ch.4) |
+| `option checkpoint_stream_wait_ms` | G3 | (with checkpoint_stream_wait) |
 | `hook ShaderCreatedVertex` | - | (all four since 23 Nov: patch 0066) |
