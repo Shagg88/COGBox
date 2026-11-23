@@ -13,6 +13,7 @@
 #include <rex/ppc/func.h>
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
+#include <ue3/audio_menu.h>
 #include <ue3/profile_tools.h>
 
 #include <algorithm>
@@ -37,6 +38,8 @@ REXCVAR_DEFINE_BOOL(gow2_profile_100, false, "Gears2",
                     "the game saves them (100% campaign test profile). Changes the profile when it saves");
 REXCVAR_DEFINE_STRING(gow2_profile_100_file, "", "Gears2", "g2-100: text file of id=value lines for gow2_profile_100");
 // 23 Nov parity pass (Shagg 10:42: the profile debugging tools in all four games): Gears 1 / 3 / Judgment's
+UE3_AUDIO_MENU_CVARS(gow2, "Gears2");
+
 // --*_profile_log - each int setting read (id, value, object, caller) once per change. Read-only.
 REXCVAR_DEFINE_BOOL(gow2_profile_log, false, "Gears2",
                     "Developers: log each profile setting the game reads (id, value, object, caller) once per change. "
@@ -66,6 +69,12 @@ PPCFunc* g_orig = nullptr;
 bool g_insane = false, g_log = false;
 ue3::Profile100 g_p100;        // --gow2_profile_100 (layer 2 ue3/profile_tools.h)
 ue3::ProfileLogSeen g_seen;    // --gow2_profile_log
+// The audio menu's sliders (ue3/audio_menu.h). Ids: not known yet for this build - the test job reads them from the
+// game's ProfileMappings (as GearsJ-Native/tools/gj100_profile_ids.ps1 does) or --gow2_profile_log while each slider is
+// moved; until then --gow2_audio_menu_ids=<music>,<effects>,<dialogue> sets them and the launcher's values are skipped.
+// G2: ProfileMappings in GearGame.xxx (23 Nov): Id=41 "Music Volume", 42 "FX Volume", 43 "Dialogue Volume".
+constexpr ue3::AudioMenuSlider kAudioSliders[ue3::kAudioMenuSliders] = {{"music", 41}, {"effects", 42}, {"dialogue", 43}};
+ue3::AudioMenu g_audio;   // --gow2_audio_music / _effects / _dialogue
 
 void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   const int32_t id = ctx.r4.s32;
@@ -73,6 +82,7 @@ void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   const uint32_t lr = uint32_t(ctx.lr);
   g_orig(ctx, base);
   g_p100.OnRead(base, self, id, value_addr, ctx.r3.u32, false);   // g2-100 never overrode the read itself
+  g_audio.OnRead(base, self, id, value_addr, ctx.r3.u32);
   if (g_log && value_addr) {
     const uint32_t value = Load32(base, value_addr);
     if (g_seen.First(lr, id, value))
@@ -94,7 +104,8 @@ void Gow2InstallUnlocks() {
   g_insane = REXCVAR_GET(gow2_unlock_insane);
   g_log = REXCVAR_GET(gow2_profile_log);
   if (REXCVAR_GET(gow2_profile_100)) g_p100.Load("gow2_profile_100", REXCVAR_GET(gow2_profile_100_file));
-  if (!g_insane && !g_p100.On() && !g_log) return;
+  UE3_AUDIO_MENU_SETUP(g_audio, gow2, kAudioSliders);
+  if (!g_insane && !g_p100.On() && !g_log && !g_audio.On()) return;
   rex::Runtime* rt = rex::Runtime::instance();
   auto* d = rt ? rt->function_dispatcher() : nullptr;
   if (!d) return;

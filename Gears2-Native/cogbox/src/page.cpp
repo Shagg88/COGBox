@@ -1841,7 +1841,7 @@ static void about_tab(App &a, int g)
 }
 
 // ---- the settings tabs' groups (presentation only: which heading an option shows under) -------------------------------
-struct TabGroups { const char *heading[4]; const char *const *ids[4]; int column[4]; };   // column: 0.6.5, two-column page
+struct TabGroups { const char *heading[5]; const char *const *ids[5]; int column[5]; };   // 5: AUDIO (23 Nov)   // column: 0.6.5, two-column page
 static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", "AspectRatio", "HideNotes", nullptr };
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
 static const char *const k_dispPicture[] = { "HDR", "PaperWhite", "Peak", nullptr };
@@ -1850,7 +1850,9 @@ static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Poo
 static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
 static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "AdaptiveTriggers", "TriggerRumble", "PadPrompts", "PromptStyle", "DeadZoneL", "DeadZoneR", "LowLag", nullptr };
 static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
-static const char *const k_playGame[] = { "Lang", "VoiceLang", "SkipLogos", "Mute", nullptr };
+static const char *const k_playGame[] = { "Lang", "VoiceLang", "SkipLogos", nullptr };
+// Shagg 23 Nov: sound is a section of the Gameplay tab (no Audio tab) - the output layout, the game's own menu sliders
+static const char *const k_playAudio[] = { "AudioChannels", "AudioMusic", "AudioEffects", "AudioDialogue", "Mute", nullptr };
 static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", "PeerIps", nullptr };
 static const char *const k_playExtras[] = { "OriginalUnlocks", "Mutators", nullptr };
 static const char *const k_playCheats[] = { "CheatGod", "CheatWeapons", "CheatSpeed", "CheatHud", "Cheats", nullptr };   // GitHub #342
@@ -1861,12 +1863,13 @@ static const TabGroups k_groups[5] = {   // one per gs::Tab, in its order
     { { "SCREEN", "FRAME RATE", "PICTURE", nullptr }, { k_dispScreen, k_dispFrames, k_dispPicture, k_none }, { 0, 1, 1, 0 } },
     { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none }, { 0, 1, 0, 0 } },
     { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none }, { 0, 0, 0, 0 } },
-    { { "GAME", "PLAYERS", "EXTRAS", "CHEATS" }, { k_playGame, k_playPlayers, k_playExtras, k_playCheats }, { 0, 0, 1, 1 } },
+    { { "GAME", "PLAYERS", "AUDIO", "EXTRAS", "CHEATS" }, { k_playGame, k_playPlayers, k_playAudio, k_playExtras, k_playCheats },
+      { 0, 0, 0, 1, 1 } },
     { { "ACHIEVEMENT POPUPS", nullptr, nullptr, nullptr }, { k_achPopups, k_none, k_none, k_none }, { 0, 0, 0, 0 } },
 };
 
 // ---- the page --------------------------------------------------------------------------------------------------------
-static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ACHIEVEMENTS", "SOCIAL", "MODS", "ABOUT" };   // the one sound option is in Gameplay
+static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ACHIEVEMENTS", "SOCIAL", "MODS", "ABOUT" };   // sound: the AUDIO section of Gameplay
 static const int k_tabCount = 8;
 static const int k_tabSocial = 5;   // social step 3; the tabs before it are gs::Tab's (ACHIEVEMENTS = gs::Tab::Achievements)
 static const int k_tabMods = 6;     // ABOUT is the last
@@ -1997,12 +2000,12 @@ void page_draw(App &a, ImVec2 size)
         }
         const TabGroups &tg = k_groups[(int)want];
         auto group_of = [&](const std::string &id) {
-            for (int k = 0; k < 4 && tg.heading[k]; k++)
+            for (int k = 0; k < 5 && tg.heading[k]; k++)
                 for (const char *const *x = tg.ids[k]; *x; x++) if (id == *x) return k;
             return 0;
         };
         auto groups = [&](int side) {   // 0.6.5: k_groups' column for each heading (0 left, 1 right)
-            for (int k = 0; k < 4 && tg.heading[k]; k++) {
+            for (int k = 0; k < 5 && tg.heading[k]; k++) {
                 if (side >= 0 && tg.column[k] != side) continue;
                 bool any = false;
                 for (const gs::Option *o : mine) any |= group_of(o->id) == k;

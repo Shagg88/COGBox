@@ -27,6 +27,7 @@
 #include <rex/ppc/func.h>
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
+#include <ue3/audio_menu.h>
 #include <ue3/profile_tools.h>
 
 #include <atomic>
@@ -48,6 +49,7 @@ REXCVAR_DEFINE_BOOL(gow3_unlock_all_chapters, false, "Gears3",
 REXCVAR_DEFINE_STRING(gow3_unlock_chapter_settings, "", "Gears3",
                       "Test: GearProfileSettings ids holding chapter progress, as id:mask,... (found with "
                       "gow3_profile_log); mask is OR-ed into what the game reads when gow3_unlock_all_chapters is on");
+UE3_AUDIO_MENU_CVARS(gow3, "Gears3");
 REXCVAR_DEFINE_BOOL(gow3_profile_log, false, "Gears3",
                     "Developers: log each profile setting the game reads (id, value, class, caller) once per change - "
                     "open Select Chapter to see the chapter progress ids. Read-only");
@@ -96,6 +98,12 @@ bool IsGearProfileSettings(const uint8_t* base, uint32_t self) {
 
 bool g_insane = false, g_log = false;
 ue3::Profile100 g_p100;   // --gow3_profile_100
+// The audio menu's sliders (ue3/audio_menu.h). Ids: not known yet for this build - the test job reads them from the
+// game's ProfileMappings (as GearsJ-Native/tools/gj100_profile_ids.ps1 does) or --gow3_profile_log while each slider is
+// moved; until then --gow3_audio_menu_ids=<music>,<effects>,<dialogue> sets them and the launcher's values are skipped.
+// G3: ProfileMappings in GearGame.xxx (23 Nov): Id=41 "Music Volume", 42 "FX Volume", 43 "Dialogue Volume".
+constexpr ue3::AudioMenuSlider kAudioSliders[ue3::kAudioMenuSliders] = {{"music", 41}, {"effects", 42}, {"dialogue", 43}};
+ue3::AudioMenu g_audio;   // --gow3_audio_music / _effects / _dialogue
 std::vector<std::pair<int32_t, uint32_t>> g_chapter_masks;  // id -> mask (gow3_unlock_chapter_settings)
 
 void ParseChapterSettings(const std::string& text) {
@@ -148,6 +156,7 @@ void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   g_get_int_orig(ctx, base);
   if (!value_addr) return;
   g_p100.OnRead(base, self, id, value_addr, ctx.r3.u32, false);
+  g_audio.OnRead(base, self, id, value_addr, ctx.r3.u32);
   if (g_log) LogRead(base, self, id, Load32(base, value_addr), ctx.r3.u32, lr);
   for (const auto& [cid, mask] : g_chapter_masks) {
     if (cid != id || !IsGearProfileSettings(base, self)) continue;
@@ -202,7 +211,8 @@ void Gow3InstallUnlocks() {
                   "with --gow3_profile_log=true and open Select Chapter to find them");
   }
   if (REXCVAR_GET(gow3_profile_100)) g_p100.Load("gow3_profile_100", REXCVAR_GET(gow3_profile_100_file));
-  if (!g_insane && !g_log && g_chapter_masks.empty() && !g_p100.On()) return;
+  UE3_AUDIO_MENU_SETUP(g_audio, gow3, kAudioSliders);
+  if (!g_insane && !g_log && g_chapter_masks.empty() && !g_p100.On() && !g_audio.On()) return;
   rex::Runtime* rt = rex::Runtime::instance();
   auto* d = rt ? rt->function_dispatcher() : nullptr;
   const uint8_t* base = rt ? rt->virtual_membase() : nullptr;

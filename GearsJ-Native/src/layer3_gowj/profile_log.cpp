@@ -30,6 +30,7 @@
 #include <rex/ppc/func.h>
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
+#include <ue3/audio_menu.h>
 #include <ue3/profile_tools.h>
 
 #include <atomic>
@@ -40,6 +41,7 @@
 #include <mutex>
 #include <unordered_map>
 
+UE3_AUDIO_MENU_CVARS(gowj, "Judgment");
 REXCVAR_DEFINE_BOOL(gowj_profile_log, false, "Judgment",
                     "GitHub #174: log each profile setting the game's script reads (id, value, object vtable), once per "
                     "change - to find the setting that unlocks Insane. Read-only");
@@ -86,6 +88,12 @@ uint32_t Load32(const uint8_t* base, uint32_t a) {
 }
 
 ue3::Profile100 g_p100;   // --gowj_profile_100 (layer 2 ue3/profile_tools.h, shared with the other games)
+// The audio menu's sliders (ue3/audio_menu.h). Ids: not known yet for this build - the test job reads them from the
+// game's ProfileMappings (as GearsJ-Native/tools/gj100_profile_ids.ps1 does) or --gowj_profile_log while each slider is
+// moved; until then --gowj_audio_menu_ids=<music>,<effects>,<dialogue> sets them and the launcher's values are skipped.
+// J: ProfileMappings in GearGame.xxx (23 Nov): Id=41 "Music Volume", 42 "FX Volume", 43 "Dialogue Volume".
+constexpr ue3::AudioMenuSlider kAudioSliders[ue3::kAudioMenuSliders] = {{"music", 41}, {"effects", 42}, {"dialogue", 43}};
+ue3::AudioMenu g_audio;   // --gowj_audio_music / _effects / _dialogue
 
 PPCFunc* g_exec_orig = nullptr;
 PPCFunc* g_get_int_orig = nullptr;
@@ -98,6 +106,7 @@ void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   const uint32_t found = ctx.r3.u32;
   if (!value_addr) return;
   g_p100.OnRead(base, self, id, value_addr, found, true);   // gj100 also gives this read the listed value
+  g_audio.OnRead(base, self, id, value_addr, found);
   if (g_insane && id == kUnlockablesSetting) {
     const uint32_t v = Load32(base, value_addr);
     if (!(v & kInsaneUnlockBit)) {
@@ -163,7 +172,8 @@ void GowjInstallProfileLog() {
     g_unlock = false;
   }
   if (REXCVAR_GET(gowj_profile_100)) g_p100.Load("gowj_profile_100", REXCVAR_GET(gowj_profile_100_file));
-  if (!g_log && !g_unlock && !g_p100.On() && !g_insane) return;
+  UE3_AUDIO_MENU_SETUP(g_audio, gowj, kAudioSliders);
+  if (!g_log && !g_unlock && !g_p100.On() && !g_insane && !g_audio.On()) return;
   rex::Runtime* rt = rex::Runtime::instance();
   auto* d = rt ? rt->function_dispatcher() : nullptr;
   if (!d) return;

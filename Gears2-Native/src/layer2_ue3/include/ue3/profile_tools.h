@@ -73,6 +73,21 @@ class Profile100 {
     on_ = !values_.empty();
     return on_;
   }
+  // The audio menu (ue3/audio_menu.h): the values come from cvars instead of a file. Empty = off.
+  bool Set(const char* option, std::vector<std::pair<int32_t, uint32_t>> values) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    option_ = option;
+    values_ = std::move(values);
+    on_ = !values_.empty();
+    return on_;
+  }
+  // The player changed a listed value in the game's own menu: keep it, so a later re-apply (the array moved) writes the
+  // player's value, not the start-up one.
+  void Update(int32_t id, uint32_t value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [want_id, want] : values_)
+      if (want_id == id) want = value;
+  }
   bool On() const { return on_; }
   size_t Count() const { return values_.size(); }
 
