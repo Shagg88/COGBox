@@ -106,11 +106,27 @@ struct Operand {
   uint32_t imm[4] = {};
   bool neg = false, abs = false;
 };
+// perf 23 Nov (2): an instruction's operands held inline - no heap allocation per instruction (the parse made two
+// vectors for every instruction of every shader). More than fit: the shader fails to convert (none in the four games'
+// 303,537 shaders: DXBC has at most 6 operands, and our generator writes at most a few relative indices).
+template <class T, size_t N>
+struct InlineList {
+  T a[N];
+  uint32_t n = 0;
+  bool overflow = false;
+  void push_back(const T& x) { if (n < N) a[n++] = x; else overflow = true; }
+  size_t size() const { return n; }
+  bool empty() const { return n == 0; }
+  T& operator[](size_t i) { return a[i]; }
+  const T& operator[](size_t i) const { return a[i]; }
+  const T* begin() const { return a; }
+  const T* end() const { return a + n; }
+};
 struct Instr {
   uint32_t op = 0, token = 0;
   int32_t off[3] = {};  // sample offsets (u, v, w)
-  std::vector<Operand> ops;
-  std::vector<Operand> rels;  // registers used as relative indices
+  InlineList<Operand, 8> ops;
+  InlineList<Operand, 8> rels;  // registers used as relative indices
   std::vector<uint32_t> extra;  // dwords after the operands (decl counts, names, spaces)
 };
 
@@ -322,7 +338,29 @@ class Converter {
   uint32_t TB4() { if (!t_b4_) { const uint32_t b = TBool(); t_b4_ = TVec(b, 4); } return t_b4_; }
   uint32_t t_void_ = 0, t_bool_ = 0, t_u_ = 0, t_i_ = 0, t_f_ = 0, t_u4_ = 0, t_f4_ = 0, t_b4_ = 0;
   uint32_t TPtr(uint32_t sc, uint32_t t) { return m_.Cached(kOpTypePointer, {sc, t}); }
-  uint32_t CU(uint32_t v) { return m_.Cached(kOpConstant, {TU(), v}, true); }
+  // perf 23 Nov (2): the uint constants have a memo in front of the module's cache (they were ~40 % of the conversion:
+  // a vec4 constant is five cache lookups). A miss goes the same way as before, so ids and output are unchanged.
+  uint32_t CU(uint32_t v) {
+    if (v < kSmallU) {
+      if (!cu_small_[v]) cu_small_[v] = m_.Cached(kOpConstant, {TU(), v}, true);
+      return cu_small_[v];
+    }
+    const auto it = cu_memo_.find(v);
+    if (it != cu_memo_.end()) return it->second;
+    const uint32_t id = m_.Cached(kOpConstant, {TU(), v}, true);
+    cu_memo_.emplace(v, id);
+    return id;
+  }
+  static constexpr uint32_t kSmallU = 64;
+  uint32_t cu_small_[kSmallU] = {};
+  std::unordered_map<uint32_t, uint32_t> cu_memo_;
+  struct U4Hash {
+    size_t operator()(const std::array<uint32_t, 4>& k) const {
+      uint64_t h = (uint64_t(k[0]) << 32 | k[1]) * 0x9E3779B97F4A7C15ull ^ (uint64_t(k[2]) << 32 | k[3]) * 0xC2B2AE3D27D4EB4Full;
+      return size_t(h ^ (h >> 31));
+    }
+  };
+  std::unordered_map<std::array<uint32_t, 4>, uint32_t, U4Hash> cu4_memo_;
   uint32_t CI(int32_t v) { return m_.Cached(kOpConstant, {TI(), uint32_t(v)}, true); }
   uint32_t CF(float f) {
     uint32_t b;
@@ -330,7 +368,12 @@ class Converter {
     return m_.Cached(kOpConstant, {TF(), b}, true);
   }
   uint32_t CU4(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
-    return m_.Cached(kOpConstantComposite, {TU4(), CU(a), CU(b), CU(c), CU(d)}, true);
+    const std::array<uint32_t, 4> k{a, b, c, d};
+    const auto it = cu4_memo_.find(k);
+    if (it != cu4_memo_.end()) return it->second;
+    const uint32_t id = m_.Cached(kOpConstantComposite, {TU4(), CU(a), CU(b), CU(c), CU(d)}, true);
+    cu4_memo_.emplace(k, id);
+    return id;
   }
   uint32_t CF4(float a, float b, float c, float d) {
     return m_.Cached(kOpConstantComposite, {TF4(), CF(a), CF(b), CF(c), CF(d)}, true);
@@ -386,9 +429,12 @@ class Converter {
   uint32_t ToF(uint32_t u4) { return Op(kOpBitcast, TF4(), {u4}); }
   uint32_t ToU(uint32_t f4) { return Op(kOpBitcast, TU4(), {f4}); }
   uint32_t Shuffle(uint32_t type, uint32_t a, uint32_t b, std::initializer_list<uint32_t> lanes) {
-    std::vector<uint32_t> w{a, b};
-    w.insert(w.end(), lanes.begin(), lanes.end());
-    return OpV(kOpVectorShuffle, type, w);
+    uint32_t w[6];  // perf 23 Nov (2): no vector (a shuffle has at most 4 lanes)
+    if (lanes.size() > 4) return Fail("shuffle of more than 4 lanes"), 0;
+    w[0] = a;
+    w[1] = b;
+    std::copy(lanes.begin(), lanes.end(), w + 2);
+    return OpN(kOpVectorShuffle, type, w, lanes.size() + 2);
   }
   uint32_t X(uint32_t u4) { return Op(kOpCompositeExtract, TU(), {u4, 0}); }
   uint32_t BoolToMask(uint32_t b4) { return Op(kOpSelect, TU4(), {b4, SplatU(~0u), SplatU(0)}); }
@@ -1280,6 +1326,7 @@ SpirvResult Converter::Run(const uint32_t* shex, size_t n) {
   const size_t len = std::min<size_t>(shex[1], n);
   // ---- parse ----
   std::vector<Instr> code;
+  code.reserve(len / 4);  // perf 23 Nov (2): an instruction is at least ~4 dwords on average (no regrowth copies)
   Parser ps(shex, len);
   for (size_t i = 2; i < len;) {
     Instr in;
@@ -1314,6 +1361,7 @@ SpirvResult Converter::Run(const uint32_t* shex, size_t n) {
       if (!ps.ReadOperand(j, in, o, err)) { out.error = err; return out; }
       in.ops.push_back(o);
     }
+    if (in.ops.overflow || in.rels.overflow) { out.error = std::format("instruction {}: too many operands", in.op); return out; }
     while (j < end) in.extra.push_back(shex[j++]);
     code.push_back(std::move(in));
     i = end;

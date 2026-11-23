@@ -3365,13 +3365,19 @@ inline bool LiveAfterScan(const InsList& v, const std::vector<uint32_t>& c, size
 // as one masked mov with a swizzle, so the coalescing above can then fold it into the instruction that made r32. Only
 // plain temps / outputs with immediate indices and no modifiers; when source and destination are the same register,
 // only if each component reads itself (otherwise a later mov would read an updated component).
-inline uint32_t MergeComponentMovs(std::vector<uint32_t>& c) {
+// perf 23 Nov (2): `carry` - the parse of `c` when the caller has it (Run's last pass), else empty; on return, the parse
+// of the result when nothing was merged (the code is unchanged), else empty.
+inline uint32_t MergeComponentMovs(std::vector<uint32_t>& c, InsList& carry) {
   InsList v;
-  v.reserve(c.size() / 6);
-  for (size_t p = 0; p < c.size();) {
-    v.emplace_back();
-    if (!ParseIns(c, p, v.back())) return 0;
-    p += v.back().len;
+  if (!carry.empty()) {
+    v.swap(carry);
+  } else {
+    v.reserve(c.size() / 6);
+    for (size_t p = 0; p < c.size();) {
+      v.emplace_back();
+      if (!ParseIns(c, p, v.back())) return 0;
+      p += v.back().len;
+    }
   }
   auto simple = [&](const Ins& in, uint32_t& dmask, uint32_t& dtype, uint32_t& dreg, uint32_t& sreg, uint32_t& scomp) {
     if (in.op != 54 || in.sat || in.ext || in.ops.size() != 2) return false;
@@ -3430,10 +3436,14 @@ inline uint32_t MergeComponentMovs(std::vector<uint32_t>& c) {
     i = j;
   }
   c.swap(out);
+  if (!merged) carry.swap(v);  // (out is c word for word: the parse still holds)
   return merged;
 }
-inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
+// perf 23 Nov (2): `carry` as above (in: the parse of `c`, or empty; out: the parse of the result when the run ended
+// because a pass changed nothing, else empty); `converged`: it ended that way - the same code again would change nothing.
+inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores, InsList& carry, bool& converged) {
   uint32_t removed = 0;
+  converged = false;
   // Shader warm-up speed (17 Nov): the lists are made once and reused by every pass (cleared, capacity kept) - fewer
   // heap calls from the warm-up's many threads at once. The same code comes out.
   InsList v, v_next;
@@ -3445,6 +3455,11 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
   // pass parses the whole shader. ParseIns depends only on the instruction's own words, so this is the parse the next
   // pass would make; one it can't parse (next_bad) ends the run where the full parse would have.
   bool have_next = false, next_bad = false;
+  if (!carry.empty()) {
+    v_next.swap(carry);
+    have_next = true;
+  }
+  carry.clear();
   for (int pass = 0; pass < 8; ++pass) {
     if (have_next) {
       v.swap(v_next);
@@ -3514,8 +3529,10 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
       v_next.emplace_back();
       if (!ParseIns(out, na, v_next.back()) || v_next.back().len != ni.size()) next_bad = true;
     };
-    touch.Build(v);  // job 637
+    // perf 23 Nov (2): the touch index only serves the forward scan, which runs only where the backward liveness
+    // could not be built (loops, switches) - most shaders never need it.
     liveness.Build(v, c);
+    if (!liveness.ok) touch.Build(v);  // job 637
     struct LiveScope {
       LiveScope(const Liveness* l) { g_live = l; }
       ~LiveScope() { g_live = nullptr; }
@@ -3523,7 +3540,7 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
     struct TouchScope {
       TouchScope(const TouchIndex* t) { g_touch = t; }
       ~TouchScope() { g_touch = nullptr; }
-    } touch_scope(&touch);
+    } touch_scope(liveness.ok ? nullptr : &touch);
     out.clear();
     out.reserve(c.size());
     uint32_t here = 0;
@@ -3651,7 +3668,11 @@ inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
     }
     c.swap(out);
     removed += here;
-    if (!here) break;
+    if (!here) {  // every instruction kept: c is unchanged and v is still its parse
+      converged = true;
+      carry.swap(v);
+      break;
+    }
     if (next_bad) return removed;  // the full parse of `c` would stop here too
     have_next = true;
   }
@@ -3900,9 +3921,13 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
   }
   if (options.dxbc_coalesce_moves) {  // job 634
     uint32_t removed = 0;
+    coalesce::InsList carry;  // perf 23 Nov (2): one step's parse handed to the next (no re-parse of unchanged code)
+    bool converged = false;
     for (int round = 0; round < (options.dxbc_merge_movs ? 2 : 1); ++round) {  // job 637: merging opens new folds
-      const uint32_t merged = options.dxbc_merge_movs ? coalesce::MergeComponentMovs(g.code) : 0;
-      const uint32_t r = coalesce::Run(g.code, options.dxbc_dead_stores);
+      const uint32_t merged = options.dxbc_merge_movs ? coalesce::MergeComponentMovs(g.code, carry) : 0;
+      // perf 23 Nov (2): nothing merged into code the last run left unchanged - running it again changes nothing
+      if (round && !merged && converged) break;
+      const uint32_t r = coalesce::Run(g.code, options.dxbc_dead_stores, carry, converged);
       removed += merged + r;
       if (!merged && round) break;
     }
@@ -4042,7 +4067,7 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
     h.InitializeIdentification();
     h.size_bytes = size_bytes;
     h.blob_count = kBlobCount;
-    DxbcChecksum(reinterpret_cast<const uint8_t*>(b.obj.data()), size_bytes, h.hash);
+    if (!options.dxbc_no_checksum) DxbcChecksum(reinterpret_cast<const uint8_t*>(b.obj.data()), size_bytes, h.hash);
   }
   out.bytecode.resize(size_bytes);
   std::memcpy(out.bytecode.data(), b.obj.data(), size_bytes);

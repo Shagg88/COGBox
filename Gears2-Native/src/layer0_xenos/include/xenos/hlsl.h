@@ -33,6 +33,9 @@ struct HlslOptions {
   // dxbc_salt != 0: one dead instruction carrying this value, so the bytecode (and the driver's cache key) is unique -
   // for the pipeline benchmark, which must time the driver's real compile.
   uint32_t dxbc_salt = 0;
+  // perf 23 Nov (2): dxbc_no_checksum - the container's MD5 left zero. Only where nothing checks it: the Vulkan path
+  // converts the DXBC to SPIR-V and never gives it to D3D12 (the MD5 was ~5 % of a translation).
+  bool dxbc_no_checksum = false;
   // Patch 0060: dxbc_direct_operands - ALU sources without abs / negate and with absolute addressing are used in
   // place (register or constant buffer, swizzled) instead of being copied to a temp first. Same values.
   bool dxbc_direct_operands = false;

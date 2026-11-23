@@ -1338,7 +1338,7 @@ uint64_t ShaderCache::DxbcStoreKey(const uint32_t* dwords, size_t dword_count, b
   k.b(d.canary_scalar_operand_z);
   // every HlslOptions field (hlsl.h: a new field must be added here too)
   k.u32(uint32_t(sizeof(hlsl::HlslOptions)));
-  k.b(o.dxbc_loop_only_if_needed); k.b(o.dxbc_canary_minmax); k.u32(o.dxbc_salt); k.b(o.dxbc_direct_operands);
+  k.b(o.dxbc_loop_only_if_needed); k.b(o.dxbc_canary_minmax); k.u32(o.dxbc_salt); k.b(o.dxbc_no_checksum); k.b(o.dxbc_direct_operands);
   k.b(o.dxbc_slim_prologue); k.b(o.kill_as_demote); k.str(o.entry); k.u32(o.tess_quad_segments); k.b(o.no_alpha_test); k.b(o.no_color_outputs);
   k.b(o.compact_float_constants); k.b(o.tex_sign_by_swizzle); k.b(o.canary_r21); k.b(o.tex_num_format);
   k.b(o.vertex_index_clamp); k.b(o.canary_tfetch1d_xy); k.b(o.mulsc_round_toward_zero); k.b(o.memexport_f16_nan_zero);
@@ -2030,6 +2030,8 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
   options.dxbc_direct_operands = options.dxbc_loop_only_if_needed = options.dxbc_slim_prologue = dxbc_slim_;  // 0060
   options.dxbc_canary_minmax = dxbc_canary_maths_;                                                           // 0060
   options.dxbc_salt = dxbc_salt_;  // patch 0063: test only, 0 = unchanged
+  // perf 23 Nov (2): Vulkan never gives the DXBC to D3D12 - its MD5 is not needed (part of the store key above)
+  options.dxbc_no_checksum = backend_.GetShaderIL() == gpu::ShaderIL::kSpirv;
   return options;
 }
 bool ShaderCache::TranslateDxbcOnly(const uint32_t* dwords, size_t dword_count, bool is_vertex,
