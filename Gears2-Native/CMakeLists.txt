@@ -151,6 +151,7 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/objects.cpp  # GitHub #245: the engine's objects by name (ue3/objects.h; Gears 1 and Judgment build it too - Gears 3 has its own)
     src/layer2_ue3/name_tags.cpp  # GitHub #353: COGBox tags after the players' names (Gears 1 / 3 / J build it too)
     src/layer2_ue3/chat.cpp  # in-match chat: Say / TeamSay and the HUD's received lines (Gears 1 / 3 / J build it too)
+    src/layer2_ue3/freeze_watchdog.cpp  # ONE copy for all four games (layer 3 keeps each game's option)
     src/layer2_ue3/mod_extras.cpp  # --ue3_mods extras on modcore (KiltedKernel's, shared with Gears 3): mod.ini rules, bare files, config fragments
     ${CMAKE_CURRENT_SOURCE_DIR}/../Gears3-Native/src/layer2_ue3/modcore/modcore.cpp  # one level up: Gears2-Native and Gears3-Native are siblings (ia10a)
 )
