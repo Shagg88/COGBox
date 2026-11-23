@@ -333,6 +333,14 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
 // play's in the option's live cvars alone; those cvars (or their defaults when build_args leaves one out) are what the
 // menu sets. So a live change and the next start always give the cvars the same values.
 std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, const Settings& s, const Environment& env);
+// Shagg 23 Nov: the game's own audio menu sliders (AudioMusic / AudioEffects / AudioDialogue: 0 = the game's own,
+// 1 + n = n). The game's sliders run 0..kAudioMenuMax.
+constexpr int kAudioMenuMax = 10;
+// Which value wins (docs/audio.md): the last change, wherever it was made. When the game closes, the launcher reads the
+// game's log (`log`: its text) for the last "<game>_audio_menu: now <key>=<v>" line per slider; a slider the player set
+// here (not "Game's own") whose game value differs takes the game's value - the player changed it in the game's menu -
+// so the next start sends what the game already has. True = `s` changed (save it).
+bool audio_menu_readback(Game g, const std::string& log, Settings& s);
 // PS1 966-972: true = do not start (the exe is an AVX2 build and this CPU has no AVX2); `message` = what to say.
 bool blocked_by_cpu(Game g, const Environment& env, std::string* message = nullptr);
 

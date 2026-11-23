@@ -642,6 +642,15 @@ void play_poll(App &a)
     int g = a.run.game;
     const GameDef &d = game_def(g);
     int64_t secs = std::max<int64_t>(0, unix_now() - a.run.started);
+    {   // Shagg 23 Nov (docs/audio.md): a slider changed in the game's own audio menu is kept - the launcher takes it back
+        std::string glog;
+        if (!a.run.prepare && read_file(join(a.run.logDir, d.logName), glog, 64u << 20) &&
+            gs::audio_menu_readback((gs::Game)g, glog, a.cur[g])) {
+            a.dirty[g] = true;
+            settings_save(a, g);
+            append_line(join(a.run.logDir, "args.txt"), "launcher: audio menu values taken back from the game's log");
+        }
+    }
     if (a.run.prepare) {   // job 641: no play time, no window juggling - say how it went
         a.run.prepare = false;
         std::string prog;

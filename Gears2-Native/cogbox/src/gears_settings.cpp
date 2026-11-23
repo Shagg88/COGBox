@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <locale>
 #include <regex>
 #include <sstream>
@@ -25,6 +26,12 @@ namespace {
 const char* const k_gameNames[kGameCount] = { "Gears of War 2", "Gears of War 3", "Gears of War: Judgment", "Gears of War" };   // PS1 95
 const char* const k_gameShort[kGameCount] = { "Gears 2", "Gears 3", "Judgment", "Gears 1" };                               // PS1 96
 const char* const k_procNames[kGameCount] = { "gow2", "gow3", "gowj", "gow1" };                                           // PS1 98
+// Shagg 23 Nov: the game's own audio menu sliders - launcher option, the game's key in --<game>_audio_<key> and in its
+// "<game>_audio_menu: now <key>=<v>" log line. kAudioMenuIdsKnown: the game's ids are in its build (ue3/audio_menu.h's
+// table) - false greys the sliders ("not found yet") so they never promise what the game would skip.
+const char* const k_audioMenuIds[3] = { "AudioMusic", "AudioEffects", "AudioDialogue" };
+const char* const k_audioMenuKeys[3] = { "music", "effects", "dialogue" };
+constexpr bool kAudioMenuIdsKnown[kGameCount] = { false, false, false, false };   // Gears2, Gears3, Judgment, Gears1
 // Gears 1 (UE3 2006) has one flat Coalesced.ini; --ue3_ini_edits goes to it when gow1.exe has gow1_ini_edits (can() "iniedit").
 const char* const k_engineIni[kGameCount] = { "Xe-GearEngine.ini", "Xbox360-GearEngine.ini", "Xbox360-GearEngine.ini", "Xe-WarEngine.ini" };   // PS1 101
 
@@ -636,7 +643,31 @@ std::vector<Option> make_options(Game g) {
                "Subtitles stored with the voices may follow them.", 0), "voicelang");
     add(make("Mute", "Mute when the game is not the active window", Tab::Gameplay, Kind::Bool, SH, 0,
              "Silences the game while another window is in front; the sound comes back when you click back into the game.", 386),
-        "mute");   // the only sound option, so it lives here (no Audio tab)
+        "mute");   // Shagg 23 Nov: in the AUDIO section of this tab (page.cpp k_playAudio; no Audio tab)
+    // Shagg 23 Nov: the sound output layout (SDK patch 125, --audio_channels; one value for all games) and each game's
+    // own audio menu sliders (ue3/audio_menu.h, --<game>_audio_music / _effects / _dialogue). The sliders' first choice
+    // sends nothing (the game keeps its own value); a value changed in the game's menu comes back here when the game
+    // closes (audio_menu_readback), so it isn't overwritten at the next start. docs/audio.md.
+    add(choice("AudioChannels", "Sound output", Tab::Gameplay, SH, { "Auto (by your speakers)", "Mono", "Stereo", "5.1 surround" }, 0,
+               "Auto: 5.1 on surround speakers, a stereo mix on headphones and stereo speakers (as before). Mono: one "
+               "channel on both speakers (one ear or one speaker). Stereo: always the stereo mix. 5.1: always 5.1 - "
+               "Windows mixes it down if your speakers have fewer.", 0), "audiochannels");
+    {
+        std::vector<std::string> steps = { "Game's own" };
+        for (int i = 0; i <= kAudioMenuMax; ++i) steps.push_back(std::to_string(i));
+        add(choice("AudioMusic", "Music volume", Tab::Gameplay, OWN, steps, 0,
+                   "The game's own Music volume slider (its Options > Audio), set when the game starts. Game's own: "
+                   "leave it as the game has it. A change you make in the game's menu shows here after the game closes.", 0),
+            "audiomenu");
+        add(choice("AudioEffects", "Effects volume", Tab::Gameplay, OWN, steps, 0,
+                   "The game's own Effects volume slider (its Options > Audio), set when the game starts. Game's own: "
+                   "leave it as the game has it. A change you make in the game's menu shows here after the game closes.", 0),
+            "audiomenu");
+        add(choice("AudioDialogue", "Dialogue volume", Tab::Gameplay, OWN, steps, 0,
+                   "The game's own Dialogue volume slider (its Options > Audio), set when the game starts. Game's own: "
+                   "leave it as the game has it. A change you make in the game's menu shows here after the game closes.", 0),
+            "audiomenu");
+    }
     (void)gi;
     return v;
 }
@@ -998,6 +1029,11 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_exe(env, "gow2_frame_generation")) return no(not_yet(gi, "needs its next build"));
         if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll") && !dlss_fg_present(env))
             return no(not_yet(gi, "this build has no AMD or NVIDIA frame generation files"));
+    } else if (f == "audiochannels") {   // SDK patch 125 (in the runtime DLL; its description, a long literal)
+        if (!cap_rt(env, "Sound output layout") && !cap_exe(env, "Sound output layout")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "audiomenu") {   // ue3/audio_menu.h (the ids cvar's description, the same literal in all four exes)
+        if (!cap_exe(env, "Profile setting ids of the audio menu's music,effects,dialogue sliders")) return no(not_yet(gi, "needs its next build"));
+        if (!kAudioMenuIdsKnown[gi]) return no(not_yet(gi, "the game's slider ids are not found yet"));
     } else if (f == "mute") {
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "ao") {   // notes/80: Gears 2 and Gears 3 (s.9); notes/81: Judgment, with the fog anchor its exe sets; Gears 1 (s.14)
@@ -2350,6 +2386,15 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 926-928: mute, monitor, players
     if (on("Mute")) a.push_back(std::string("--") + k_procNames[gi] + "_mute_unfocused=true");
+    // Shagg 23 Nov: AUDIO - the output layout (0 = auto: nothing sent) and the game's own sliders (0 = the game's own)
+    if (avail("AudioChannels") && s.i("AudioChannels") > 0) {
+        static const char* const k_ch[] = { "auto", "1", "2", "6" };
+        a.push_back(std::string("--audio_channels=") + k_ch[std::min(3, s.i("AudioChannels"))]);
+    }
+    for (int k = 0; k < 3; ++k)
+        if (avail(k_audioMenuIds[k]) && s.i(k_audioMenuIds[k]) > 0)
+            a.push_back(std::string("--") + k_procNames[gi] + "_audio_" + k_audioMenuKeys[k] + "=" +
+                        std::to_string(s.i(k_audioMenuIds[k]) - 1));
     {   // 0.2.0 (#4, Shagg 12:55: every language the US and European releases use): the console's language AND country.
         // UE3 picks the game's language files from both - Spain vs Latin American Spanish by country, and the languages
         // the Xbox had no system language for (Czech, Hungarian, Danish, Finnish) from English + that country.
@@ -2673,6 +2718,24 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (notesOut) notesOut->insert(notesOut->end(), notes.begin(), notes.end());
     return a;
+}
+
+bool audio_menu_readback(Game g, const std::string& log, Settings& s) {
+    const int gi = static_cast<int>(g);
+    bool changed = false;
+    for (int k = 0; k < 3; ++k) {
+        const int mine = s.i(k_audioMenuIds[k]);
+        if (mine <= 0) continue;   // "Game's own": nothing was sent, nothing to keep in step
+        const std::string tag = std::string(k_procNames[gi]) + "_audio_menu: now " + k_audioMenuKeys[k] + "=";
+        const size_t at = log.rfind(tag);
+        if (at == std::string::npos) continue;   // the slider was never read (the game closed early): keep ours
+        const char* p = log.c_str() + at + tag.size();
+        char* end = nullptr;
+        const long v = std::strtol(p, &end, 10);
+        if (end == p || v < 0 || v > kAudioMenuMax) continue;   // not a value the launcher can show: keep ours
+        if (v + 1 != mine) { s.set(k_audioMenuIds[k], double(v + 1)); changed = true; }
+    }
+    return changed;
 }
 
 bool blocked_by_cpu(Game g, const Environment& env, std::string* message) {   // PS1 966-972
