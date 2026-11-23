@@ -390,6 +390,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       options.vk_no_depth_bias_control = !REXCVAR_GET(gow2_renderer_vulkan_depth_bias_control);  // 22 Nov
       options.vk_barrier_src_stages = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "work";          // 0107
       options.vk_skip_memory_barriers = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "skip_memory";  // 0108
+      options.vk_record_thread = REXCVAR_GET(gow2_renderer_vulkan_record_thread);  // Vulkan recording thread
+      options.vk_record_thread_log = uint32_t(std::max(0, REXCVAR_GET(gow2_renderer_vulkan_record_thread_log)));
     }
     // Notes/68: on Vulkan, --gow2_present=ours runs our whole present (gamma, SMAA, HDR) into our own image without a
     // presenter yet (stage V3 connects the SDK's Vulkan presenter): the frame shots read that image, so a Vulkan run

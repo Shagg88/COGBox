@@ -411,6 +411,15 @@ REXCVAR_DEFINE_STRING(gow2_renderer_vulkan_attachment_layouts, "general", "Gears
                       "COLOR_ATTACHMENT_OPTIMAL / DEPTH_STENCIL_ATTACHMENT_OPTIMAL while drawn to (as Canary does), back "
                       "to GENERAL in the next full barrier outside a pass. Job 404: Vulkan's colour targets cost ~2.5x "
                       "D3D12's per pixel, not more pixels; job 406: spirv-opt shaders gave no gain");
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_record_thread, false, "Gears2",
+                    "Vulkan (default off): record the command buffers on a recording thread, as D3D12's "
+                    "threaded_recording does - our vkCmd* calls, vkBegin/EndCommandBuffer and vkQueueSubmit2 are "
+                    "encoded on the renderer thread and replayed in order on another core (job 2204: Vulkan record "
+                    "3.3 ms against D3D12's 0.8 ms). false = every call goes to the driver at once, as before");
+REXCVAR_DEFINE_INT32(gow2_renderer_vulkan_record_thread_log, 60, "Gears2",
+                     "With --gow2_renderer_vulkan_record_thread: one log line per this many frames with the per-frame "
+                     "averages and maxima (caller encode ms, recording thread ms, caller wait ms, queue depth, forced "
+                     "flushes by reason); 1 = every frame, 0 = none");
 REXCVAR_DEFINE_INT32(gow2_renderer_draw_report_frame, 0, "Gears2",
                      "Patch 0101 (a diagnostic, both APIs): non-zero = from this frame, for "
                      "--gow2_renderer_draw_report_frames frames, every draw and every change of GPU work kind gets its "

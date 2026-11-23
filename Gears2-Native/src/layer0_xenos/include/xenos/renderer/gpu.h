@@ -394,6 +394,12 @@ struct BackendOptions {
   // Patch 0108 (Vulkan, a MEASUREMENT mode - may give wrong pictures): memory-only barriers are not sent (image
   // layout transitions still are, with full stages): how much of Vulkan's GPU time the barriers cost.
   bool vk_skip_memory_barriers = false;
+  // Vulkan only, default off: the vkCmd* calls, vkBegin/EndCommandBuffer and vkQueueSubmit2 are encoded on the caller's
+  // thread and replayed in order by a recording thread (the D3D12 backend's threaded_recording, on Vulkan). Off = the
+  // calls go straight to the driver, exactly as before. vk_record_thread_log: one stats line per that many frames
+  // (0 = none).
+  bool vk_record_thread = false;
+  uint32_t vk_record_thread_log = 0;
   // Patch 0109 (both APIs, a measurement switch): false = GPU timestamps only at the start and end of each command
   // list (whole-frame GPU time, no split by category / target / draw), so the timestamps can't change the timing.
   bool gpu_timestamp_split = true;
