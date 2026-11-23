@@ -9,7 +9,8 @@
 // section count; per section: FString name, int32 key count; per key: FString key, FString value. FString = big-endian
 // int32 length then the characters: a negative length is UTF-16 (little-endian here) of -length chars, a positive
 // one 8-bit chars; both include the terminating zero. Keys repeat for UE3 array entries (+Key in the source ini).
-// Our code (MIT).
+// ONE copy for all four games (Gears 1, 3 and Judgment build it from GN_LAYER0_HOME): Gears 1's (the newest - flat
+// 2006 layout, ~= replace, += / -= array edits, MD5 / TOC) with Gears 3's uncompressed-size TOC field. Our code (MIT).
 #pragma once
 
 #include <array>
@@ -19,6 +20,8 @@
 #include <vector>
 
 namespace ue3 {
+
+std::string AsciiLower(std::string s);  // ASCII case only: file names, sections and keys are ASCII
 
 struct ConfigString {
   std::u16string text;   // without the terminator
@@ -40,27 +43,37 @@ struct ConfigFile {
 };
 struct ConfigBundle {
   std::vector<ConfigFile> files;
+  bool count_strings = false;  // flat layout: the leading count is of strings (2 per file), as in Gears 1
 };
 
 bool ParseConfigBundle(const std::vector<uint8_t>& bytes, ConfigBundle& out, std::string* error = nullptr);
 std::vector<uint8_t> WriteConfigBundle(const ConfigBundle& bundle);
+// The 2006 layout (Gears 1: WarGame\Config\Xenon\Cooked\Coalesced.ini): int32 count (of strings: 2 per file); per file FString name,
+// FString text (the whole .ini). Parsed into the same ConfigBundle (sections and key=value lines; comments and blank
+// lines are not kept) with each file's original text in `texts`; the writer keeps a file's original text unless its
+// sections were changed, so an unedited bundle is written back byte for byte.
+bool ParseFlatConfigBundle(const std::vector<uint8_t>& bytes, ConfigBundle& out, std::vector<ConfigString>& texts,
+                           std::string* error = nullptr);
+std::vector<uint8_t> WriteFlatConfigBundle(const ConfigBundle& bundle, const std::vector<ConfigString>& texts);
 
 // One edit: "<file>|<section>|<key>=<value>" sets the key (every occurrence; added at the end of the section, or a new
 // section, when missing); "<file>|<section>|<key>*=<factor>" multiplies the number the value starts with (the rest,
 // e.g. a trailing comment, is kept). <file> matches the end of the file name, case-insensitive (e.g.
-// "Xe-GearEngine.ini"); <section> may be "*" (every section that has the key - nothing is added then).
-// "<file>|<section>|-<key>=<value>" removes the entries of that key whose value is <value> (case-insensitive), the rest
-// kept - one element of an array key, e.g. "-StartupMovies=EpicLogo" (Gears 3's form, its layer 2 d5bf473).
-// "<file>|<section>|~=<old>><new>" (patch 0127) replaces the text <old> with <new> inside every value of the section,
-// e.g. "Xe-GearEngine.ini|SystemSettings|~=MipFilter=point>MipFilter=linear" (trilinear for every TEXTUREGROUP) - the
-// rest of each value is the game's own, so no game values are needed here. Nothing is added by either form.
-// Several edits are separated by ';'.
+// "Xe-GearEngine.ini"); <section> may be "*" (every section that has the key - nothing is added then). Several edits
+// are separated by ';'.
+// Array keys (a key repeated, +Key in the source ini; Judgment 2026-10-24, the developer menu's DevMenuOptions):
+// "<file>|<section>|<key>-=" removes every occurrence; "<file>|<section>|<key>-=<value>" only the occurrences with
+// exactly that value (case-insensitive, trimmed; e.g. StartupMovies-=Open_Logos; "-StartupMovies=Open_Logos", Gears 3's
+// spelling, means the same); "<file>|<section>|<key>+=<value>" adds
+// one more occurrence at the end of the section (the section is created when missing). Use -= first, then +=, to
+// replace a whole array.
 struct ConfigEdit {
   std::string file, section, key, value;
   bool scale = false;
   double factor = 1.0;
-  bool remove = false;                // patch 0127: "-key=value"
-  bool replace = false;               // patch 0127: "~=old>new" (key empty)
+  bool append = false;  // key+=value
+  bool remove = false;  // key-= (all) or key-=value (that value only)
+  bool replace = false;  // "<file>|<section>|~=<old>><new>": text replaced inside every value of the section (Gears 2's patch 0127)
   std::string replace_old, replace_new;
 };
 std::vector<ConfigEdit> ParseConfigEdits(const std::string& spec, std::string* error = nullptr);
@@ -76,6 +89,15 @@ Sha1Digest Sha1(const uint8_t* data, size_t size);
 // Offsets (into `data`) of the 20 hash bytes of each table entry naming `name` (matched exactly, as stored - lower
 // case) whose hash is `hash`.
 std::vector<size_t> FindFileHash(const uint8_t* data, size_t size, const std::string& name, const Sha1Digest& hash);
+
+// Gears 3 (job 050): its disc's table of contents, GearGame\Xbox360TOC*.txt, lists every file as "<size> <uncompressed
+// size> <path> <md5>" (e.g. "2671818 0 ..\GearGame\CookedXbox360\Coalesced_INT.bin e227ee0a..."). An edited bundle
+// gets its own size and MD5 there, as well as its new SHA-1 in the image's start-up table (job 050: 9 entries updated).
+std::string Md5Hex(const uint8_t* data, size_t size);  // RFC 1321, lower-case hex
+// Replaces size and MD5 on every line whose path ends with "\<file_name>" (case-insensitive); returns the lines changed.
+// `uncompressed_size` >= 0 also replaces the second field (0 = stored plain; Gears 3's ue3/package_patch.h).
+int UpdateTocEntry(std::string& toc, const std::string& file_name, uint64_t size, const std::string& md5_hex,
+                   int64_t uncompressed_size = -1);
 
 }  // namespace ue3
 

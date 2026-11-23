@@ -75,7 +75,7 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 
 # Layer 2: Unreal Engine 3.
 add_library(gn_layer2_ue3 STATIC ${GN_LAYER0_HOME}/src/layer2_ue3/launch_command_line.cpp  # shared (--ue3_launch)
-            src/layer2_ue3/config_bundle.cpp
+            ${GN_LAYER0_HOME}/src/layer2_ue3/config_bundle.cpp  # shared
             src/layer2_ue3/config_install.cpp src/layer2_ue3/package_patch.cpp src/layer2_ue3/lzx.cpp
             src/layer2_ue3/mod_extras.cpp src/layer2_ue3/objects.cpp src/layer2_ue3/script_input.cpp
             src/layer2_ue3/modcore/modcore.cpp
@@ -359,8 +359,9 @@ if(GN_BUILD_TESTS)
         src/layer2_ue3/modcore/modcore.cpp
         tests/playlist_names_test.cpp
         src/layer2_ue3/playlist_names.cpp
-        src/layer2_ue3/config_bundle.cpp)
-    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS} src/layer2_ue3 src/layer2_ue3/include)
+        ${GN_LAYER0_HOME}/src/layer2_ue3/config_bundle.cpp)
+    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS} src/layer2_ue3 src/layer2_ue3/include
+        ${GN_LAYER0_HOME}/src/layer2_ue3/include)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(gn_tests PRIVATE -ffp-contract=off)
     elseif(MSVC)
