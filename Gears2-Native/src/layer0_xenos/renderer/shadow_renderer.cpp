@@ -463,6 +463,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       options.vk_skip_memory_barriers = REXCVAR_GET(gow2_renderer_vulkan_barrier_stages) == "skip_memory";  // 0108
       options.vk_record_thread = REXCVAR_GET(gow2_renderer_vulkan_record_thread);  // Vulkan recording thread
       options.vk_viewset_hi = REXCVAR_GET(gow2_renderer_vulkan_viewset_hi);  // perf 22 Nov (H8)
+      options.vk_dyn_skip = REXCVAR_GET(gow2_renderer_vulkan_dyn_skip);  // perf 23 Nov
       options.vk_record_thread_log = uint32_t(std::max(0, REXCVAR_GET(gow2_renderer_vulkan_record_thread_log)));
     }
     // Notes/68: on Vulkan, --gow2_present=ours runs our whole present (gamma, SMAA, HDR) into our own image without a
@@ -14378,13 +14379,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         // perf batch 2: Vulkan descriptor work per frame - what the set-bind and set-cache changes save
         auto pv = [&](uint64_t a, uint64_t b) { return double(a >= b ? a - b : a) / double(log_every_); };  // no wrap after a reset
         REXLOG_INFO("gow2_renderer: frames {}-{}: Vulkan descriptors per frame: {:.1f} draws | binds of all 3 sets {:.1f}, "
-                    "of set 0 alone (constants only) {:.1f} | pipeline binds {:.1f}, of which kept the bound sets {:.1f} | "
+                    "of set 0 alone (constants only) {:.1f} | pipeline binds {:.1f}, of which kept the bound sets {:.1f}, set only "
+                    "the changed dynamic state {:.1f} | "
                     "set lookups that found the bound set {:.1f} | sets written: texture {:.1f} (found {:.1f}), sampler "
                     "{:.1f} (found {:.1f}) | hash clashes texture {} sampler {} (totals) | constant uploads skipped {:.1f}",
                     frame_ - uint64_t(log_every_) + 1, frame_, pv(bs.draws, b0.draws),
                     pv(bs.vk_set_binds_all, b0.vk_set_binds_all), pv(bs.vk_set_binds_constants, b0.vk_set_binds_constants),
                     pv(bs.vk_pipeline_binds, b0.vk_pipeline_binds),
                     pv(bs.vk_set_binds_kept_on_pipeline, b0.vk_set_binds_kept_on_pipeline),
+                    pv(bs.vk_dyn_binds_trimmed, b0.vk_dyn_binds_trimmed),
                     pv(bs.vk_set_lookups_same, b0.vk_set_lookups_same),
                     pv(bs.texture_table_misses, b0.texture_table_misses), pv(bs.texture_table_hits, b0.texture_table_hits),
                     pv(bs.sampler_tables_written, b0.sampler_tables_written), pv(bs.sampler_table_hits, b0.sampler_table_hits),

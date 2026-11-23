@@ -414,6 +414,10 @@ REXCVAR_DEFINE_STRING(gow2_renderer_vulkan_attachment_layouts, "general", "Gears
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_viewset_hi, true, "Gears2",
                     "Vulkan: the texture-table lookup hashes and compares only the slots up to the highest one in use "
                     "(perf 22 Nov, H8; false = all 96 slots, as before)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_dyn_skip, true, "Gears2",
+                    "Vulkan: a pipeline built from pipeline libraries sets only the dynamic state (cull, depth, "
+                    "stencil, bias) that differs from what is already set (perf 23 Nov; false = all of it on every "
+                    "pipeline bind, as before)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_record_thread, false, "Gears2",
                     "Vulkan (default off): record the command buffers on a recording thread, as D3D12's "
                     "threaded_recording does - our vkCmd* calls, vkBegin/EndCommandBuffer and vkQueueSubmit2 are "

@@ -400,6 +400,7 @@ struct BackendOptions {
   // (0 = none).
   bool vk_record_thread = false;
   bool vk_viewset_hi = true;  // perf 22 Nov (H8): texture-table key over the set slots only
+  bool vk_dyn_skip = true;     // perf 23 Nov: linked pipelines set only the dynamic state that changed
   uint32_t vk_record_thread_log = 0;
   // Patch 0109 (both APIs, a measurement switch): false = GPU timestamps only at the start and end of each command
   // list (whole-frame GPU time, no split by category / target / draw), so the timestamps can't change the timing.
@@ -495,6 +496,7 @@ struct BackendStats {
   // pipeline binds that no longer rebind the sets (each was a 3-set bind before batch 2); set lookups that found
   // the set already bound (no rebind).
   uint64_t vk_set_binds_all = 0, vk_set_binds_constants = 0, vk_set_binds_kept_on_pipeline = 0;
+  uint64_t vk_dyn_binds_trimmed = 0;  // perf 23 Nov: linked binds that set only the changed dynamic state
   uint64_t vk_set_lookups_same = 0, vk_pipeline_binds = 0;
   uint64_t index_buffers = 0, index_buffer_bytes = 0, index_buffer_draws = 0;  // persistent index buffers (live)
   // Record profile (upl-n108): CPU ms inside the draw calls' state application, and the two costly parts of it.

@@ -556,6 +556,7 @@ class VulkanBackend final : public Backend {
     vk_.vkCmdPipelineBarrier2(C(), &di);
     outside_dirty_ = true;
     bound_pipeline_ = VK_NULL_HANDLE;
+    dyn_valid_ = false;
     bound_index_ = VK_NULL_HANDLE;
     dirty_sets_ = dirty_cb_ = dirty_viewport_ = dirty_scissor_ = dirty_stencil_ = dirty_blend_ = true;
     dirty_views_ = dirty_samplers_ = true;
@@ -670,6 +671,7 @@ class VulkanBackend final : public Backend {
     vk_.vkCmdPipelineBarrier2(C(), &di);
     // The bound render state is the backend's no longer (the next draw rebinds what it needs).
     bound_pipeline_ = VK_NULL_HANDLE;
+    dyn_valid_ = false;
     bound_index_ = VK_NULL_HANDLE;
     dirty_sets_ = dirty_cb_ = dirty_viewport_ = dirty_scissor_ = dirty_stencil_ = dirty_blend_ = true;
     return true;
@@ -3029,32 +3031,52 @@ class VulkanBackend final : public Backend {
       if (p.linked) {  // 0.6.2 (pipeline libraries): its dynamic state, all of it on every bind (a pipeline built
                        // whole in between has the same state static, which unsets the dynamic values)
         const LinkedState& y = p.dyn;
-        vk_.vkCmdSetCullMode(cmd_, y.cull);
-        vk_.vkCmdSetFrontFace(cmd_, y.front);
-        vk_.vkCmdSetDepthBiasEnable(cmd_, y.bias_enable);
+        // perf 23 Nov (--gow2_renderer_vulkan_dyn_skip): dynamic state stays set across binds of pipelines that keep it
+        // dynamic, so only what differs from the last linked bind is set. dyn_valid_ is cleared wherever the bound state
+        // stops being ours (a whole pipeline bound - its static state unsets the dynamic values -, a new command buffer,
+        // the present pass, the native hand-back, a replaced pipeline).
+        const bool keep = dyn_valid_ && options_.vk_dyn_skip;
+        const LinkedState& a = dyn_applied_;
+        auto same_op = [](const VkStencilOpState& l, const VkStencilOpState& r) {
+          return l.failOp == r.failOp && l.passOp == r.passOp && l.depthFailOp == r.depthFailOp && l.compareOp == r.compareOp;
+        };
+        if (!keep || a.cull != y.cull) vk_.vkCmdSetCullMode(cmd_, y.cull);
+        if (!keep || a.front != y.front) vk_.vkCmdSetFrontFace(cmd_, y.front);
+        if (!keep || a.bias_enable != y.bias_enable) vk_.vkCmdSetDepthBiasEnable(cmd_, y.bias_enable);
+        if (!keep || a.bias != y.bias || a.bias_slope != y.bias_slope || a.bias_unorm != y.bias_unorm) {
 #ifdef VK_EXT_depth_bias_control
-        if (y.bias_unorm && set_depth_bias2_) {  // 22 Nov: D24 units on the D32F stand-in (see Build)
-          VkDepthBiasRepresentationInfoEXT rep{VK_STRUCTURE_TYPE_DEPTH_BIAS_REPRESENTATION_INFO_EXT};
-          rep.depthBiasRepresentation = VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
-          rep.depthBiasExact = depth_bias_exact_ ? VK_TRUE : VK_FALSE;
-          VkDepthBiasInfoEXT bi{VK_STRUCTURE_TYPE_DEPTH_BIAS_INFO_EXT};
-          bi.pNext = &rep;
-          bi.depthBiasConstantFactor = y.bias;
-          bi.depthBiasClamp = 0.0f;
-          bi.depthBiasSlopeFactor = y.bias_slope;
-          set_depth_bias2_(cmd_, &bi);
-        } else
+          if (y.bias_unorm && set_depth_bias2_) {  // 22 Nov: D24 units on the D32F stand-in (see Build)
+            VkDepthBiasRepresentationInfoEXT rep{VK_STRUCTURE_TYPE_DEPTH_BIAS_REPRESENTATION_INFO_EXT};
+            rep.depthBiasRepresentation = VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
+            rep.depthBiasExact = depth_bias_exact_ ? VK_TRUE : VK_FALSE;
+            VkDepthBiasInfoEXT bi{VK_STRUCTURE_TYPE_DEPTH_BIAS_INFO_EXT};
+            bi.pNext = &rep;
+            bi.depthBiasConstantFactor = y.bias;
+            bi.depthBiasClamp = 0.0f;
+            bi.depthBiasSlopeFactor = y.bias_slope;
+            set_depth_bias2_(cmd_, &bi);
+          } else
 #endif
-        vk_.vkCmdSetDepthBias(cmd_, y.bias, 0.0f, y.bias_slope);
-        vk_.vkCmdSetDepthTestEnable(cmd_, y.depth_test);
-        vk_.vkCmdSetDepthWriteEnable(cmd_, y.depth_write);
-        vk_.vkCmdSetDepthCompareOp(cmd_, y.depth_op);
-        vk_.vkCmdSetStencilTestEnable(cmd_, y.stencil_test);
-        vk_.vkCmdSetStencilOp(cmd_, VK_STENCIL_FACE_FRONT_BIT, y.stencil_front.failOp, y.stencil_front.passOp, y.stencil_front.depthFailOp, y.stencil_front.compareOp);
-        vk_.vkCmdSetStencilOp(cmd_, VK_STENCIL_FACE_BACK_BIT, y.stencil_back.failOp, y.stencil_back.passOp, y.stencil_back.depthFailOp, y.stencil_back.compareOp);
-        vk_.vkCmdSetStencilCompareMask(cmd_, VK_STENCIL_FACE_FRONT_AND_BACK, y.stencil_front.compareMask);
-        vk_.vkCmdSetStencilWriteMask(cmd_, VK_STENCIL_FACE_FRONT_AND_BACK, y.stencil_front.writeMask);
-        dirty_stencil_ = true;  // the reference is dynamic in both kinds; set again to be safe
+          vk_.vkCmdSetDepthBias(cmd_, y.bias, 0.0f, y.bias_slope);
+        }
+        if (!keep || a.depth_test != y.depth_test) vk_.vkCmdSetDepthTestEnable(cmd_, y.depth_test);
+        if (!keep || a.depth_write != y.depth_write) vk_.vkCmdSetDepthWriteEnable(cmd_, y.depth_write);
+        if (!keep || a.depth_op != y.depth_op) vk_.vkCmdSetDepthCompareOp(cmd_, y.depth_op);
+        if (!keep || a.stencil_test != y.stencil_test) vk_.vkCmdSetStencilTestEnable(cmd_, y.stencil_test);
+        if (!keep || !same_op(a.stencil_front, y.stencil_front))
+          vk_.vkCmdSetStencilOp(cmd_, VK_STENCIL_FACE_FRONT_BIT, y.stencil_front.failOp, y.stencil_front.passOp, y.stencil_front.depthFailOp, y.stencil_front.compareOp);
+        if (!keep || !same_op(a.stencil_back, y.stencil_back))
+          vk_.vkCmdSetStencilOp(cmd_, VK_STENCIL_FACE_BACK_BIT, y.stencil_back.failOp, y.stencil_back.passOp, y.stencil_back.depthFailOp, y.stencil_back.compareOp);
+        if (!keep || a.stencil_front.compareMask != y.stencil_front.compareMask)
+          vk_.vkCmdSetStencilCompareMask(cmd_, VK_STENCIL_FACE_FRONT_AND_BACK, y.stencil_front.compareMask);
+        if (!keep || a.stencil_front.writeMask != y.stencil_front.writeMask)
+          vk_.vkCmdSetStencilWriteMask(cmd_, VK_STENCIL_FACE_FRONT_AND_BACK, y.stencil_front.writeMask);
+        if (keep) ++stats_.vk_dyn_binds_trimmed;
+        dyn_applied_ = y;
+        dyn_valid_ = true;
+        if (!keep) dirty_stencil_ = true;  // the reference is dynamic in both kinds; set again when the state was reset
+      } else {
+        dyn_valid_ = false;  // a whole pipeline: its static state unsets the dynamic values
       }
     }
     if (dirty_viewport_) { vk_.vkCmdSetViewport(cmd_, 0, 1, &viewport_); dirty_viewport_ = false; }
@@ -3799,7 +3821,7 @@ class VulkanBackend final : public Backend {
         d.pipeline = whole;  // nothing to replace (kept for the cache only)
       } else {
         d.pipeline = p->pipeline;
-        if (bound_pipeline_ == p->pipeline) bound_pipeline_ = VK_NULL_HANDLE;
+        if (bound_pipeline_ == p->pipeline) { bound_pipeline_ = VK_NULL_HANDLE; dyn_valid_ = false; }
         p->pipeline = whole;
         p->linked = false;  // its state is now static in the pipeline (the bind sets no dynamic state for it)
         gpl_swaps_.fetch_add(1);
@@ -3890,6 +3912,7 @@ class VulkanBackend final : public Backend {
     cmd_ = s.cmd;
     in_pass_ = false;
     bound_pipeline_ = VK_NULL_HANDLE;
+    dyn_valid_ = false;
     bound_index_ = VK_NULL_HANDLE;
     dirty_sets_ = dirty_cb_ = dirty_viewport_ = dirty_scissor_ = dirty_stencil_ = dirty_blend_ = true;
     for (auto& sh : cb_shadow_) sh.valid = false;  // patch 0080: the ring copies may belong to a finished submission
@@ -4595,6 +4618,8 @@ class VulkanBackend final : public Backend {
   bool pending_att_ = false;  // patch 0115: an attachment-only barrier queued for the next pass's first command
   PipelineHandle current_pipeline_ = 0;
   VkPipeline bound_pipeline_ = VK_NULL_HANDLE;
+  LinkedState dyn_applied_;   // perf 23 Nov: the dynamic state the last linked bind set
+  bool dyn_valid_ = false;     // dyn_applied_ still holds in the command buffer
   VkBuffer bound_index_ = VK_NULL_HANDLE;  // patch 0081
   TextureView views_[96];
   SamplerDesc samplers_[32];
