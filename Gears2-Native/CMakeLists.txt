@@ -152,6 +152,7 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/shader_prebuild.cpp
     src/layer2_ue3/prebuild_lzx.cpp
     src/layer2_ue3/main_menu_exit.cpp
+    src/layer2_ue3/tick_log.cpp  # --gow2_tick_log (Gears 3 / Judgment build it too)
     src/layer2_ue3/menu_fps.cpp  # GitHub #101 front-end cap (--gow2_menu_fps; Judgment builds it too)
     src/layer2_ue3/package_exports.cpp
     src/layer2_ue3/console.cpp  # GitHub #264: engine console commands (--gow2_cheats, --ue3_hotkeys, --ue3_exec); Gears 3 builds it too

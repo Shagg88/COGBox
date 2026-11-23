@@ -27,7 +27,6 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `option profile_100` | G2 J | G1 G3 | |
 | `option profile_100_file` | G2 J | G1 G3 | |
 | `option profile_log` | G1 G3 J | G2 | |
-| `option tick_log` | G3 J | G1 G2 | timing log |
 | `option ultrawide` | G2 G3 J | G1 | G1 has its own: no_aspect_lock, ViewFov (check what is missing) |
 | `option aspect` | G2 G3 J | G1 | |
 | `option ultrawide_fov_exact` | G2 G3 | G1 J | |
@@ -178,4 +177,5 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `hook CoalescedResult` | G1 G2 | G1 / G2 skip the game's start-up hash check of an edited Coalesced; G3 / J don't need to: their layer 2 config_install.cpp gives each edited bundle its new SHA-1 in the image's start-up hash table (and the TOC's size / MD5), so the game's own check passes [V code] |
 | `hook CoalescedSkip` | G1 G2 | (with CoalescedResult) |
 | `option skip_coalesced_check` | G2 | (with CoalescedResult; G1 turns its hooks on whenever config edits are applied, gow1_app.h, so it has no option) |
+| `option tick_log` | G2 G3 J | the engine tick rhythm, timed at the engine loop's GetMaxTickRate call (one layer 2 copy, `ue3/tick_log.h`, since 23 Nov; G2 added). G1: no engine-tick hook (no GetMaxTickRate, see MaxTickRate); its frames are timed by the renderer's frame-time line |
 | `hook ShaderCreatedVertex` | - | (all four since 23 Nov: patch 0066) |

@@ -37,6 +37,7 @@
 #include <xenos/frame_limiter.h>
 
 #include "gow2_addresses.h"
+#include <ue3/tick_log.h>  // --gow2_tick_log (shared with Gears 3 / Judgment)
 #include <ue3/menu_fps.h>  // GitHub #101 front-end cap (layer 2, shared with Judgment)
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/objects.h>  // GitHub #313 pace check: ue3::obj::Read32 (safe guest reads; no table lookup)
@@ -123,6 +124,11 @@ REXCVAR_DEFINE_INT32(gow2_menu_fps, 60, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_tick_floor_fps, 0, "Gears2",
                      "With no frame-rate limit: the engine still ticks at most N times a second (no sub-millisecond ticks "
                      "while nothing is presented, e.g. checkpoint saves). 0 = off");
+// --gow2_tick_log (Gears 3 / Judgment's, 23 Nov parity pass; layer 2 ue3/tick_log.h): the engine tick's rhythm every N
+// ticks, read-only, from the engine loop's GetMaxTickRate call (the hook below; not ServerTickClients' second call).
+REXCVAR_DEFINE_INT32(gow2_tick_log, 600, "Gears2",
+                     "Log the engine's tick rhythm every N ticks (median / p95 / max, slow ticks and their spacing). "
+                     "0 = off");
 void Gow2InstallMenuCap() { ue3::InstallMenuFpsCap("gow2_menu_fps", REXCVAR_GET(gow2_menu_fps)); }
 
 // Review 049: the in-game menu's live frame cap (an atomic from the UI thread), else the start-up cvar.
@@ -357,8 +363,10 @@ void Gow2MaxTickRate(PPCRegister& f1) {
   const int32_t v = Gow2MaxFps();
   const bool server_tick =
       g_gow2_tick_caller.load(std::memory_order_relaxed) == gow2::addr::kServerTickClientsTickRateRet;
-  if (!server_tick)
+  if (!server_tick) {
     g_gow2_frame_wait_ms = 0.0;  // GitHub #313 pace check: the hook ran in this engine frame (the wait, if any, below)
+    ue3::TickLog("gow2_tick_log", REXCVAR_GET(gow2_tick_log));  // once per engine loop (read-only)
+  }
   // GitHub #101 (as Gears 3): the front end at --gow2_menu_fps at most. With a player's limit the exact limiter waits
   // (as below); with the game's own limit the engine waits for the capped value itself.
   if (const int32_t m = REXCVAR_GET(gow2_menu_fps); m > 0 && ue3::InMenuFront()) {

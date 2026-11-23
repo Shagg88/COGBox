@@ -25,6 +25,7 @@
 #include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
 #include <ue3/name_tags.h>
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
+#include <ue3/tick_log.h>  // --gow3_tick_log (shared)
 #include <ue3/shadow_cap.h>  // --gow3_shadow_cap (shared with Judgment)
 #include <iterator>   // std::size  // GitHub #353
 #include "mouse_look.h"
@@ -506,51 +507,7 @@ REXCVAR_DEFINE_INT32(gow3_tick_log, 600, "Gears3",
                      "0 = off");
 
 namespace {
-double Median(std::vector<double> v) {
-  std::sort(v.begin(), v.end());
-  return v[v.size() / 2];
-}
-void TickTimeline() {  // the game thread is the only caller
-#ifdef _WIN32
-  const int32_t n = REXCVAR_GET(gow3_tick_log);
-  if (n <= 0) return;
-  static uint64_t last = 0, ticks = 0;
-  static std::vector<double> iv;  // tick lengths, ms
-  const uint64_t t = QpcNow();
-  if (last) iv.push_back(double(t - last) * 1000.0 / double(QpcFrequency()));
-  last = t;
-  ++ticks;
-  if (int32_t(iv.size()) < n) return;
-  std::vector<double> sorted = iv;
-  std::sort(sorted.begin(), sorted.end());
-  const double med = sorted[sorted.size() / 2], p95 = sorted[sorted.size() * 95 / 100], mx = sorted.back();
-  const double slow_at = std::max(med * 1.5, med + 4.0);
-  std::vector<size_t> slow;
-  double slow_mean = 0;
-  for (size_t i = 0; i < iv.size(); ++i)
-    if (iv[i] > slow_at) slow.push_back(i), slow_mean += iv[i];
-  if (!slow.empty()) slow_mean /= double(slow.size());
-  std::string rhythm = "no slow ticks";
-  if (slow.size() >= 3) {
-    std::vector<double> gap_ms, gap_ticks;
-    for (size_t k = 1; k < slow.size(); ++k) {
-      double ms = 0;
-      for (size_t i = slow[k - 1] + 1; i <= slow[k]; ++i) ms += iv[i];
-      gap_ms.push_back(ms);
-      gap_ticks.push_back(double(slow[k] - slow[k - 1]));
-    }
-    const double gm = Median(gap_ms), gt = Median(gap_ticks);
-    std::vector<double> dev;
-    for (double g : gap_ms) dev.push_back(std::fabs(g - gm));
-    rhythm = std::format("every {:.0f} ms / {:.0f} ticks (spread {:.2f})", gm, gt, gm > 0 ? Median(dev) / gm : 0.0);
-  } else if (!slow.empty()) {
-    rhythm = std::format("{} slow tick(s)", slow.size());
-  }
-  REXLOG_INFO("gow3_tick_log: ticks {}-{}: median {:.2f} ms, p95 {:.2f}, max {:.1f} | slow (> {:.1f} ms): {} (mean {:.1f} ms), "
-              "{}", ticks - iv.size(), ticks - 1, med, p95, mx, slow_at, slow.size(), slow_mean, rhythm);
-  iv.clear();
-#endif
-}
+void TickTimeline() { ue3::TickLog("gow3_tick_log", REXCVAR_GET(gow3_tick_log)); }  // layer 2 ue3/tick_log.h
 }  // namespace
 
 // GitHub #101: the front end (title screen, its menus) ran at the player's limit - with none, hundreds of fps and the
