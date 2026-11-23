@@ -21,10 +21,6 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `option fast_mip_fade` | G3 J | G2 (G1 n/a) | G2: its Coalesced_int.bin has no MipFadeInSpeed key (J's has) [V]; whether G2's engine reads the key if added is unknown (packages compressed) - an ini edit is harmless to try, needs a test run. G1 doesn't apply: its Coalesced.ini has no mip-fade or MipFilter keys [V] |
 | `option shadow_cap` | G2 G3 J | G1 | Smart Shadow Cuts (J since 23 Nov: G3's gather function, layer 2 `ue3/shadow_cap.h`). G1: no shadow counter of the G2 or G3/J shape in its code - its 2006 shadow pass needs its own look |
 | `hook ShadowCap` | G2 G3 J | G1 | |
-| `option query_poll_yield` | G2 G3 J | G1 | render thread's GPU query wait without spinning |
-| `hook QueryPollYield` | G2 G3 J | G1 | |
-| `option query_wait` | G1 G2 | G3 J | |
-| `hook QueryWaitStep` | G1 G2 | G3 J | |
 | `option skip_coalesced_check` | G2 | G1 G3 J | faster start-up config load; G1 has the hooks without the option |
 | `hook CoalescedResult` | G1 G2 | G3 J | |
 | `hook CoalescedSkip` | G1 G2 | G3 J | |
@@ -178,4 +174,8 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `option shadow_value_cap` | G2 | Canary's G2 sites (a per-light default read after a `lwz 288 / cmpwi / bgt` override test); that code is in no other game (searched G1 / G3 / J, the same search finds exactly G2's two) [V]; G3 / J use the per-object `shadow_cap` |
 | `hook ShadowValueCapA` | G2 | (with shadow_value_cap) |
 | `hook ShadowValueCapB` | G2 | (with shadow_value_cap) |
+| `option query_poll_yield` | G2 G3 J | One wait, two names: UE3's wait for one query's answer (GetData(q, out, 4, FLUSH) in a loop) is hooked at its loop head in all four games - G1 0x825BA71C and G2 0x82817124 as `query_wait`, G3 0x8297297C and J 0x829933B4 as `query_poll_yield` (mode 3 = G2's sleep-until-GPU-write); checked in the PC's generated code 23 Nov. G2's own `query_poll_yield` is a second, opt-in (default 0) pause / yield inside D3D's GetData itself (job 178) - not needed for G1, which has the loop hook |
+| `hook QueryPollYield` | G2 G3 J | (with query_poll_yield) |
+| `option query_wait` | G1 G2 | (see query_poll_yield: G3 / J have the same loop hook under that name) |
+| `hook QueryWaitStep` | G1 G2 | (with query_wait) |
 | `hook ShaderCreatedVertex` | - | (all four since 23 Nov: patch 0066) |
