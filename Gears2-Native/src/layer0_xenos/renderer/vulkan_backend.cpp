@@ -74,6 +74,7 @@ std::unique_ptr<Backend> CreateVulkanBackend() { return nullptr; }
 #include <format>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <iterator>
 #include <vector>
 
@@ -128,6 +129,9 @@ struct Vk {
   GN_VK_DEBUG_FUNCS(GN_VK_DECLARE)
 #undef GN_VK_DECLARE
 };
+
+// --gow2_renderer_vulkan_record_thread (default off): the recording thread and the table thunks it runs through.
+#include "vulkan_record_thread.inl"
 
 void* OpenLoader() {
 #ifdef _WIN32
