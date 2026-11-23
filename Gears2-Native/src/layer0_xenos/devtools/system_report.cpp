@@ -268,6 +268,7 @@ static void LogLauncher() {
                          : "OTHER LAUNCHER (not COGBox)";
   wchar_t exe[1024];
   const DWORD en = GetModuleFileNameW(nullptr, exe, DWORD(std::size(exe)));
+  if (std::strcmp(kind, "OTHER LAUNCHER (not COGBox)") == 0) XenosSetStartedByOtherLauncher(Utf8(name.c_str()).c_str());
   REXLOG_INFO("pc: started by: {} | parent pid {} {} | this exe {}", kind, parent,
               parent_path.empty() ? std::string("-") : Utf8(parent_path.c_str()), Utf8(std::wstring(exe, en).c_str()));
 }

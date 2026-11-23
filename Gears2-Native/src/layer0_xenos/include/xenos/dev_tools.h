@@ -83,6 +83,8 @@ uint64_t XenosSwapCount();
 // --gow2_fps_bar=top|bottom: a one-line frame-rate bar drawn by us over the game (no game patch). Create from the
 // app's OnCreateDialogs; destroy from OnShutdown (before the SDK drops its ImGui drawer).
 void XenosCreateFpsBarIfRequested(rex::ui::ImGuiDrawer* drawer);
+// Shagg 22 Nov: the system report found another launcher as the parent process - show the on-screen note.
+void XenosSetStartedByOtherLauncher(const char* name);
 void XenosDestroyFpsBar();
 // The game window is closing (each app's OnClosing): end the title, flush the log and end the process WITHOUT
 // Windows unloading DLLs - NVIDIA Streamline crashes in its unload once NGX is gone (quit with frame generation).

@@ -337,6 +337,57 @@ void XenosSetShaderJobs(uint64_t left, uint64_t ever_queued) {
 }
 
 // 0.2.1: the UI thread for the shader note (each game's OnCreateDialogs, before XenosCreateFpsBarIfRequested).
+
+// Shagg 22 Nov: the game was started by another launcher (not COGBox): a note at the top for the first 30 s of play,
+// drawn with the game's frames (no repaints of its own). The PC description logs the same ("pc: started by: ...").
+static std::atomic<bool> g_other_launcher{false};
+static char g_other_launcher_name[96] = {};
+class LauncherNote final : public rex::ui::ImGuiDialog {
+ public:
+  explicit LauncherNote(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {}
+  bool WantsContinuousPaint() const override { return false; }
+
+ protected:
+  void OnDraw(ImGuiIO& io) override {
+    using clock = std::chrono::steady_clock;
+    const clock::time_point now = clock::now();
+    if (!shown_since_.time_since_epoch().count()) shown_since_ = now;
+    if (now - shown_since_ > std::chrono::seconds(30)) return;
+    char text[256];
+    std::snprintf(text, sizeof(text),
+                  "Started by %s, not the COGBox launcher - settings may be missing. "
+                  "For support, start the game from COGBox.", g_other_launcher_name[0] ? g_other_launcher_name : "another program");
+    const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    const float w = ts.x * scale + 24.0f * scale, h = ts.y * scale + 12.0f * scale;
+    ImGui::SetNextWindowBgAlpha(0.70f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale, 6.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::SetNextWindowPos(ImVec2(std::max(0.0f, (io.DisplaySize.x - w) * 0.5f), 16.0f * scale));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    if (ImGui::Begin("##cogbox_launcher_note", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                         ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+      const ImVec2 at = ImGui::GetCursorScreenPos();
+      ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize() * scale, at,
+                                          IM_COL32(255, 210, 120, 255), text);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+  }
+
+ private:
+  std::chrono::steady_clock::time_point shown_since_{};
+};
+static std::unique_ptr<LauncherNote> g_launcher_note;
+
+void XenosSetStartedByOtherLauncher(const char* name) {
+  std::snprintf(g_other_launcher_name, sizeof(g_other_launcher_name), "%s", name ? name : "");
+  g_other_launcher.store(true, std::memory_order_release);
+}
+
 void XenosSetUiContext(rex::ui::WindowedAppContext* ui) { g_ui = ui; }
 
 bool XenosOnScreenNotesHidden() { return REXCVAR_GET(gow2_hide_onscreen_notes); }  // GitHub #121
@@ -345,6 +396,8 @@ static rex::ui::ImGuiDrawer* g_overlay_drawer = nullptr;   // 0.4.9: kept for Xe
 
 void XenosCreateFpsBarIfRequested(rex::ui::ImGuiDrawer* drawer) {
   g_overlay_drawer = drawer;
+  if (drawer && g_other_launcher.load(std::memory_order_acquire) && !g_launcher_note)
+    g_launcher_note = std::make_unique<LauncherNote>(drawer);  // stays on the drawer; draws nothing after 30 s
   if (drawer && REXCVAR_GET(gow2_shader_note) && !XenosOnScreenNotesHidden()) {  // patch 0062, GitHub #121
     g_note = std::make_unique<ShaderNote>(drawer, g_ui);
     g_note_live.store(g_note.get(), std::memory_order_release);
@@ -378,6 +431,7 @@ void XenosQuitWithoutDllUnload(rex::Runtime* runtime) {
 void XenosDestroyFpsBar() {
   g_overlay_drawer = nullptr;
   g_bar.reset();
+  g_launcher_note.reset();
   {
     std::lock_guard<std::mutex> lock(g_note_mutex);  // waits for a Wake() in progress on another thread
     g_note_live.store(nullptr, std::memory_order_release);
