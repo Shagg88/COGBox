@@ -49,6 +49,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/renderer/prompt_overlay_compositor.cpp
     src/layer0_xenos/ui/input/prompt_device_monitor.cpp
     src/layer0_xenos/renderer/shadow_renderer.cpp
+    src/layer0_xenos/renderer/shadow_renderer_cvars.cpp
     src/layer0_xenos/renderer/upscaler.cpp
     src/layer0_xenos/renderer/ao.cpp
     src/layer0_xenos/devtools/hold_guest.cpp
