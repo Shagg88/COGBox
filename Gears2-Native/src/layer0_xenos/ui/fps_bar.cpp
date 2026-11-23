@@ -353,10 +353,10 @@ class LauncherNote final : public rex::ui::ImGuiDialog {
     const clock::time_point now = clock::now();
     if (!shown_since_.time_since_epoch().count()) shown_since_ = now;
     if (now - shown_since_ > std::chrono::seconds(30)) return;
-    char text[256];
+    char text[384];
     std::snprintf(text, sizeof(text),
-                  "Started by %s, not the COGBox launcher - settings may be missing. "
-                  "For support, start the game from COGBox.", g_other_launcher_name[0] ? g_other_launcher_name : "another program");
+                  "WARNING: started by %s, not the COGBox launcher. The game may not work as intended "
+                  "(wrong settings, crashes, missing features). Please start it from COGBox - we can only support that.", g_other_launcher_name[0] ? g_other_launcher_name : "another program");
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
     const ImVec2 ts = ImGui::CalcTextSize(text);
     const float w = ts.x * scale + 24.0f * scale, h = ts.y * scale + 12.0f * scale;
