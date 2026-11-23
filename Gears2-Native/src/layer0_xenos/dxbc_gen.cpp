@@ -3936,10 +3936,16 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
   // Patch 0059 (bench only): one dead `mov r[base].x, salt` so every shader's bytes - and the driver's cache key - are
   // new. 23 Nov: written after the coalescing, whose dead-store pass (job 637) removed it when it was emitted with the
   // body - so salted "first play" runs were answered from the driver's cache (jobs 2377f / j / l).
+  // 23 Nov (job 2377r): NVIDIA's D3D12 driver drops dead code before its own disk cache, so a dead mov did not make a
+  // D3D12 first play cold. Now the salt is live but never taken: `if (system constant 0.x == salt) return` at the top
+  // (the driver can't fold it - the constant buffer is unknown; the value never equals a 30-bit salt in practice), so
+  // every shader's compiled code differs and nothing is answered from any cache. Written after coalescing, moved to the
+  // front of the body.
   if (options.dxbc_salt) {
-    const uint32_t mov[5] = {54u | (5u << 24), 0x00100012u /* r#.x, immediate index */, g.base,
-                             0x00004001u /* 1-component immediate32 */, options.dxbc_salt};
-    g.code.insert(g.code.begin(), mov, mov + 5);
+    const size_t at = g.code.size();
+    g.a.OpIEq(Gen::R(g.base, kX), Gen::Sys(0, Src::kXXXX), Gen::LU(options.dxbc_salt));
+    g.a.OpRetC(true, Gen::S1(g.base, 0));
+    std::rotate(g.code.begin(), g.code.begin() + at, g.code.end());
   }
 
   // Metadata (hlsl.cpp's Translation fields).
