@@ -26,6 +26,7 @@
 #include <xenos/dev_tools.h>
 #include <xenos/frame_limiter.h>
 #include <ue3/config_bundle.h>
+#include <ue3/menu_fps.h>  // GitHub #101 front-end cap (layer 2, shared with Gears 2 / Judgment)
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/objects.h>
 #ifdef _WIN32
@@ -62,7 +63,14 @@ REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
                     "in case this engine reads it (unverified for Gears 1), so the logos and title film are passed as "
                     "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
                     "play. Not for players: loading screens go black.");
+// GitHub #101 (Gears 3's --gow3_menu_fps, 23 Nov parity pass): the title screen and its menus ran at the player's limit
+// - with vsync off and no limit, hundreds of fps on a still menu. While WarStart.xxx (Gears 1's front end, [URL]
+// LocalMap=WarStart) is the last level package the game opened (layer 2 ue3/menu_fps.h, file opens only), the
+// present-interval limiter below holds at most this. Defined here so it is set before the listener is installed.
+REXCVAR_DEFINE_INT32(gow1_menu_fps, 60, "Gears 1",
+                     "GitHub #101: the frame-rate limit on the title screen and its menus (0 = the player's)");
 void Gow1AddBuiltInIniEdits() {
+  ue3::InstallMenuFpsCap("gow1_menu_fps", REXCVAR_GET(gow1_menu_fps), "warstart");  // before the game opens a file
   const auto game_default = [](const char* name, const std::string& value) {
     if (rex::cvar::GetFlagSource(name) == rex::cvar::Source::kDefault) rex::cvar::SetFlagByName(name, value);
   };
@@ -608,12 +616,15 @@ void Gow1PresentInterval(PPCRegister& r10) {
   static std::atomic<uint64_t> calls{0};
   const uint64_t n = calls.fetch_add(1) + 1;
   if (n == 1 || n == 600) REXLOG_INFO("gow1_max_fps: present-interval site reached {} time(s) (interval {})", n, uint32_t(r10.u32));
-  const int32_t cap = LiveMaxFps();
+  int32_t cap = LiveMaxFps();
+  // GitHub #101 (as Gears 3): the front end at --gow1_menu_fps at most. With the game's own rate (0: 30 with vsync) the
+  // wait only matters when vsync is off.
+  if (const int32_t m = REXCVAR_GET(gow1_menu_fps); m > 0 && ue3::InMenuFront()) cap = (cap <= 0 || cap > m) ? m : cap;
   if (cap <= 0) return;
   static xenos::FrameLimiter limiter;  // shared precise limiter (high-resolution timer + spin; no catch-up bursts)
   limiter.Wait(double(cap));
   static bool logged = false;
-  if (!logged) { logged = true; REXLOG_INFO("gow1_max_fps: on - at most {} fps", cap); }
+  if (!logged && LiveMaxFps() > 0) { logged = true; REXLOG_INFO("gow1_max_fps: on - at most {} fps", cap); }
 }
 
 // Job 709: Gears 2's CPU wait fixes (jobs 225/231), found in Gears 1 by their shape.

@@ -4,17 +4,20 @@
 #include <cstdint>
 #include <string_view>
 
-// GitHub #101 (Gears 3's --gow3_menu_fps, shared with Gears 2 / Judgment since the 23 Nov parity pass): the front end
+// GitHub #101 (Gears 3's --gow3_menu_fps, shared with Gears 1 / 2 / Judgment since the 23 Nov parity pass): the front end
 // (title screen and its menus) ran at the player's limit - with none, hundreds of fps and the graphics card at 100 % on
 // a still menu. The signal is the file-open observer (SDK patch 32, chained through the shader reader): GearStart*.xxx
-// opened -> front end; a level package (*_P.xxx, or MP_*.xxx without _LOC_) -> a level, the player's limit again.
+// (WarStart.xxx in Gears 1) opened -> front end; a level package (*_P.xxx, or MP_*.xxx without _LOC_; not the script
+// packages GearGame_P / WarGame_p) -> a level, the player's limit again.
 // Only file opens decide, so a wrong answer can only leave a menu uncapped, never cap gameplay.
 namespace ue3 {
 
 // Installs the listener once (call at start-up, before the game opens a file). `option` names the game's cvar for the
-// log lines (e.g. "gow2_menu_fps"); `fps` is its value at start-up (<= 0: nothing is installed).
-void InstallMenuFpsCap(std::string_view option, int32_t fps);
-// True while GearStart*.xxx is the last front-end / level package the game opened.
+// log lines (e.g. "gow2_menu_fps"); `fps` is its value at start-up (<= 0: nothing is installed). `front_end` is the
+// front-end package's name, lower case: "gearstart" (Gears 2 / 3 / Judgment) or "warstart" (Gears 1, its
+// [URL] LocalMap=WarStart).
+void InstallMenuFpsCap(std::string_view option, int32_t fps, std::string_view front_end = "gearstart");
+// True while the front-end package is the last front-end / level package the game opened.
 bool InMenuFront();
 // The limit for a front-end frame, as Gears 3's Gow3MaxTickRate: `player` is the player's limit (< 0 none, 0 the
 // game's own, N), `engine` the engine's own value (0 = none), `menu` the menu cap (> 0). Never above `menu`.

@@ -1,4 +1,4 @@
-// Layer 2 (Unreal Engine 3 on the 360): the front-end frame-rate cap (GitHub #101), shared by Gears 2 and Judgment.
+// Layer 2 (Unreal Engine 3 on the 360): the front-end frame-rate cap (GitHub #101), shared by Gears 1, Gears 2 and Judgment.
 // Gears 3 keeps its own copy in its game_patches.cpp (the same listener also drives its per-level commands and split
 // layout there). See ue3/menu_fps.h.
 #include "ue3/menu_fps.h"
@@ -20,6 +20,7 @@ namespace {
 std::atomic<bool> g_menu_front{false};
 std::string g_menu_option;  // set once at start-up, before the listener is installed
 int32_t g_menu_fps = 0;
+std::string g_front_end = "gearstart";  // the front-end package's name, lower case
 
 bool HasNoCase(std::string_view s, std::string_view needle) {
   return std::search(s.begin(), s.end(), needle.begin(), needle.end(), [](char a, char b) {
@@ -28,11 +29,12 @@ bool HasNoCase(std::string_view s, std::string_view needle) {
 }
 
 // A level's persistent package: *_P.xxx (campaign), or MP_*.xxx (versus / Horde maps, not their _LOC_ files; Gears 3
-// GitHub #157). GearGame_P.xxx is the game's script package, loaded with every level, so it says nothing.
+// GitHub #157). GearGame_P.xxx (Gears 1: WarGame_p.xxx) is the game's script package, loaded with every level, so it
+// says nothing.
 bool IsLevel(std::string_view path) {
   const size_t slash = path.find_last_of("\\/");
   const std::string_view name = slash == std::string_view::npos ? path : path.substr(slash + 1);
-  if (HasNoCase(name, "geargame_p.xxx")) return false;
+  if (HasNoCase(name, "geargame_p.xxx") || HasNoCase(name, "wargame_p.xxx")) return false;
   if (HasNoCase(name, "_p.xxx")) return true;
   return name.size() > 3 && std::tolower(static_cast<unsigned char>(name[0])) == 'm' &&
          std::tolower(static_cast<unsigned char>(name[1])) == 'p' && name[2] == '_' && HasNoCase(name, ".xxx") &&
@@ -41,7 +43,7 @@ bool IsLevel(std::string_view path) {
 
 void OnMenuFileOpened(std::string_view path, const std::filesystem::path*) {
   if (!HasNoCase(path, ".xxx")) return;
-  if (HasNoCase(path, "gearstart")) {
+  if (HasNoCase(path, g_front_end)) {
     if (!g_menu_front.exchange(true)) REXLOG_INFO("{}: front end ({}) - limit {} fps", g_menu_option, path, g_menu_fps);
   } else if (IsLevel(path) && g_menu_front.exchange(false)) {
     REXLOG_INFO("{}: level {} - the player's limit again", g_menu_option, path);
@@ -50,9 +52,10 @@ void OnMenuFileOpened(std::string_view path, const std::filesystem::path*) {
 
 }  // namespace
 
-void InstallMenuFpsCap(std::string_view option, int32_t fps) {
+void InstallMenuFpsCap(std::string_view option, int32_t fps, std::string_view front_end) {
   if (fps <= 0) return;
   g_menu_option = option;
+  g_front_end = front_end;
   g_menu_fps = fps;
 #if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
   Ue3ShaderPrebuildChainFileOpened(&OnMenuFileOpened);

@@ -27,15 +27,11 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `option first_person_third_person_moves` | G2 G3 J | G1 | |
 | `option first_person_weapon` | G2 G3 J | G1 | |
 | `option first_person_head_control` | G2 | G1 G3 J | |
-| `option trilinear` | G1 G3 J | G2 | smooth blending between texture detail levels |
-| `option fast_mip_fade` | G3 J | G1 G2 | sharper textures at once instead of fading in (pop-in) |
+| `option fast_mip_fade` | G3 J | G2 (G1 n/a) | G2: its Coalesced_int.bin has no MipFadeInSpeed key (J's has) [V]; whether G2's engine reads the key if added is unknown (packages compressed) - an ini edit is harmless to try, needs a test run. G1 doesn't apply: its Coalesced.ini has no mip-fade or MipFilter keys [V] |
 | `option loading_fps` | J | G1 G2 G3 | frame-rate cap while loading (GitHub #38: endless loads at high fps) - frame-rate pattern |
 | `option loading_max_s` | J | G1 G2 G3 | (with loading_fps) |
 | `option loading_stream_s` | J | G1 G2 G3 | (with loading_fps) |
 | `option loading_tail_s` | J | G1 G2 G3 | (with loading_fps) |
-| `option menu_fps` | G2 G3 J | G1 | menu frame-rate cap (GitHub #101); G2 / J share layer 2 `ue3/menu_fps.h` since 23 Nov. G1 needs a MaxTickRate hook first |
-| `option tick_floor_fps` | G2 G3 J | G1 | engine tick floor with no fps limit (G2 / J since 23 Nov). G1 needs a MaxTickRate hook first |
-| `hook MaxTickRate` | G2 G3 J | G1 | the engine's frame-rate limit read; G1 limits through PresentInterval |
 | `option checkpoint_stream_wait` | G3 | G1 G2 J | GitHub #226: streamed sections fully loaded after a checkpoint load |
 | `option checkpoint_stream_wait_ms` | G3 | G1 G2 J | (with checkpoint_stream_wait) |
 | `option shadow_cap` | G2 G3 | G1 J | Smart Shadow Cuts (parked for G1 / J on 23 Nov - reopen) |
@@ -50,8 +46,8 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `option skip_coalesced_check` | G2 | G1 G3 J | faster start-up config load; G1 has the hooks without the option |
 | `hook CoalescedResult` | G1 G2 | G3 J | |
 | `hook CoalescedSkip` | G1 G2 | G3 J | |
-| `option texture_stats_off` | G2 | G1 G3 J | half of Canary's texture streaming fix |
-| `hook TextureStatsOff` | G2 | G1 G3 J | |
+| `option texture_stats_off` | G2 | G3 J (G1 n/a) | Canary's G2-only patch (RHIGetTextureMemoryStats -> FALSE); no leaf of its shape in J's code [V]; G3 / J need the streamer's budget call found first. G1 doesn't apply: Canary's G1 texture patch is only the pool size [S notes], no such leaf in G1 [V] |
+| `hook TextureStatsOff` | G2 | G3 J | |
 | `option show_fps` | G2 G3 | G1 J | the engine's own FPS display |
 | `option profile_100` | G2 J | G1 G3 | |
 | `option profile_100_file` | G2 J | G1 G3 | |
@@ -171,4 +167,8 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 | `option unlock_aftermath_setting` | J | |
 | `hook NoFilmGrain` | J | J's film grain |
 | `option no_film_grain` | J | |
+| `option menu_fps` | - | (all four since 23 Nov: G1 / G2 / J share layer 2 `ue3/menu_fps.h`; G3 keeps its own listener) |
+| `hook MaxTickRate` | G2 G3 J | G1's 2006 engine has no GetMaxTickRate (no frame smoothing; no function of that shape in its code [V], J's matches at 0x8255E200); G1 limits in `PresentInterval` |
+| `option tick_floor_fps` | G2 G3 J | G1: no engine tick-rate read to floor (no GetMaxTickRate, see above); its limiter is the render thread's present interval |
+| `option trilinear` | G1 G3 J | G2 does it as a launcher ini edit (`~=MipFilter=point>MipFilter=linear`, gears_settings.cpp) |
 | `hook ShaderCreatedVertex` | - | (all four since 23 Nov: patch 0066) |
