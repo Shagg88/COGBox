@@ -14,6 +14,9 @@
 #include <dxgi.h>
 #if !defined(_M_ARM64)
 #include <intrin.h>
+#include <tlhelp32.h>
+#include <cwctype>
+#include <iterator>
 #endif
 
 #if !defined(_M_ARM64)
@@ -233,6 +236,42 @@ void XenosReportD3D12Device(uint32_t vendor, uint32_t device, const char* name) 
   LogVendorChoice();
 }
 
+
+// Shagg 22 Nov: which program started the game - COGBox's own launcher (CogBox.exe), Explorer (the exe run directly),
+// or a third-party launcher (RecompLauncher, Quiver, GameNative ...). Many reports come from setups we never built.
+static void LogLauncher() {
+  const DWORD self = GetCurrentProcessId();
+  DWORD parent = 0;
+  if (HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0); snap != INVALID_HANDLE_VALUE) {
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof(pe);
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe))
+      if (pe.th32ProcessID == self) { parent = pe.th32ParentProcessID; break; }
+    CloseHandle(snap);
+  }
+  std::wstring parent_path;
+  if (parent) {
+    if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, parent)) {
+      wchar_t buf[1024];
+      DWORD n = DWORD(std::size(buf));
+      if (QueryFullProcessImageNameW(h, 0, buf, &n)) parent_path.assign(buf, n);
+      CloseHandle(h);
+    }
+  }
+  std::wstring name = parent_path.substr(parent_path.find_last_of(L"\\/") == std::wstring::npos ? 0 : parent_path.find_last_of(L"\\/") + 1);
+  for (wchar_t& c : name) c = wchar_t(towlower(c));
+  const char* kind = parent_path.empty() ? "unknown (parent gone or not readable)"
+                     : name == L"cogbox.exe" ? "COGBox launcher"
+                     : name == L"explorer.exe" ? "started directly (Explorer / shortcut)"
+                     : (name == L"cmd.exe" || name == L"powershell.exe" || name == L"pwsh.exe" || name == L"windowsterminal.exe")
+                         ? "started from a command line / script"
+                         : "OTHER LAUNCHER (not COGBox)";
+  wchar_t exe[1024];
+  const DWORD en = GetModuleFileNameW(nullptr, exe, DWORD(std::size(exe)));
+  REXLOG_INFO("pc: started by: {} | parent pid {} {} | this exe {}", kind, parent,
+              parent_path.empty() ? std::string("-") : Utf8(parent_path.c_str()), Utf8(std::wstring(exe, en).c_str()));
+}
+
 void XenosLogSystemReport(const char* game) {
 #if defined(_M_ARM64)
   const char* arch = "ARM64";
@@ -251,6 +290,7 @@ void XenosLogSystemReport(const char* game) {
   EnumDisplayMonitors(nullptr, nullptr, OnMonitor, reinterpret_cast<LPARAM>(&screens));
   LogControllers();
   REXLOG_INFO("pc: command line: {}", Utf8(GetCommandLineW()));
+  LogLauncher();
   REXLOG_INFO("pc: ---- end of PC description ----");
   XenosInstallSaveWatch();  // GitHub #55: every game calls this report once, right after logging starts
 }
