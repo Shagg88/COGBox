@@ -2742,8 +2742,14 @@ class VulkanBackend final : public Backend {
     uint32_t f[3];
     std::memcpy(&f[0], &d.lod_bias, 4); std::memcpy(&f[1], &d.min_lod, 4); std::memcpy(&f[2], &d.max_lod, 4);
     key ^= (uint64_t(f[0]) << 19) ^ (uint64_t(f[1]) * 0x9E3779B97F4A7C15ull) ^ (uint64_t(f[2]) * 0xC2B2AE3D27D4EB4Full);
-    auto it = sampler_objects_.find(key);
-    if (it != sampler_objects_.end()) return it->second;
+    // perf batch 2: the key above folds the floats in with XOR, so two descriptions can share it - a hit must also
+    // match the whole description (a clash probes the next key; D3D12 compares samplers exactly too).
+    for (;; ++key) {
+      auto it = sampler_objects_.find(key);
+      if (it == sampler_objects_.end()) break;
+      if (it->second.desc == d) return it->second.sampler;
+      ++stats_.sampler_table_hash_clashes;
+    }
     static const VkSamplerAddressMode am[] = {VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
                                               VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE,
                                               VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER};
@@ -2766,7 +2772,7 @@ class VulkanBackend final : public Backend {
       REXLOG_WARN("gow2_renderer: Vulkan sampler creation failed");
       return VK_NULL_HANDLE;
     }
-    sampler_objects_[key] = smp;
+    sampler_objects_[key] = {d, smp};
     return smp;
   }
   VkDescriptorSet AllocateSet(uint32_t which) {
@@ -2890,15 +2896,26 @@ class VulkanBackend final : public Backend {
       if (!smp[i]) return VK_NULL_HANDLE;  // outside review: no sampler - skip the draw, never write a null descriptor
       h = (h ^ uint64_t(reinterpret_cast<uintptr_t>(smp[i]))) * 0x100000001B3ull;
     }
+    // perf batch 2: compare the 32 sampler handles on a hit (was the 64-bit hash alone, as the view sets were
+    // before batch 1). Sampler objects live until shutdown, so a handle names one sampler state for good.
+    sampler_key_.resize(32);
+    for (uint32_t i = 0; i < 32; ++i) sampler_key_[i] = uint64_t(reinterpret_cast<uintptr_t>(smp[i]));
     auto it = sampler_sets_.find(h);
-    if (it != sampler_sets_.end()) return UseCached(it->second);
+    if (it != sampler_sets_.end()) {
+      if (it->second.key == sampler_key_) { ++stats_.sampler_table_hits; return UseCached(it->second); }
+      ++stats_.sampler_table_hash_clashes;
+      sampler_sets_.erase(it);  // another table with the same hash: made fresh below
+    }
     VkDescriptorSet set = AllocateSet(2);
     if (!set) return VK_NULL_HANDLE;
     VkDescriptorImageInfo ii[32];
     for (uint32_t i = 0; i < 32; ++i) ii[i] = {smp[i], VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
     VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 0, 0, 32, VK_DESCRIPTOR_TYPE_SAMPLER, ii, nullptr, nullptr};
     vk_.vkUpdateDescriptorSets(device_, 1, &wr, 0, nullptr);
-    sampler_sets_[h] = {set, pool_index_};
+    CachedSet& made = sampler_sets_[h];
+    made.set = set;
+    made.pool = pool_index_;
+    made.key = sampler_key_;
     ++stats_.sampler_tables_written;
     return set;
   }
@@ -2935,8 +2952,20 @@ class VulkanBackend final : public Backend {
       if (const TextureHandle th = views_[bound_views_[k]].texture; Valid(th)) textures_[th].read_epoch = barrier_epoch_;
     if (guest_writable_) outside_dirty_ = true;
     // Descriptor sets before the pass (allocation may switch pools; no commands involved).
-    if (dirty_views_ || !cur_view_set_) { cur_view_set_ = ViewSet(); dirty_views_ = false; dirty_sets_ = true; }
-    if (dirty_samplers_ || !cur_sampler_set_) { cur_sampler_set_ = SamplerSet(); dirty_samplers_ = false; dirty_sets_ = true; }
+    // perf batch 2: a lookup that finds the set already bound (a table changed and changed back, a texture slot
+    // touched with the same view) needs no rebind. Safe: a set bound in this command buffer has its pool marked in
+    // use (UseCached / AllocateSet), so its pool is never reset and the handle cannot be reused with other contents
+    // before this submission; a new command buffer sets dirty_sets_ anyway.
+    if (dirty_views_ || !cur_view_set_) {
+      const VkDescriptorSet s = ViewSet();
+      if (s != cur_view_set_) { cur_view_set_ = s; dirty_sets_ = true; }
+      dirty_views_ = false;
+    }
+    if (dirty_samplers_ || !cur_sampler_set_) {
+      const VkDescriptorSet s = SamplerSet();
+      if (s != cur_sampler_set_) { cur_sampler_set_ = s; dirty_sets_ = true; }
+      dirty_samplers_ = false;
+    }
     if (!cur_view_set_ || !cur_sampler_set_) return false;
     // 0.6.1: the game's open query needs a slot for its part in the coming pass, and a block is taken outside a pass
     if (gq_open_ && !gq_part_active_ && (gq_block_ == UINT32_MAX || gq_block_used_ >= kGqBlock)) {
@@ -3453,7 +3482,7 @@ class VulkanBackend final : public Backend {
       for (auto& [k, l] : lib_fs_) if (l.pipeline) vk_.vkDestroyPipeline(device_, l.pipeline, nullptr);
       for (auto& [k, l] : lib_out_) if (l.pipeline) vk_.vkDestroyPipeline(device_, l.pipeline, nullptr);
       for (auto& sh : shaders_) if (sh.module) vk_.vkDestroyShaderModule(device_, sh.module, nullptr);
-      for (auto& [k, smp] : sampler_objects_) vk_.vkDestroySampler(device_, smp, nullptr);
+      for (auto& [k, so] : sampler_objects_) vk_.vkDestroySampler(device_, so.sampler, nullptr);
       for (auto& dp : pools_) vk_.vkDestroyDescriptorPool(device_, dp.pool, nullptr);
       for (auto& dp : compute_pools_) vk_.vkDestroyDescriptorPool(device_, dp.pool, nullptr);
       for (auto& sh : shaders_) {
@@ -4408,11 +4437,11 @@ class VulkanBackend final : public Backend {
   struct CachedSet {
     VkDescriptorSet set = VK_NULL_HANDLE;
     uint32_t pool = UINT32_MAX;
-    std::vector<uint64_t> key;  // perf 22 Nov: view sets only - the full table, compared on a hit
+    std::vector<uint64_t> key;  // the full table, compared on a hit (view sets: perf 22 Nov; sampler sets: batch 2)
   };
   // perf 22 Nov: per texture handle, bumped when the texture is destroyed or remade (part of every view-set key)
   std::vector<uint32_t> tex_gen_;
-  std::vector<uint64_t> view_key_;
+  std::vector<uint64_t> view_key_, sampler_key_;
   uint64_t TextureGen(TextureHandle h) const { return h < tex_gen_.size() ? tex_gen_[h] : 0u; }
   void BumpTextureGen(TextureHandle h) {
     if (h >= tex_gen_.size()) tex_gen_.resize(size_t(h) + 1, 0u);
@@ -4428,7 +4457,8 @@ class VulkanBackend final : public Backend {
     return c.set;
   }
   std::unordered_map<uint64_t, CachedSet> view_sets_, sampler_sets_;
-  std::unordered_map<uint64_t, VkSampler> sampler_objects_;
+  struct SamplerObject { SamplerDesc desc; VkSampler sampler = VK_NULL_HANDLE; };  // perf batch 2: exact match
+  std::unordered_map<uint64_t, SamplerObject> sampler_objects_;
   TargetSet targets_;
   bool in_pass_ = false;
   std::vector<TextureHandle> att_layout_;  // patch 0100: textures put in an attachment layout, not yet back in GENERAL
