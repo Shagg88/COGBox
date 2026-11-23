@@ -200,6 +200,10 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_chapter_hold, false, "Gears2",
                     "picture stays, with the Loading shaders indicator, and the game waits behind it. Nothing is held "
                     "when they are built already (a second visit, a checkpoint), nor mid-play. Needs the recipe pack, "
                     "--ue3_shader_prebuild and our own presenter");
+REXCVAR_DEFINE_BOOL(gow2_renderer_recipe_pack_current_first, true, "Gears2",
+                    "GitHub #437: the recipe pack builds the chapter being loaded first - a chapter list is 'hot' (its "
+                    "pipelines go ahead of every other list's) as soon as the game opens a map package that holds a "
+                    "quarter of its marker shaders, not only once one is drawn. false = the 0.6.7 order");
 REXCVAR_DEFINE_INT32(gow2_renderer_chapter_hold_max_ms, 120000, "Gears2",
                     "0.6.1: the longest the frames after one loading screen may be held for the wanted pipelines (ms)");
 REXCVAR_DEFINE_INT32(gow2_renderer_play_hold_draws, 0, "Gears2",
