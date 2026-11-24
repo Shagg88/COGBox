@@ -863,6 +863,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     social_restart(a);   // social step 3: the SOCIAL tab's worker, when the multiplayer server is enabled
     // job 523: Wine / Proton (Linux, Steam Deck) - ntdll has wine_get_version there
     a.wine = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
+    if (getenv("COGBOX_WINE")) a.wine = true;   // test switch: the Proton / Wine buttons and notes on Windows - layout shots only; don't Play
     // job 643: a Mac (CrossOver / Game Porting Toolkit) - Wine's host system is Darwin there. Vulkan can't start on a
     // Mac (CrossOver offers Vulkan 1.2, the renderer needs 1.3: GitHub #36 / #40), so DirectX 12 (D3DMetal) is its default.
     if (a.wine) {
@@ -1037,6 +1038,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             }
         }
         ImGui_ImplSDL3_NewFrame();
+        if (const char *t = getenv("COGBOX_MOUSE")) {   // test switch: the mouse held at x,y in the window (hover shots)
+            float mx = 0, my = 0;
+            if (sscanf(t, "%f,%f", &mx, &my) == 2) ImGui::GetIO().AddMousePosEvent(mx, my);
+        }
         ImGui::NewFrame();
         if (a.padCaptureActive && pad_capturing(a)) {   // r48: a click while a controller button is awaited only cancels
             static const ImGuiKey k_mouse[3] = { ImGuiKey_MouseLeft, ImGuiKey_MouseRight, ImGuiKey_MouseMiddle };
@@ -1069,8 +1074,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         textLastFrame = io.WantTextInput;
         // job 526: Start (Options) or Esc on the library screen asks to close COGBox (asked after this frame's drawing, so
         // the same Esc doesn't also answer it)
-        if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
-            ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
+        if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+            if (ask_before_closing(a.ini)) ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
+            else a.quit = true;   // GitHub #443: the question turned off (quitAskable: never while a game runs)
+        }
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 8, 8, 10, 255);
         SDL_RenderClear(ren);

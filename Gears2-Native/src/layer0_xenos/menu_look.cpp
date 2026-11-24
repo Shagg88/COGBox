@@ -593,7 +593,21 @@ Action DrawSettings(const Look& L, SettingsPage& pg) {
         const int cur = std::clamp(int(std::lround(*r.value)), 0, n - 1);
         if (ImGui::BeginCombo("##v", (*r.choices)[size_t(cur)].c_str(), ImGuiComboFlags_HeightLarge)) {
           open_here = true;
-          for (int c = 0; c < n; ++c) {
+          // GitHub #443: COGBox's order (Render resolution by size; the value stays the index) - only when every
+          // entry is a choice and none is listed twice; otherwise index order as before
+          std::vector<int> list;
+          std::vector<bool> seen(size_t(n), false);
+          bool bad = false;
+          if (r.order) for (int c : *r.order) {
+            if (c < 0 || c >= n || seen[size_t(c)]) { bad = true; break; }
+            seen[size_t(c)] = true;
+            list.push_back(c);
+          }
+          if (!r.order || bad || list.empty()) {
+            list.clear();
+            for (int c = 0; c < n; ++c) list.push_back(c);
+          }
+          for (int c : list) {
             if ((*r.choices)[size_t(c)].empty()) continue;   // 0.6.6: no longer offered (the launcher sends it empty)
             ImGui::PushID(c);
             // menu3: only the picked (focused) entry is lit; the current value is plain text with a check mark
