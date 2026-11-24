@@ -88,8 +88,12 @@ New in 0.6.8
 - Gears 2 sees Gears 1's unlocks (Carmine, RAAM, Kim; #439).
 - Judgment: "Original Gears buttons" (Controls). "Use these keys in all games" (Controls). "Close COGBox?" can be
   turned off.
-- Fixed: button prompts stuck on Xbox / key caps; split-screen offers 2 players (the games' limit); launcher layout
-  on small screens (#443).
+- Vulkan with Vsync on no longer drops to half the screen's rate (a 180 Hz screen ran at 150 or 75 fps; 0.6.7 too).
+- Fixed: button prompts stuck on Xbox / key caps, and the chosen prompt style now applies with a controller too;
+  split-screen offers 2 players (the games' limit); launcher layout on small screens - buttons, status lights and
+  columns no longer cut off or shifting between tabs (#443, PR #444). The in-game menu (F8) lists resolutions by size.
+- A game whose program file is missing (for example removed by an antivirus) now says so, instead of "Not in this
+  release of COGBox yet".
 - Always start the games from COGBox: a game started another way shows a warning.
 
 

@@ -17,7 +17,12 @@ Smoother frame times without the freezes, and the reports against 0.6.7.
 - **Gears 2 reads Gears 1's unlocks** (#439, SDK patch 127, runtime 070).
 - Audio tab (PR #441, SDK patch 126), mod conflicts (PR #442), 1366 x 768 / 1600 x 900 (PR #440).
 - Judgment: Original Gears buttons. Use these keys in all games (by action). "Close COGBox?" Don't ask again.
-- Prompt style Xbox fixed; split-screen 1 or 2 players (#403); launcher layout fixes (#443).
+- Prompt style Xbox fixed and sent with a controller too; split-screen 1 or 2 players (#403); launcher layout fixes
+  (#443, PR #444: status lamps, no column shift between tabs, About wrap, plate hover; F8 menu lists resolutions by
+  size via an `order=` line).
+- **Vulkan vsync**: only IMMEDIATE is switched off now (MAILBOX allowed, with the cap at the refresh rate). FIFO dropped
+  a 179 Hz screen to 150 / 75 fps (0.6.7 too).
+- A missing game program (antivirus quarantine, partial unzip) says so instead of "Not in this release of COGBox yet".
 
 - **Always start the games from COGBox.** COGBox is not just a menu - it is the machine that runs the four
   recompiled games: it sets up the game files, renderer, settings, fixes, controllers and online play every time a
