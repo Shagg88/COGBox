@@ -193,6 +193,21 @@ void Ue3ChatPump(PPCContext&, uint8_t*) {
       }
     }
   }
+  // #452 (0.6.9): every change of "in a match" is logged with what decided it (at most 60 lines a run)
+  {
+    static int said = 0;
+    if (match != g_match.load(std::memory_order_relaxed) && said < 60) {
+      ++said;
+      std::string cls = hud ? obj::ObjectName(obj::ClassOf(hud)) : std::string("none");
+      int begun = -1, over = -1;
+      const uint32_t world = (hud && o.world >= 0) ? obj::Read32(pc + uint32_t(o.world)) : 0;
+      const uint32_t gri = (world && o.gri >= 0) ? obj::Read32(world + uint32_t(o.gri)) : 0;
+      if (gri && o.match_begun >= 0 && o.begun_mask) begun = (obj::Read32(gri + uint32_t(o.match_begun)) & o.begun_mask) != 0;
+      if (gri && o.match_over >= 0 && o.over_mask) over = (obj::Read32(gri + uint32_t(o.match_over)) & o.over_mask) != 0;
+      REXLOG_INFO("chat: match {} (HUD {}, players {}, GRI {:08X} begun {} over {})", match ? "on" : "off", cls, count, gri,
+                  begun, over);
+    }
+  }
   if (!match && g_match.load(std::memory_order_relaxed)) {   // the match ended: what was still waiting is not sent
     std::lock_guard<std::mutex> lock(g_sent_mutex);
     g_waiting.clear();
