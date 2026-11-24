@@ -1,0 +1,57 @@
+--- a/src/kernel/xam/apps/xgi_app.cpp	2026-11-24 13:52:34.151436247 -0800
++++ b/src/kernel/xam/apps/xgi_app.cpp	2026-11-24 13:52:34.156735738 -0800
+@@ -34,6 +34,7 @@
+ #include <rex/kernel/xam/private.h>
+ #include <rex/logging.h>
+ #include <rex/thread.h>
++#include <atomic>
+ 
+ namespace {
+ // The XUIDs of an XSessionJoin / Leave request; none when the array is not mapped.
+@@ -47,6 +48,18 @@
+ }
+ }  // namespace
+ 
++// ---- Gears2-Native SDK patch 128 (COGBox ticket-0017, Myth): a stats write / flush with a pointer that is not mapped (Gears 3 and Judgment
++// passed views 0x00000001 when a Horde match was left -> read of guest 0x1 = crash) is skipped and logged once, never read.
++namespace stats_guard {
++inline bool Mapped(rex::memory::Memory* mem, uint32_t ptr, uint32_t len) {
++  return ptr >= 0x10000 && len && uint64_t(ptr) + len <= 0x100000000ull && mem->LookupHeap(ptr) && mem->LookupHeap(ptr + len - 1);
++}
++inline void Skipped(const char* what, uint32_t ptr, uint32_t count) {
++  static std::atomic<int> said{0};
++  if (said.fetch_add(1) < 8) REXKRNL_WARN("xam_stats_store: {} pointer {:08X} (count {}) is not mapped - skipped (patch 128)", what, ptr, count);
++}
++}  // namespace stats_guard
++
+ // ---- Gears2-Native SDK patch 118: a local Live stats store (COGBox: Gears 3 Horde ribbon / attribute-modifier progress
+ // back at 0 after a restart - the stats calls below only logged, so whatever the title keeps in Live stats was lost).
+ // XSessionWriteStats / XSessionFlushStats: XSESSION_VIEW_PROPERTIES {dwViewId, dwNumProperties, pProperties} (12 bytes)
+@@ -108,10 +121,15 @@
+   std::lock_guard<std::mutex> lock(g_mu);
+   Load(title);
+   static int lines = 0;
++  if (views_ptr && num_views && !stats_guard::Mapped(mem, views_ptr, 12 * std::min<uint32_t>(num_views, 64))) {
++    stats_guard::Skipped(flush ? "flush views" : "write views", views_ptr, num_views);
++    return;
++  }
+   for (uint32_t i = 0; views_ptr && i < num_views && i < 64; ++i) {
+     const uint8_t* v = mem->TranslateVirtual(views_ptr + 12 * i);
+     const uint32_t view = rex::memory::load_and_swap<uint32_t>(v), np = rex::memory::load_and_swap<uint32_t>(v + 4),
+                    pp = rex::memory::load_and_swap<uint32_t>(v + 8);
++    if (pp && np && !stats_guard::Mapped(mem, pp, 24 * std::min<uint32_t>(np, 256))) { stats_guard::Skipped("properties", pp, np); continue; }
+     for (uint32_t j = 0; pp && j < np && j < 256; ++j) {
+       const uint8_t* p = mem->TranslateVirtual(pp + 24 * j);
+       const uint32_t id = rex::memory::load_and_swap<uint32_t>(p);
+@@ -140,6 +158,11 @@
+ bool Read(rex::memory::Memory* mem, uint32_t xuids_count, uint32_t xuids_ptr, uint32_t specs_count, uint32_t specs_ptr,
+           uint32_t results_size, uint32_t results_ptr) {
+   if (!REXCVAR_GET(xam_stats_store) || !results_ptr || !specs_ptr || !xuids_ptr || !xuids_count) return false;
++  if (specs_count > 64 || xuids_count > 64 || !stats_guard::Mapped(mem, specs_ptr, 136 * std::max<uint32_t>(specs_count, 1)) ||
++      !stats_guard::Mapped(mem, xuids_ptr, 8 * xuids_count) || !stats_guard::Mapped(mem, results_ptr, std::max<uint32_t>(results_size, 8))) {
++    stats_guard::Skipped("read", specs_ptr, specs_count);
++    return false;
++  }
+   const uint32_t title = TitleId();
+   std::lock_guard<std::mutex> lock(g_mu);
+   Load(title);
