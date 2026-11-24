@@ -65,7 +65,8 @@ Controller: the D-pad turns the carousel, LB / RB choose Play or Settings, A pre
 X opens the settings, Y gets box art. On a settings page LB / RB change tab, D-pad down past
 the last option reaches Library / Save / Play, and B jumps to Library.
 Keyboard: the arrow keys turn it, Enter plays, Esc goes back.
-To close COGBox with a controller: Start on the library screen (Esc on the keyboard) asks to quit.
+To close COGBox with a controller: Start on the library screen (Esc on the keyboard) asks to quit
+("Don't ask again" in that question, or About > "Ask before closing COGBox", turns the question off).
 PlayStation controllers work too; COGBox then shows Cross / Circle / Square / Triangle, L1 / R1
 instead of A / B / X / Y, LB / RB.
 
@@ -98,7 +99,7 @@ New in 0.6.8
 - Vulkan with Vsync on no longer drops to half the screen's rate (a 180 Hz screen ran at 150 or 75 fps; 0.6.7 too).
 - Fixed: button prompts stuck on Xbox / key caps, and the chosen prompt style now applies with a controller too;
   split-screen offers 2 players (the games' limit); launcher layout on small screens - buttons, status lights and
-  columns no longer cut off or shifting between tabs (#443, PR #444). The in-game menu (F8) lists resolutions by size.
+  columns no longer cut off or shifting between tabs (#443, PR #444). The in-game menu lists resolutions by size.
 - A game whose program file is missing (for example removed by an antivirus) now says so, instead of "Not in this
   release of COGBox yet".
 - Always start the games from COGBox: a game started another way shows a warning.
@@ -477,12 +478,8 @@ hour, no problems; thanks to LenzTRO, #209). The games' other modes, Gears of Wa
 are less tested - please try them and tell us (on GitHub, issue #72).
 
 What every player needs
-- The same COGBox version on every PC (0.4.0) and your own copy of the game with its title update.
-  Every player must use the same game.
-- Gears 3 on 0.4.0: System Link needs a two-PC test. The friendly-fire fix (#68) changes the random
-  numbers and the "online ID" Gears 3 sees. COGBox's own System Link code finds PCs by their IP address
-  and doesn't use those IDs, but Gears 3 co-op on 0.4.0 hasn't been tried on two PCs yet - please
-  tell us how it goes in a GitHub issue.
+- The latest COGBox release, the SAME release on every PC, and your own copy of the game with its
+  title update. Every player must use the same game.
 - Turn OFF internet VPNs such as NordVPN, ExpressVPN or Surfshark while you play. They do not link
   PCs together, and they can make System Link use the wrong network.
 
@@ -526,12 +523,14 @@ If it doesn't work
   System Link and helps us fix it.
 Not yet: voice chat. With the box off the game works exactly as before.
 
-Hosting from Linux / Steam Deck (not confirmed yet): the games host on network port 1000, and Linux
-lets only administrator programs use ports below 1024, so a game hosted on Linux can't be joined
-(joining should work). We expect this to fix it but haven't been able to test it - please tell us whether
-it works. In a terminal (Steam Deck: Desktop Mode, Konsole; sudo needs a password set with passwd):
+Hosting from Linux / Steam Deck: the games host on network port 1000, and Linux lets only
+administrator programs use ports below 1024, so without this a game hosted on Linux can't be joined
+(joining works either way). Players confirmed this lets Linux / Proton host (GitHub #434). In a
+terminal (Steam Deck: Desktop Mode, Konsole; sudo needs a password set with passwd):
     sudo sysctl -w net.ipv4.ip_unprivileged_port_start=1000
 It lasts until the next restart, and lets any program use ports 1000-1023 without administrator rights.
+To keep it after a restart (once):
+    echo 'net.ipv4.ip_unprivileged_port_start=1000' | sudo tee /etc/sysctl.d/99-cogbox-hosting.conf
 
 Linux and Steam Deck (Proton) - experimental
 ---------------------------------------------
@@ -542,8 +541,9 @@ Linux and Steam Deck (Proton) - experimental
 4. Start it from Steam. On a small screen like the Steam Deck's, COGBox starts maximised and
    borderless. Add your copy as on Windows.
 Under Proton COGBox skips exclusive fullscreen, Reflex and Anti-Lag (the compositor owns the
-screen). The games use Vulkan there by default; DirectX 12 can be tried with "Graphics API on
-Proton / Wine" (testing). Steam Input should present the controller as a standard gamepad (not
+screen). Since 0.6.8 the games use DirectX 12 there by default (through vkd3d-proton - smoother on
+the Steam Deck); if DirectX 12 can't start, COGBox switches that game to Vulkan and starts it again
+by itself. Choose either with "Graphics API on Proton / Wine" on the Graphics tab. Steam Input should present the controller as a standard gamepad (not
 yet confirmed on a Steam Deck - reports welcome). Problem reports from Linux
 help a lot: "Make a problem report" saves them in COGBox's reports folder (and opens it).
 
@@ -587,6 +587,11 @@ If a game closes unexpectedly, COGBox says what the exit code means. It also off
 problem report: one zip on your desktop with the log, the settings and a description of your PC.
 It has no saves and no game files, and your Windows user name is taken out. Nothing is sent
 anywhere. Attach it to a ticket at https://github.com/Shagg88/COGBox/issues
+
+A game says "<program> is missing" (for example gow2.exe): its program file is gone from the game's
+port folder - usually an antivirus quarantined it, or the unzip stopped early. Restore it from the
+antivirus's quarantine (Windows Security > Virus & threat protection > Protection history), or unzip
+the same COGBox release again over the folder; games, saves and settings are kept.
 
 The game uses the wrong graphics card (PCs with two or more): COGBox picks the card with the most
 video memory of its own, and between cards with about as much, the one your monitor is plugged

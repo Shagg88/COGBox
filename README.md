@@ -77,8 +77,11 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
   frame generation (AMD FSR, NVIDIA DLSS on RTX 40/50; experimental).
 - **Lower input lag:** NVIDIA Reflex and AMD Anti-Lag 2 where your GPU has them.
 - **Keyboard and mouse** or **Xbox / PlayStation controllers**, with button prompts that follow what you use, and
-  DualSense adaptive triggers in all four games (experimental, off by default).
-- **Split-screen co-op** in all four games, and **System Link** LAN co-op (experimental).
+  DualSense adaptive triggers in all four games (experimental, off by default). One click gives every game the same
+  keys (matched by action), and Judgment can use the original Gears button layout.
+- **Audio options:** output device, speaker setup (stereo, 5.1, 7.1) and night mode.
+- **Split-screen co-op** for 2 players in all four games (the games' own limit), and **System Link** LAN co-op
+  (experimental).
 - **Online multiplayer** (0.6.0, off by default): peer to peer through COGBox's own matchmaking. All players need the
   latest COGBox release (the same one) for a smooth game.
 - **Insane from the start**, **achievements** in all four games, chapter select, and an **in-game menu**
@@ -117,7 +120,7 @@ the buttons for your controller or keyboard.
 **DLC:** drop the DLC's folder or package onto COGBox, or use **Downloadable content** on the game's About tab.
 
 **Players and profiles:** click the **PLAYER** plate to set your name and picture. Each person can have their own
-profile with their own saves; players 2-4 can be signed out from their cards.
+profile with their own saves; player 2 can be signed out from their card.
 
 **Saves from Xenia or an Xbox 360:** on a game's About tab, **Import saves...** brings in your own saves of that game
 from Xenia (choose its `content` folder) or from an Xbox 360 (the `Content` folder copied from the console's USB stick
@@ -134,9 +137,12 @@ settings are kept.
 1. Unpack the COGBox `.7z` into your home folder (on a Steam Deck, in Desktop Mode).
 2. In Steam: **Games > Add a Non-Steam Game**, set the file type to **All Files**, and pick `CogBox.exe`.
 3. In its **Properties > Compatibility**, force **Proton Experimental** (or a recent Proton such as 11.0, or GE-Proton).
-4. Start COGBox. On its first start under Proton it applies recommended settings (Vulkan, FSR where the build has it,
-   60 fps on the Steam Deck); if you brought settings from Windows, it offers them on the About tab instead. It greys
-   out what can't work under Proton, with the reason.
+4. Start COGBox. On its first start under Proton it applies recommended settings (60 fps on the Steam Deck); if you
+   brought settings from Windows, it offers them on the About tab instead. It greys out what can't work under Proton,
+   with the reason.
+   **Renderer:** since 0.6.8 the games run **DirectX 12** under Proton by default (through vkd3d-proton - smoother on
+   the Steam Deck, and it gets every fix first). If DirectX 12 can't start on your PC, COGBox switches that game to
+   Vulkan and starts it again by itself. You can choose either under **Graphics > Graphics API on Proton / Wine**.
 5. Add your games with **Look for my games** or **Choose a folder...** (your Linux files are under `Z:`).
 
 The first minutes of each game can stutter while shaders are built; **Prepare all shaders now** on the Graphics tab
@@ -171,6 +177,11 @@ zip.
 Common causes: a CPU without AVX2, an old graphics driver, or a different release of the game than the port is made for
 (COGBox warns you when you add it).
 
+**A game says its program is missing** (for example "gow2.exe is missing"): the game's program file is gone from its
+folder - usually an antivirus quarantined it, or the unzip stopped early. Restore it from your antivirus's quarantine
+(Windows Security > Virus & threat protection > Protection history), or unzip the same COGBox release again over the
+folder; your games, saves and settings are kept.
+
 **The game uses the wrong graphics card** (PCs with two or more): COGBox picks the card with the most video memory of
 its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and
 Vulkan. To choose one yourself, open a game's **Graphics** tab and pick the card in the **Graphics card** list
@@ -202,8 +213,9 @@ The full text, including takedown requests, is in [`LEGAL.md`](LEGAL.md); what C
 
 ## What's coming
 
-Plans, not promises: Vulkan as the default, better frame generation, texture packs, multi-core
-rendering, more controllers and accessibility options, and tested Linux / Steam Deck support.
+Plans, not promises: upscaling at every render resolution (with a new Balanced mode), shader packs that cover every
+chapter so first plays stutter less, better frame generation, multi-core rendering, more controllers and accessibility
+options, and tested Linux / Steam Deck support.
 
 ## Community translations
 
@@ -223,6 +235,7 @@ Thank you to everyone who has contributed code, translations, testing and tips (
 - **Hevesi J.**
 - **LenzTRO**
 - **francoissubke-blip**
+- **ripdajacker**
 
 ## Thank you
 
