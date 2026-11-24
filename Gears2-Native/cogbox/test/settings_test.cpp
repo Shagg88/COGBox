@@ -483,6 +483,27 @@ int summary() {
                         std::cout << "FAIL 4K Performance / AO half (" << why << "): game " << static_cast<int>(g) << ", lines " << lines
                                   << ", " << out << "x, mode " << mode << ", scene " << scene << "x\n"; ++fails; }
                 }
+    // GitHub #436: 768p and 900p are the true-lines path at 768 / 900 lines with an exe that has it, and the upscaled
+    // 720p (as the old 1080p) without; a 1366 x 768 window sends that size
+    for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
+        for (int lines = 0; lines <= 1; ++lines)
+            for (int res : { 6, 7 }) {
+                Environment e; e.update_ready = true;
+                e.cap.exe_has = [lines](const std::string& n) { return lines || n.find("native_lines") == std::string::npos; };
+                e.cap.runtime_has = [](const std::string&) { return true; }; e.cap.file_next_to_exe = e.cap.runtime_has;
+                Store st; Settings s = st.view(g, e);
+                s.set("Resolution", res); s.set("Fullscreen", 0); s.set("WindowSize", 6);
+                const std::vector<std::string> a = build_args(g, effective_version(g, s, e), s, e, nullptr);
+                auto has = [&](const std::string& v) { for (const std::string& x : a) if (x == v) return true; return false; };
+                static const char* const k_nl[4] = { "gow2", "gow3", "gowj", "gow1" };
+                const std::string want = std::string("--") + k_nl[static_cast<int>(g)] + "_native_lines=" + (res == 6 ? "768" : "900");
+                std::string why;
+                if (has(want) != (lines != 0)) why = "native lines";
+                else if (has("--gow2_present_upscale_filter=lanczos") == (lines != 0)) why = "upscaled fallback";
+                else if (!has("--gow2_renderer_resolution_scale=1")) why = "render scale";
+                else if (!has("--window_width=1366") || !has("--window_height=768")) why = "1366 x 768 window";
+                if (!why.empty()) { std::cout << "FAIL #436 768p / 900p (" << why << "): game " << static_cast<int>(g) << ", lines " << lines << ", choice " << res << "\n"; ++fails; }
+            }
     // 0.6.4 (GitHub #341): the texture cache - Auto sends nothing (512) without a texture pack and 2048 with one; a size
     // other than 512 is sent as picked; nothing for an exe without the cvar
     for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
