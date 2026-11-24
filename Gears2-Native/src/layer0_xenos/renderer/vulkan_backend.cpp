@@ -2133,6 +2133,9 @@ class VulkanBackend final : public Backend {
         async_us_.fetch_add(us);
         async_bytes_.fetch_add(job.bytes);
         for (uint64_t m = async_max_us_.load(); us > m && !async_max_us_.compare_exchange_weak(m, us);) {}
+        if (us >= 5'000'000)  // GitHub #443: name every pipeline the driver needs 5 s or more for
+          REXLOG_WARN("gow2_renderer: slow pipeline: the driver took {:.1f} s for a Vulkan pipeline (fragment shader "
+                      "{:016X}; {:.1f} KB SPIR-V)", double(us) / 1e6, job.ps_hash, double(job.bytes) / 1024.0);
       }
       {
         std::lock_guard<std::mutex> lock(job_mutex_);

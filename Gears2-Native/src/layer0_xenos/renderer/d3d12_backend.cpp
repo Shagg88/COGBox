@@ -4924,6 +4924,15 @@ class D3D12Backend final : public Backend {
         built_by_priority_[job->priority % kPipelineClasses].fetch_add(1, std::memory_order_relaxed);
         uint64_t m = async_max_us_.load(std::memory_order_relaxed);
         while (us > m && !async_max_us_.compare_exchange_weak(m, us, std::memory_order_relaxed)) {}
+        // GitHub #443 (one pipeline took a Steam Deck's driver 213 s): name every pipeline the driver needs 5 s or more for,
+        // so it can be built earlier or looked at
+        if (us >= 5'000'000) {
+          std::string name;
+          for (wchar_t c : job->library_name) name += c < 128 ? char(c) : '?';
+          REXLOG_WARN("gow2_renderer: slow pipeline: the driver took {:.1f} s for pipeline {} ({}; {:.1f} KB bytecode, "
+                      "priority {})", double(us) / 1e6, job->handle, name.empty() ? "no library name" : name,
+                      double(bytes) / 1024.0, int(job->priority));
+        }
       }
       if (SUCCEEDED(hr)) {
         p.pso = pso;
