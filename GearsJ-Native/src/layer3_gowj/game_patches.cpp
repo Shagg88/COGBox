@@ -1127,3 +1127,73 @@ void GowjApplyUltrawideIfRequested(rex::Runtime* runtime) {
   const bool a = rex::cvar::SetFlagByName("gow2_present_frame_aspect", "true");
   REXLOG_INFO("gowj_ultrawide: present at the front buffer's own shape {}", a);
 }
+
+// HUD at true 1080p (as Gears 3's gowj_native_hud_layout720 twin; Discord "small UI with DLSS Performance from 1080p",
+// GitHub #426): the in-game HUD is drawn on a UCanvas in screen pixels with the console's piece sizes - 2/3 size at 1080
+// lines. Judgment: UGameViewportClient::Draw sub_82639B48 calls the canvas update sub_8275D960 (sizes at +104 / +108, clip floats +72 / +76) and pushes the HUD transform with sub_8275B278 (matrix at r1+272).
+// For that one Update the canvas size (+104 / +108) is divided by lines / 720 and the matrix of the push
+// right after it gets rows 0 / 1 times lines / 720; the pop after the HUD restores the transform.
+REXCVAR_DEFINE_BOOL(gowj_native_hud_layout720, true, "Judgment",
+                    "With --gowj_native_lines: the in-game HUD lays out in the console's 1280x720 and is scaled to the "
+                    "screen (off = the HUD in screen pixels, smaller, as in 0.6.6 / 0.6.7)");
+namespace {
+uint32_t gowj_HudLines() {
+  const int32_t v = REXCVAR_GET(gowj_native_lines);
+  return (v > 720 && v <= 4320) ? uint32_t(v) : 0u;
+}
+}  // namespace
+namespace {
+constexpr uint32_t kgowj_HudUpdateRet = 0x8263AAC0u, kgowj_HudPushRet = 0x8263AB3Cu;
+thread_local bool t_gowj_hud_scaled = false;
+float gowj_HudLoadF(const uint8_t* base, uint32_t a) {
+  const uint32_t v = ue3::native_viewport::Load32(base, a);
+  float f;
+  std::memcpy(&f, &v, 4);
+  return f;
+}
+void gowj_HudStore32(uint8_t* base, uint32_t a, uint32_t v) {
+  v = __builtin_bswap32(v);
+  std::memcpy(base + a, &v, 4);
+}
+void gowj_HudStoreF(uint8_t* base, uint32_t a, float f) {
+  uint32_t v;
+  std::memcpy(&v, &f, 4);
+  gowj_HudStore32(base, a, v);
+}
+}  // namespace
+extern "C" void __imp__sub_8275D960(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void sub_8275D960(PPCContext& __restrict ctx, uint8_t* base) {  // UCanvas::Update
+  const uint32_t canvas = ctx.r3.u32;
+  const uint32_t lines = gowj_HudLines();
+  if (uint32_t(ctx.lr) == kgowj_HudUpdateRet && lines > 720u && REXCVAR_GET(gowj_native_hud_layout720) &&
+      ue3::native_viewport::InHeap(canvas) && ue3::obj::Readable(canvas + 104u, 8)) {
+    const uint32_t w0 = ue3::native_viewport::Load32(base, canvas + 104u), h0 = ue3::native_viewport::Load32(base, canvas + 108u);
+    if (w0 >= 64u && w0 <= 16384u && h0 >= 64u && h0 <= 16384u) {
+      const uint32_t w1 = (w0 * 720u + lines / 2u) / lines, h1 = (h0 * 720u + lines / 2u) / lines;
+      gowj_HudStore32(base, canvas + 104u, w1);
+      gowj_HudStore32(base, canvas + 108u, h1);
+      t_gowj_hud_scaled = true;
+      static std::atomic<int> told{0};
+      if (told.fetch_add(1) < 4)
+        REXLOG_INFO("gowj_native_hud_layout720: HUD canvas 0x{:08X} {}x{} -> {}x{} (console pixels, scaled x{:.3f})", canvas,
+                    w0, h0, w1, h1, double(lines) / 720.0);
+    }
+  }
+  __imp__sub_8275D960(ctx, base);
+}
+extern "C" void __imp__sub_8275B278(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void sub_8275B278(PPCContext& __restrict ctx, uint8_t* base) {  // FCanvas::PushRelativeTransform
+  if (uint32_t(ctx.lr) == kgowj_HudPushRet) {
+    if (t_gowj_hud_scaled && ue3::obj::Readable(ctx.r4.u32, 64)) {
+      const uint32_t m = ctx.r4.u32;
+      const float k = float(gowj_HudLines()) / 720.0f;
+      for (uint32_t i = 0; i < 8; ++i) gowj_HudStoreF(base, m + 4u * i, gowj_HudLoadF(base, m + 4u * i) * k);
+      static std::atomic<int> told{0};
+      if (told.fetch_add(1) < 4)
+        REXLOG_INFO("gowj_native_hud_layout720: HUD transform x{:.3f} at origin ({}, {})", k, gowj_HudLoadF(base, m + 48u),
+                    gowj_HudLoadF(base, m + 52u));
+    }
+    t_gowj_hud_scaled = false;
+  }
+  __imp__sub_8275B278(ctx, base);
+}
