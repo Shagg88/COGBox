@@ -709,7 +709,9 @@ void play_poll(App &a)
     }
     // 0.6.8 (GitHub #443): Automatic DirectX 12 under Proton / Wine that closed right at start with the renderer's
     // exit code 3 (the October Steam Deck failure, GitHub #15) - this game moves to Vulkan (remembered) and starts again
-    if (a.run.autoWineDx && known && code == 3 && secs < 30 && a.cur[g].i("WineApi") == 0) {
+    // (review r2380: exit code 3 is also abort() / terminate - a crash that wrote a dump is a crash, not a renderer that couldn't start)
+    const bool dumped = a.run.crashDump && a.run.crashDump->state == CrashDumpStatus::kWritten;
+    if (a.run.autoWineDx && known && code == 3 && secs < 30 && !dumped && a.cur[g].i("WineApi") == 0) {
         a.cur[g].set("WineApi", 1);
         a.dirty[g] = true;
         settings_save(a, g);

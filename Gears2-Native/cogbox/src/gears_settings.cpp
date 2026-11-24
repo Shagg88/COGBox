@@ -2532,7 +2532,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         const int l = std::max(0, std::min(4, s.i("PadLayout")));
         const std::string clean = pad_remap_clean(l < 4 ? std::string(pad_layout_preset(l)) : env.pad_remap);   // 0.6.3: shared
         if (!clean.empty()) a.push_back("--pad_remap=" + clean);
-        else if (g == Game::Judgment && on("ClassicButtons"))   // Original Gears buttons (above)
+        else if (l == 0 && g == Game::Judgment && on("ClassicButtons"))   // Original Gears buttons (above)
             a.push_back("--pad_remap=up=lb,lb=down,y=up,down=y");
     }
     // PS1 911-925 (patches 0133 / 0135 / 0136 / 0152): lower input lag; Reflex / Anti-Lag 2 by the main card's maker

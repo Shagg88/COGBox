@@ -1064,7 +1064,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 (ImGui::IsKeyPressed(ImGuiKey_F11, false) || (triggers && !triggersWere && !pad_capturing(a)))) set_fullscreen(a, !a.fullscreen);
             triggersWere = triggers;
         }
-        const bool quitAskable = !a.run.proc && SDL_GetKeyboardFocus() && a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
+        const bool quitAskable = !a.run.proc && SDL_GetKeyboardFocus() && !ImGui::GetIO().WantTextInput && a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
                                  !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.job.state.load() != 1 &&
                                  !g_popupLastFrame;   // 0.4.6 review: Dear ImGui closes a popup on Esc before this, so the same Esc must not quit
         // the FABRICATOR screen: Esc / B go back to the library when nothing else has them (a question, a list, a text box)

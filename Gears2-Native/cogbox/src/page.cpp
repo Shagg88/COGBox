@@ -201,7 +201,7 @@ void env_refresh(App &a, int g)
     e.update_data_root = safe(st.updateDir);
     e.user_data_root = game_user_dir(g);
     {   // GitHub #439 (SDK patch 127): Gears 2 reads Gears 1's unlocks (Carmine, RAAM, Kim) - every other game's file
-        static const char *const k_tid[G_COUNT] = { "4D53082D", "4D53085B", "4D530A26", "4D5307D5" };   // G2, G3, J, G1
+        static const char *const k_tid[G_COUNT] = { "4D53082D", "4D5308AB", "4D530A26", "4D5307D5" };   // G2, G3, J, G1
         e.other_achievements.clear();
         for (int o = 0; o < G_COUNT; o++) {
             if (o == g) continue;
@@ -783,7 +783,7 @@ static void keys_section(App &a, int g)
                         for (size_t q0 = 0; q0 <= c.size();) {
                             size_t q1 = c.find(',', q0);
                             if (q1 == std::string::npos) q1 = c.size();
-                            if (tok != "None" && c.substr(q0, q1 - q0) == tok) clash = true;
+                            if (tok != "None" && SDL_strcasecmp(c.substr(q0, q1 - q0).c_str(), tok.c_str()) == 0) clash = true;
                             q0 = q1 + 1;
                         }
                     if (!tok.empty() && !clash) out += (out.empty() ? "" : ",") + tok;
