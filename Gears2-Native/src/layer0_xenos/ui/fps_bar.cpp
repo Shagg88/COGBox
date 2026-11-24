@@ -238,11 +238,18 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
     const uint64_t total = ever > batch_base_ ? ever - batch_base_ : left;
     const uint64_t done = total > left ? total - left : 0;
     const int pct = int(std::min<uint64_t>(99, total ? done * 100 / total : 0));
+    // GitHub #443: a last shader or two can take the graphics driver minutes (Steam Deck: 213 s for one) - say so, so
+    // the note doesn't look frozen
+    static uint64_t s_last_left = 0;
+    static std::chrono::steady_clock::time_point s_left_at{};
+    if (left != s_last_left) { s_last_left = left; s_left_at = now; }
+    const bool slow_tail = left <= 4 && now - s_left_at >= std::chrono::seconds(15);
     char text[192];
     if (XenosUiLangActive())  // the count alone: a lone "left" has no safe translation key
       std::snprintf(text, sizeof(text), "%s %d%%  (%llu)", XenosTr("Building shaders"), pct, (unsigned long long)left);
     else
-      std::snprintf(text, sizeof(text), "Building shaders %d%%  (%llu left)", pct, (unsigned long long)left);
+      std::snprintf(text, sizeof(text), slow_tail ? "Building shaders %d%%  (%llu left - a large shader, can take a few minutes)"
+                                                  : "Building shaders %d%%  (%llu left)", pct, (unsigned long long)left);
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
     ImGui::SetNextWindowBgAlpha(0.40f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * scale, 3.0f * scale));

@@ -12902,6 +12902,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool prepare_all_ = false;
   std::chrono::steady_clock::time_point prepare_t0_{}, prepare_quiet_since_{}, prepare_written_{};
   uint64_t prepare_last_made_ = UINT64_MAX;
+  std::chrono::steady_clock::time_point prepare_progress_at_{};  // GitHub #443: when `made` last went up
  public:
   std::atomic<bool> prepare_reading_done_{false};
   std::atomic<uint64_t> prepare_files_{0};
@@ -12920,9 +12921,17 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     // Nothing more can be built: the reading is done, every shader it found is in, nothing waits to be translated or
     // queued (records still waiting are for shaders no package holds), and the workers are idle - for 3 s.
-    const bool quiet = !reading && !inbox && rcp_need_.empty() && rcp_ready_left_ == 0 && left == 0 &&
+    // GitHub #443 (Steam Deck log: one pipeline took the driver 213 s - "Building shaders 99% (1 left)" for minutes):
+    // when everything else is done and only a few pipelines (at most 4) have been in the driver with no progress for
+    // 30 s, preparing finishes anyway; those few are built in the background on the next play.
+    if (made != prepare_last_made_ || !prepare_progress_at_.time_since_epoch().count()) prepare_progress_at_ = now;
+    const bool only_slow_left = left > 0 && left <= 4 && now - prepare_progress_at_ >= std::chrono::seconds(30);
+    const bool quiet = !reading && !inbox && rcp_need_.empty() && rcp_ready_left_ == 0 && (left == 0 || only_slow_left) &&
                        cache_->PendingCount() == 0 && rec_waiting_.empty();  // 0.6.1: no shader still being converted
     if (made != prepare_last_made_ || !quiet) prepare_quiet_since_ = now;
+    if (only_slow_left && quiet && now - prepare_quiet_since_ >= std::chrono::seconds(3))
+      REXLOG_INFO("gow2_renderer: prepare all: {} pipeline(s) still in the graphics driver after 30 s without progress - "
+                  "finishing now; they are built in the background on the next play (GitHub #443)", left);
     prepare_last_made_ = made;
     auto write = [&](uint64_t done, const char* state) {
       std::ofstream f(cache_->Dir() / "prepare-progress.txt", std::ios::trunc);

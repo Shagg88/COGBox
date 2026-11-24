@@ -420,7 +420,7 @@ void play_start(App &a, int g, bool prepare)
                     std::string(tr(was.empty() ? "The shaders haven't been prepared for this PC yet."
                                                : "Your graphics driver, graphics card or Graphics API has changed since the shaders were prepared.")) +
                         " " + tr("Without them, the first minutes of play stutter while the graphics driver builds them.") + "\n\n" +
-                        tr("Prepare all shaders now? It takes a few minutes, once; the game then starts by itself."),
+                        tr("Prepare all shaders now? It takes a few minutes, once; the game opens to build them, closes, then starts again to play."),
                     { tr("Prepare now"), tr("Play now"), tr("Don't ask again") });
                 return;
             }
