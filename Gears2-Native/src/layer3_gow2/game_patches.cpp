@@ -1107,7 +1107,7 @@ void Gow2InstallLocLogIfRequested() {
 #endif
 }
 
-// HUD at true 1080p (as Gears 3's gow2_native_hud_layout720 twin; Discord "small UI with DLSS Performance from 1080p",
+// HUD at true 1080p (same fix in all four games; Discord "small UI with DLSS Performance from 1080p",
 // GitHub #426): the in-game HUD is drawn on a UCanvas in screen pixels with the console's piece sizes - 2/3 size at 1080
 // lines. Gears 2 TU6 (disc build unchanged): UGameViewportClient::Draw sub_8252C640 calls the canvas update sub_8263EAE0 (sizes at +100 / +104, clip floats +72 / +76) and pushes the HUD transform with sub_8263BBA0 (matrix at r1+432).
 // For that one Update the canvas size (+100 / +104) is divided by lines / 720 and the matrix of the push

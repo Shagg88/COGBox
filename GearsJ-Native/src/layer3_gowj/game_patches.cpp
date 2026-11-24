@@ -1128,7 +1128,7 @@ void GowjApplyUltrawideIfRequested(rex::Runtime* runtime) {
   REXLOG_INFO("gowj_ultrawide: present at the front buffer's own shape {}", a);
 }
 
-// HUD at true 1080p (as Gears 3's gowj_native_hud_layout720 twin; Discord "small UI with DLSS Performance from 1080p",
+// HUD at true 1080p (same fix in all four games; Discord "small UI with DLSS Performance from 1080p",
 // GitHub #426): the in-game HUD is drawn on a UCanvas in screen pixels with the console's piece sizes - 2/3 size at 1080
 // lines. Judgment: UGameViewportClient::Draw sub_82639B48 calls the canvas update sub_8275D960 (sizes at +104 / +108, clip floats +72 / +76) and pushes the HUD transform with sub_8275B278 (matrix at r1+272).
 // For that one Update the canvas size (+104 / +108) is divided by lines / 720 and the matrix of the push

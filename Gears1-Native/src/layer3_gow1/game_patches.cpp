@@ -815,7 +815,7 @@ void Gow1BootLockWait(PPCRegister& r11, PPCRegister& r31) {   // after lwz r11,8
   REXLOG_WARN("gow1_boot_lock_wait: the lock object at {:08X} never appeared (3 s)", at);
 }
 
-// HUD at true 1080p (as Gears 3's gow1_native_hud_layout720 twin; Discord "small UI with DLSS Performance from 1080p",
+// HUD at true 1080p (same fix in all four games; Discord "small UI with DLSS Performance from 1080p",
 // GitHub #426): the in-game HUD is drawn on a UCanvas in screen pixels with the console's piece sizes - 2/3 size at 1080
 // lines. Gears 1: UGameViewportClient::Draw sub_8238DEF8 calls the canvas update sub_8233B1B0 (sizes at +108 / +112, clip floats +80 / +84) and pushes the HUD transform with sub_8233A268 (matrix at r1+480).
 // For that one Update the canvas size (+108 / +112) is divided by lines / 720 and the matrix of the push
