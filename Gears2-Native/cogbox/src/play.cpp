@@ -603,6 +603,7 @@ void play_start(App &a, int g, bool prepare)
     a.run.exe = exe;
     a.run.prepare = prepare;
     a.run.logLevel = logLevel;
+    a.run.autoWineDx = !prepare && a.env[g].wine && !a.env[g].mac && a.cur[g].i("Api") == 0 && a.cur[g].i("WineApi") == 0;   // 0.6.8 (#443)
     if (prepare) return;   // job 641: the launcher stays up and shows the progress
     a.ini.seti("LastPlayed", d.key, a.run.started);
     a.ini.save();
@@ -706,6 +707,21 @@ void play_poll(App &a)
         refresh_games(a, false);
         return;
     }
+    // 0.6.8 (GitHub #443): Automatic DirectX 12 under Proton / Wine that closed right at start with the renderer's
+    // exit code 3 (the October Steam Deck failure, GitHub #15) - this game moves to Vulkan (remembered) and starts again
+    if (a.run.autoWineDx && known && code == 3 && secs < 30 && a.cur[g].i("WineApi") == 0) {
+        a.cur[g].set("WineApi", 1);
+        a.dirty[g] = true;
+        settings_save(a, g);
+        append_line(join(a.run.logDir, "args.txt"), "launcher: DirectX 12 (Automatic) closed at start with exit code 3 under Proton / "
+                                                    "Wine - this game now uses Vulkan (Graphics API on Proton / Wine) and starts again");
+        set_message(a, std::string(d.name) + ": DirectX 12 closed as the game started on this machine - COGBox switched this game "
+                       "to Vulkan and started it again. You can change it in Graphics > Graphics API on Proton / Wine.", false);
+        a.run.autoWineDx = false;
+        play_start(a, g);
+        return;
+    }
+    a.run.autoWineDx = false;
     // docs/logging.md: Everything is for one play (it is slow and writes a lot) - back to Detailed for every game
     if (a.run.logLevel == 2) {
         for (int k = 0; k < G_COUNT; k++) if (a.cur[k].i("LogLevel") == 2) { a.cur[k].set("LogLevel", 1); a.dirty[k] = true; }

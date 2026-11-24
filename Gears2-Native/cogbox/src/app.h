@@ -54,6 +54,7 @@ struct Running {
     std::string exe;        // GitHub #194: the port program started (play_poll's missing-DLL check)
     bool prepare = false;   // job 641: a "Prepare all shaders" run (the game builds the pack, then exits)
     std::shared_ptr<CrashDumpStatus> crashDump;   // GitHub #286: the crash minidump watcher (crash_dump.h)
+    bool autoWineDx = false;   // 0.6.8 (GitHub #443): Automatic DirectX 12 under Proton / Wine - Vulkan if it closes at start
     int logLevel = 0;       // docs/logging.md: the logging level this play started with (0 Normal, 1 Detailed, 2 Everything)
 };
 

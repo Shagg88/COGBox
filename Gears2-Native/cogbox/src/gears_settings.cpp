@@ -287,10 +287,11 @@ std::vector<Option> make_options(Game g) {
     // Job 643 (Shagg: "the default for SteamOS / Mac should be the currently better API"): was the WineD3D12 box (on =
     // DirectX 12); a saved WineD3D12=1 becomes DirectX 12 here (Store::load_ini).
     add(choice("WineApi", "Graphics API on Proton / Wine", Tab::Graphics, PG,
-               { "Automatic", "Vulkan", "DirectX 12 (testing)" }, 0,
-               "Steam Deck, Linux and Mac (CrossOver) only. Automatic = the one that works best there now: DirectX 12 "
-               "(D3DMetal) on a Mac, where Vulkan can't start, and Vulkan on Steam Deck / Linux, where DirectX 12 is still "
-               "being tested. If the game closes or looks wrong, make a problem report and send it to us.", 0));
+               { "Automatic", "Vulkan", "DirectX 12" }, 0,
+               "Steam Deck, Linux and Mac (CrossOver) only. Automatic = DirectX 12: smoother on Steam Deck and it gets "
+               "every upscaler and frame generation (0.6.8, GitHub #443); a Mac always uses DirectX 12 (D3DMetal). If DirectX "
+               "12 closes as the game starts, COGBox starts it again on Vulkan and keeps Vulkan for that game. If the game "
+               "closes or looks wrong, make a problem report and send it to us.", 0));
     // 0.6.2 (GitHub #304): the graphics card, by name. Automatic (empty) = the game picks (the most video memory of its own,
     // then the one a monitor is on); a name = --gow2_graphics_card=<name>, which every game's renderer reads. Kept as the
     // adapter's name, not a list position, so it survives a card being added or removed; the Graphics tab draws it as a list.
@@ -825,7 +826,9 @@ bool framegen_choice_hidden(int index, const Environment& env) {
 bool runs_vulkan(const Settings& s, const Environment& env) {
     if (env.mac) return false;   // r4 bug 1: never Vulkan on a Mac (CrossOver's Vulkan 1.2; the renderer needs 1.3)
     const int wapi = s.i("WineApi");
-    const bool wineDx = env.wine && s.i("Api") == 0 && (wapi == 2 || (wapi == 0 && env.mac));
+    // 0.6.8 (GitHub #443, Shagg 24 Nov): Automatic is DirectX 12 under Proton / Wine too (smoother than Vulkan on Steam
+    // Deck); a machine where it closes at start (exit code 3) is moved to Vulkan by play_poll (WineApi 1, remembered)
+    const bool wineDx = env.wine && s.i("Api") == 0 && (wapi == 2 || wapi == 0);
     return s.i("Api") == 1 || (env.wine && !wineDx);
 }
 
@@ -2050,12 +2053,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // Job 643: Automatic = DirectX 12 on a Mac (Vulkan can't start there: CrossOver has 1.2, the renderer needs 1.3,
         // GitHub #36 / #40), Vulkan on SteamOS / Linux (DirectX 12 there still being tested).
         const int wapi = s.i("WineApi");
-        const bool wineDx = env.wine && (env.mac || (s.i("Api") == 0 && wapi == 2));   // r4 bug 1: a Mac is always DirectX 12
+        const bool wineDx = env.wine && (env.mac || (s.i("Api") == 0 && (wapi == 2 || wapi == 0)));   // r4 bug 1: a Mac is always DirectX 12; 0.6.8: Automatic = DirectX 12
         const bool vk = runs_vulkan(s, env);
         if (env.mac) notes.push_back("launcher: Mac (CrossOver) - DirectX 12 (D3DMetal): Vulkan can't start there");
-        else if (env.wine && s.i("Api") != 1) notes.push_back(wineDx ? (s.i("WineApi") == 0 ? "launcher: Mac (CrossOver) - DirectX 12 (Automatic: Vulkan can't start there)"
-                                                                                : "launcher: Proton / Wine - DirectX 12 (testing, chosen in the launcher)")
-                                                               : "launcher: Proton / Wine - Vulkan (Graphics API on Proton / Wine: DirectX 12 is being tested)");
+        else if (env.wine && s.i("Api") != 1) notes.push_back(wineDx ? (s.i("WineApi") == 0 ? "launcher: Proton / Wine - DirectX 12 (Automatic; if it closes at start the launcher moves this game to Vulkan)"
+                                                                                : "launcher: Proton / Wine - DirectX 12 (chosen in the launcher)")
+                                                               : "launcher: Proton / Wine - Vulkan (Graphics API on Proton / Wine)");
         if (vk) {   // job 521: Vulkan (experimental); the upscalers are DirectX 12 only
             a.push_back("--gow2_renderer_api=vulkan");
             // Notes/80 s.7: SMAA T2x (5) is ours - built-in shaders, both APIs
