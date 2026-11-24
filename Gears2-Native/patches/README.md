@@ -143,15 +143,16 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
   yet - needs a runtime build): three switches in `src/audio/sdl/sdl_audio_driver.cpp`, their defaults the behaviour
   before. `--audio_output_device=<name>`: the SDL playback device of that name (exact, else the first whose name
   contains it, any case), as the launcher lists them; not found = the default device and one log line with the names
-  there are. A device chosen by name stays that device (patch 66's 5 s default-device poll is skipped); empty = the
-  default device, followed as before. `--audio_channels`: 0 automatic (5.1, stereo when the device has two channels or
+  there are. A device chosen by name stays that device; patch 66's 5 s slot checks instead that it is still in SDL's
+  list, and when it was unplugged the output reopens on the default device for the rest of the run (patch 66's
+  following resumes; the silent sink if that fails). Empty = the default device, followed as before. `--audio_channels`: 0 automatic (5.1, stereo when the device has two channels or
   fewer), 1 mono (the stereo fold with half of each side on both channels), 2 stereo (the fold, even on a surround
   device), 6 5.1 and 8 7.1 whatever the device reports (SDL mixes down for fewer speakers); 7.1 gets the 5.1 front,
   centre and LFE as they are and each surround channel on its back and side speaker at -3 dB. `--audio_night_mode`: a
-  compressor on the final mix in the SDL callback (one peak follower for all channels, 4:1 above -24 dBFS, 5 ms / 200 ms,
-  +12 dB makeup, a limiter at -1 dBFS); read on every callback, so the in-game menu switches it live; off = not called
+  compressor on the final mix in the SDL callback (one peak follower for all channels, 4:1 above -30 dBFS, 5 ms / 200 ms,
+  +9 dB makeup, a limiter at -1 dBFS); read on every callback, so the in-game menu switches it live; off = not called
   (the output is unchanged). The mixes are in `include/rex/audio/output_mix.h`, tested in
-  `tests/unit/audio/output_mix_test.cpp` (5 cases; run with a stand-in for Catch2's macros, as the SDK's test build is
+  `tests/unit/audio/output_mix_test.cpp` (7 cases, with the device-name match; run with a stand-in for Catch2's macros, as the SDK's test build is
   off here). Apply it in the SDK root (`git apply`).
 - `sdk-patch59-sdl-pump-without-controllers.diff` (GitHub #108, Steam Deck; after 58, NOT BUILT yet - needs a runtime build): the SDL driver pumped SDL events only from calls on a controller it already knew, so with none known it never pumped, and under Wine / Proton SDL finds pads (XInput / DirectInput) only while pumping - the 0.3.5 Deck logs show `SDL input driver initialized` and never `SDL JoystickAdded`. `EnumerateDevices` now queues a pump at most every 0.5 s while no controller is known. Apply it in the SDK root (`git apply`).
 - `sdk-patch58-g3-online-xuid-save-convert.diff` (GitHub #68, jobs 1066 / 1067; COGBox 0.4.0's runtime, after 57): the

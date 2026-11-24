@@ -1065,12 +1065,16 @@ int summary() {
                 if (lower.size() != 1 || lower[0] != "--audio_output_device=\"speakers (realtek(r) audio)\"") bad("Output device case" + gs);
             }
             {
+                // review: a device the launcher doesn't see now is still sent (the runtime falls back to the default
+                // device itself), with no note in args.txt - only the AUDIO tab says it is missing
                 std::vector<std::string> notes;
                 const auto a = run(true, false, { speakers }, headset, 0, false, &notes);
                 bool noted = false;
-                for (const std::string& n : notes) if (n.find("Output device " + headset + " is not plugged in") != std::string::npos) noted = true;
-                if (!a.empty() || !noted) bad("a device not plugged in is sent, or not noted" + gs);
-                if (!run(true, false, {}, headset, 0, false).empty()) bad("Output device sent without a device list" + gs);
+                for (const std::string& n : notes) if (n.find("Output device") != std::string::npos) noted = true;
+                if (a.size() != 1 || a[0] != "--audio_output_device=\"" + headset + "\"" || noted)
+                    bad("a device not plugged in now is not sent, or noted" + gs);
+                const auto none = run(true, false, {}, headset, 0, false);
+                if (none.size() != 1) bad("Output device not sent without a device list" + gs);
             }
             {
                 const auto a = run(false, true, pc, headset, 4, true);   // a game linked with the runtime: the exe has them
@@ -1118,6 +1122,15 @@ int summary() {
         if (!st4.view(Game::Gears2, envs[0]).str("AudioDevice").empty()) bad("Output device default");
         const Option* dev = find_option(Game::Gears2, "AudioDevice");
         if (dev && sanitize_text(*dev, "  Speakers \"Front\"\t(USB)\n ") != "Speakers Front(USB)") bad("Output device sanitise");
+        // present: compared as saved (sanitised) and in any case - a listed name with quotes matches the saved one
+        {
+            Environment e; e.audio_devices = { "Speakers \"Front\" (USB)", headset };
+            if (!audio_device_present(e, "Speakers Front (USB)")) bad("present: a listed name with quotes");
+            if (!audio_device_present(e, "headset earphone (usb audio)")) bad("present: any case");
+            if (audio_device_present(e, "Headset") || audio_device_present(e, "")) bad("present: part of a name or empty");
+            e.audio_devices.clear();
+            if (audio_device_present(e, headset)) bad("present: an empty list");
+        }
     }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;

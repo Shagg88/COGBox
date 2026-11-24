@@ -1194,15 +1194,16 @@ static void option_row(App &a, int g, const gs::Option &o)
             // Windows' default device). A saved device that isn't plugged in shows as missing and is not sent.
             const std::string cur = a.cur[g].str(o.id);
             std::string preview = tr("System default");
-            if (!cur.empty())
-                preview = gs::audio_device_present(a.env[g], cur) ? cur : cur + " " + tr("(not found - the system default is used)");
+            if (!cur.empty())   // an empty list (SDL's audio didn't start) says nothing about the device
+                preview = a.env[g].audio_devices.empty() || gs::audio_device_present(a.env[g], cur)
+                              ? cur : cur + " " + tr("(not found - the system default is used)");
             if (ImGui::BeginCombo("##v", preview.c_str())) {
                 if (ImGui::Selectable(tr("System default"), cur.empty())) { if (!cur.empty()) { a.cur[g].t[o.id] = std::string(); a.dirty[g] = true; } }
                 for (const std::string &name : a.audioDevices) {
                     ImGui::PushID(name.c_str());
-                    const bool sel = !cur.empty() && _stricmp(name.c_str(), cur.c_str()) == 0;
+                    const std::string clean = gs::sanitize_text(o, name);   // as it is saved
+                    const bool sel = !cur.empty() && _stricmp(clean.c_str(), cur.c_str()) == 0;
                     if (ImGui::Selectable(name.c_str(), sel)) {
-                        const std::string clean = gs::sanitize_text(o, name);
                         if (clean != cur) { a.cur[g].t[o.id] = clean; a.dirty[g] = true; }
                     }
                     ImGui::PopID();
@@ -1296,7 +1297,7 @@ static void option_row(App &a, int g, const gs::Option &o)
     // GitHub #425: a device saved before that isn't plugged in now (or another PC's) - say so, and what happens
     if (av.ok && o.id == "AudioDevice") {
         const std::string cur = a.cur[g].str(o.id);
-        if (!cur.empty() && !gs::audio_device_present(a.env[g], cur))
+        if (!cur.empty() && !a.env[g].audio_devices.empty() && !gs::audio_device_present(a.env[g], cur))
             ui_note("The output device you chose is not plugged in at the moment - the game uses the system default device.", col::amber);
     }
     // GitHub #90: a language saved before (or from another copy) that this copy doesn't have - say so before the launch,

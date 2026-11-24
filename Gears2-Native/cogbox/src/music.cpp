@@ -376,8 +376,13 @@ std::vector<std::string> audio_output_devices()
     return out;
 }
 
-void audio_devices_refresh(App &a)
+void audio_devices_refresh(App &a, bool force)
 {
+    // review: opening SDL's audio to list the devices can take a moment (WASAPI) - not more often than every 3 s
+    static Uint64 last = 0;
+    const Uint64 now = SDL_GetTicks();
+    if (!force && last && now - last < 3000) return;
+    last = now;
     a.audioDevices = audio_output_devices();
     for (int g = 0; g < G_COUNT; g++) a.env[g].audio_devices = a.audioDevices;
 }

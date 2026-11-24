@@ -649,7 +649,8 @@ std::vector<Option> make_options(Game g) {
                { "Automatic", "Mono", "Stereo", "5.1 surround", "7.1 surround" }, 0,
                "How the game's 5.1 sound is laid out for your speakers. Automatic plays 5.1 on a surround device and "
                "folds it to stereo otherwise. Stereo also suits headphones. Mono puts everything on both sides, for one "
-               "speaker or one ear. 7.1 plays the surround channels on both the side and back speakers.", 0),
+               "speaker or one ear. 7.1 surround is for 7.1 speakers: the surround channels play on both the side and "
+               "back speakers.", 0),
         "audiochannels");
     add(make("NightMode", "Night mode", Tab::Audio, Kind::Bool, SH, 0,
              "Evens out the volume: quiet dialogue comes up and explosions and gunfire are softer, so you can play at a "
@@ -1510,9 +1511,16 @@ bool graphics_card_present(const Environment& env, const std::string& name) {   
 }
 
 bool audio_device_present(const Environment& env, const std::string& name) {   // GitHub #425
-    auto low = [](std::string t) { for (char& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return t; };
-    if (name.empty()) return false;
+    // both sides as they would be saved (review: a listed name with a quote or a tab is kept without it)
+    const Option* o = find_option(Game::Gears2, "AudioDevice");
+    if (!o) return false;
+    auto low = [&](const std::string& t) {
+        std::string c = sanitize_text(*o, t);
+        for (char& ch : c) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        return c;
+    };
     const std::string want = low(name);
+    if (want.empty()) return false;
     for (const std::string& n : env.audio_devices) if (low(n) == want) return true;
     return false;
 }
@@ -2375,15 +2383,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PS1 926-928: mute, monitor, players
     if (on("Mute")) a.push_back(std::string("--") + k_procNames[gi] + "_mute_unfocused=true");
     // GitHub #425 (SDK patch 117): the Audio tab - only what differs from the runtime's default (system default device,
-    // Automatic, night mode off), and only to a runtime that has the switch. A device that is not plugged in now is not
-    // sent (the runtime would fall back to the default device anyway; this way the note says so before the start).
+    // Automatic, night mode off), and only to a runtime that has the switch. A chosen device is sent even when the
+    // launcher doesn't see it now (review: it may be plugged in by the time the game starts, and the runtime falls back
+    // to the default device itself when it isn't there); only the AUDIO tab says it is missing.
     if (avail("AudioDevice")) {
         const Option* ao = find_option(g, "AudioDevice");
         const std::string dev = ao ? sanitize_text(*ao, s.str("AudioDevice")) : std::string();
-        if (!dev.empty()) {
-            if (audio_device_present(env, dev)) a.push_back("--audio_output_device=" + q(dev));
-            else notes.push_back("launcher: Output device " + dev + " is not plugged in (or not found) - the system default device is used");
-        }
+        if (!dev.empty()) a.push_back("--audio_output_device=" + q(dev));
     }
     if (avail("AudioChannels")) {
         static const int k_channels[5] = { 0, 1, 2, 6, 8 };   // Automatic, Mono, Stereo, 5.1, 7.1

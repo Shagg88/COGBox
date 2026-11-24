@@ -289,4 +289,5 @@ int music_test(const std::string &key, const std::string &copy, const std::strin
 int music_scan(const std::string &folder, const std::string &report);                         // --musicscan
 int music_probe(const std::string &file, const std::string &report);                          // --musicprobe
 std::vector<std::string> audio_output_devices();   // GitHub #425: SDL's sound output devices' names (empty: none / no audio)
-void audio_devices_refresh(App &a);                // ... into a.audioDevices and every game's env (start, Audio tab opened)
+void audio_devices_refresh(App &a, bool force = false);   // ... into a.audioDevices and every game's env (start, Audio tab,
+                                                          // Play); read at most every 3 s unless forced

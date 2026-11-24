@@ -243,7 +243,8 @@ bool text_char_ok(const Option& o, unsigned c);
 std::string monitor_label(int index1, int width, int height, bool primary);
 // 0.6.2 (GitHub #304): the Graphics card option's saved name is one of env.graphics_cards (same letters, any case).
 bool graphics_card_present(const Environment& env, const std::string& name);
-// GitHub #425: the Output device option's saved name is one of env.audio_devices (same letters, any case).
+// GitHub #425: the Output device option's saved name is one of env.audio_devices (same letters, any case, both as
+// sanitize_text keeps them).
 bool audio_device_present(const Environment& env, const std::string& name);
 // PS1 152: the main graphics card of a list.
 std::string main_gpu(const std::vector<std::string>& gpus);
