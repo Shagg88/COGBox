@@ -1825,6 +1825,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // play and a loading screen / video / 2D menu). Layer 2's package reader paces itself by it (XenosRendererInPlay),
     // and the pipeline workers keep part of themselves free of the start-up backlog for the next half second.
     last_frame_draws_ = fl_draws;  // 23 Nov: guessed pipelines / texture pre-loads (a loading screen = under 64)
+    pre_loading_.store(fl_draws < 64, std::memory_order_relaxed);  // 23 Nov: pre-translation thread priority
     if (fl_draws >= 64 && !prepare_all_) {
       g_play_frame_ms.store(PlayClockMs(), std::memory_order_relaxed);
       backend_->NotePlayFrame();
@@ -2243,7 +2244,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         !REXCVAR_GET(gow2_renderer_shader_precreate))
       return;
     const uint32_t usable = XenosUsableProcessors();
-    const uint32_t n = want < 0 ? std::clamp(usable / 4, 2u, 8u) : std::clamp(uint32_t(want), 1u, std::max(1u, usable));
+    // Shagg 23 Nov 18:01 ("use all the threads needed"): automatic = half the usable logical processors (8 on 16),
+    // at least 2. Below normal priority during play, normal while a loading screen / menu is up (under 64 draws) -
+    // the way UnleashedRecomp raises its loading work while loading and lowers it in play.
+    const uint32_t n = want < 0 ? std::max(2u, usable / 2) : std::clamp(uint32_t(want), 1u, std::max(1u, usable));
     for (uint32_t i = 0; i < n; ++i)
       std::thread([this] {  // lives as long as the renderer (never destroyed), as the prebuild thread
 #ifdef _WIN32
@@ -2253,10 +2257,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }).detach();
     pre_threads_on_ = true;
     REXLOG_INFO("gow2_renderer: shaders the game creates are translated on {} background thread(s) ({} usable logical "
-                "processors), not on the render thread (gow2_renderer_shader_precreate_threads)", n, usable);
+                "processors; normal priority on loading screens / menus, below normal in play), not on the render "
+                "thread (gow2_renderer_shader_precreate_threads)", n, usable);
   }
   void PreTranslateThread() {
     std::vector<uint32_t> dwords;
+    bool raised = false;  // this thread's priority: false = below normal (play), true = normal (loading / menu)
     for (;;) {
       CreatedShader c;
       {
@@ -2265,6 +2271,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         c = std::move(pre_queue_.front());
         pre_queue_.pop_front();
         ++pre_busy_;
+      }
+      const bool want_raised = pre_loading_.load(std::memory_order_relaxed);
+      if (want_raised != raised) {
+        raised = want_raised;
+#ifdef _WIN32
+        SetThreadPriority(GetCurrentThread(), raised ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_BELOW_NORMAL);
+#endif
       }
       const uint64_t h = XXH3_64bits(c.bytes.data(), c.bytes.size()) ^ (c.is_vertex ? 0x5653ull : 0ull);
       bool fresh;
@@ -2294,6 +2307,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
   bool pre_threads_on_ = false;
+  std::atomic<bool> pre_loading_{true};  // the last frame had under 64 draws (loading screen / menu)
   std::mutex pre_mutex_;
   std::condition_variable pre_cv_;
   std::deque<CreatedShader> pre_queue_;
