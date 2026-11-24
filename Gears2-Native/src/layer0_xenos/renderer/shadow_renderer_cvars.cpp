@@ -200,6 +200,8 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_chapter_hold, false, "Gears2",
                     "picture stays, with the Loading shaders indicator, and the game waits behind it. Nothing is held "
                     "when they are built already (a second visit, a checkpoint), nor mid-play. Needs the recipe pack, "
                     "--ue3_shader_prebuild and our own presenter");
+// 24 Nov (jobs 2378u/x/x2/y/z, started from the menus): 0066 on + background translation threads (run E) was best or level in all games
+// tested; Gears 2 D3D12 boot freeze 2.30 s -> 1.08 s with the threads, steady 4.68 ms (0.6.7 5.25). Shagg 03:13: E for all. (Gears 2's E also had the 0.6.7 recipe order; its D (chapter-first) vs C (0.6.7 order) were level, so that default stays.)
 REXCVAR_DEFINE_BOOL(gow2_renderer_recipe_pack_current_first, true, "Gears2",
                     "GitHub #437: the recipe pack builds the chapter being loaded first - a chapter list is 'hot' (its "
                     "pipelines go ahead of every other list's) as soon as the game opens a map package that holds a "
@@ -256,10 +258,10 @@ REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_priority, -2, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_shader_precreate_ms, 6, "Gears2",
                     "Patch 0066: the most time per frame spent translating shaders the game created (ms); the rest "
                     "waits for the next frame");
-REXCVAR_DEFINE_INT32(gow2_renderer_shader_precreate_threads, 0, "Gears2",
+REXCVAR_DEFINE_INT32(gow2_renderer_shader_precreate_threads, -1, "Gears2",
                      "23 Nov (Shagg: shaders behind the loading screen; \"we have 16 threads\"): patch 0066's translation "
                      "of the shaders the game creates moves off the render thread onto this many background threads "
-                     "(below normal priority); they put each translation into the DXBC store, and the render thread "
+                     "(below normal priority; default -1 since 24 Nov); they put each translation into the DXBC store, and the render thread "
                      "then only reads it back (before: all ~7,000 Gears 2 shaders translated on the render thread, at "
                      "most 6 ms a frame). -1 = automatic (half the usable logical processors, at least 2, no upper cap, 2 left "
                      "for the game; normal priority on loading screens / menus, lowest in play), 0 = off "
