@@ -1470,8 +1470,10 @@ std::vector<std::pair<std::string, double>> proton_recommended(Game g, const Env
     std::vector<std::pair<std::string, double>> v;
     if (!env.wine) return v;
     (void)g;
-    v.push_back({ "Api", 1 });        // Vulkan: the renderer talks to the Linux driver directly (no vkd3d-proton)
-    v.push_back({ "WineApi", 1 });    // ... and Vulkan if the player later picks DirectX 12 + Automatic
+    // 0.6.8 (GitHub #443, Shagg 24 Nov): Automatic = DirectX 12 through vkd3d-proton (smoother on the Deck, every fix first);
+    // the launcher moves a game to Vulkan by itself if DirectX 12 can't start there (play.cpp autoWineDx)
+    v.push_back({ "Api", 0 });
+    v.push_back({ "WineApi", 0 });
     if (fsr_vulkan(env)) { v.push_back({ "AAMode", 2 }); v.push_back({ "FsrVulkan", 1 }); }
     else v.push_back({ "AAMode", 1 });   // FSR on Vulkan needs a newer build: SMAA, as the launcher would use anyway
     v.push_back({ "SceneMode", 0 });
