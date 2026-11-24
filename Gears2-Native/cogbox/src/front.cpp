@@ -796,7 +796,7 @@ void front_draw(App &a, ImVec2 size)
     if (nav) {
         // Shagg 21:44: the D-pad (and left stick, arrow keys, mouse wheel, a click on a side box) turns the carousel; LB / RB
         // choose between Play, Settings and the Achievements side button under the box (a.frontSel), A presses the chosen one
-        // 0.4.6 (Shagg 6 Nov): D-pad / stick up goes to the top row (PLAYER, MUSIC, UPDATE ART, EXIT = frontSel 10-13),
+        // 0.4.6 (Shagg 6 Nov): D-pad / stick up goes to the top row (PLAYER, MUSIC, UPDATE ART, EXIT = frontSel 10-13; UPDATE TO = 14, #445),
         // where left / right (and LB / RB) move along it; down goes back to the buttons under the box
         const bool left = ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft);
         const bool right = ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight);
@@ -1115,7 +1115,7 @@ void front_draw(App &a, ImVec2 size)
             ImGui::SetCursorScreenPos(ImVec2(size.x - artW - S(24) - S(12) - us.x, S(22)));
             const bool idle = us_state != 1 && us_state != 2 && us_state != 3;
             const bool usel = a.padConnected && a.frontSel == 14;   // #445: reachable with the controller (top row)
-            const bool padPress = usel && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && !a.modal.open;
+            const bool padPress = nav && usel && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);   // nav: no popup, job or zoom (as the other top-row buttons)
             if ((th_button_red(lbl.c_str(), us, idle, F_BOLD, usel) || padPress) && idle) {
                 if (a.run.proc) set_message(a, "Close the game first, then update.", true);
                 else { update_install_start(newer); set_message(a, "Updating COGBox - it restarts by itself when done.", false); }
