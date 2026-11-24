@@ -76,6 +76,13 @@ Alt+Enter in the game window switches between windowed and borderless full scree
 --bind_cogbox_fullscreen=<key> in extra-args.txt, None = off).
 
 
+Playing online
+--------------
+Online play is off until you turn it on in the Social tab. Everyone in a match must use the latest COGBox
+release - the same release - for a smooth game: players on different versions can fail to find or join each
+other, or fall out of sync. Update with the launcher's "new version" notice or from the release page.
+
+
 New in 0.6.8
 ------------
 - SMOOTHER, WITH SHORTER FREEZES: shaders are prepared on background threads that scale with your CPU (DirectX 12;

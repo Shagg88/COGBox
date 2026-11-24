@@ -13,7 +13,9 @@ with the same releases.
 and its title update. No game files are included, ever.
 
 **Online multiplayer is here (0.6.0):** play Gears of War online with friends again, peer to peer through COGBox's own
-matchmaking - no Xbox Live needed. Off until you turn it on in the launcher's Social tab.
+matchmaking - no Xbox Live needed. Off until you turn it on in the launcher's Social tab. **Everyone in a match should
+be on the latest COGBox release - the same release - for a smooth game;** mixed versions can fail to connect or fall
+out of sync.
 
 **[Join the COGBox Discord](https://discord.gg/Y6qGbzBKQZ)** - find people to play with, get help, share feedback.
 
@@ -77,7 +79,8 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 - **Keyboard and mouse** or **Xbox / PlayStation controllers**, with button prompts that follow what you use, and
   DualSense adaptive triggers in all four games (experimental, off by default).
 - **Split-screen co-op** in all four games, and **System Link** LAN co-op (experimental).
-- **Online multiplayer** (0.6.0, off by default): peer to peer through COGBox's own matchmaking.
+- **Online multiplayer** (0.6.0, off by default): peer to peer through COGBox's own matchmaking. All players need the
+  latest COGBox release (the same one) for a smooth game.
 - **Insane from the start**, **achievements** in all four games, chapter select, and an **in-game menu**
   (Back + Start, or F1) to change settings or quit.
 - **DLC and mods**, every language your copy has, and screenshots with **\\**.
