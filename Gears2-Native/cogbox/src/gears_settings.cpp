@@ -347,7 +347,11 @@ std::vector<Option> make_options(Game g) {
                "Automatic uses K for every mode: M and L are slow there (0.6.6).\n"
                "J and K: the first transformer models - every RTX card (20, 30, 40 and 50 series).\n"
                "L and M: the newest models (DLSS 4.5). They also run on every RTX card, but are made for RTX 40 / 50: on "
-               "RTX 20 / 30 they cost clearly more frames per second - try K there if the game gets slower.", 352), "dlssmodel");
+               "RTX 20 / 30 they cost clearly more frames per second - try K there if the game gets slower.\n\n"
+               "Which to pick: RTX 40 / 50 - Automatic. RTX 20 / 30 - K (or Automatic, which already uses K there). "
+               "Fast motion leaves trails - try J. Want it sharper and have frames to spare - L, or M if L is too slow.\n"
+               "Every model looks and runs a little differently on each card and driver: if the frame rate drops or the "
+               "picture looks wrong after a change, go back to Automatic.", 352), "dlssmodel");
     // NVIDIA DLSS frame generation (Streamline, renderer/dlss_framegen.cpp): choices 2-5, listed only when the exe has
     // it and NVIDIA's DLLs are next to it (framegen_choice_hidden); greyed without an RTX 40 / 50 card
     add(choice("FrameGen", g == Game::Gears1 ? "Frame generation (experimental)" : "Frame generation", Tab::Graphics, SH,   // Shagg 7 Nov: experimental only in Gears 1
