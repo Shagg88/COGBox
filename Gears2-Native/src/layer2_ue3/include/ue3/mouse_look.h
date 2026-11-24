@@ -132,6 +132,9 @@ REXCVAR_DEFINE_DOUBLE(ue3_mouse_step_units, 2.0, "COGBox",
                       "rotation units (65536 = 360 degrees) and the rest is carried to the next frames, so slow zoomed "
                       "aiming is neither lost to the engine's whole units nor sent in chunks. 0 = send it as it comes")
     .range(0.0, 50.0);
+REXCVAR_DEFINE_BOOL(ue3_mouse_confine, true, "COGBox",
+                    "Native mouse look (GitHub #430): keep the pointer inside the game window while the camera has the "
+                    "mouse, so a click cannot land on a window behind the game or a second monitor (false = as before)");
 REXCVAR_DEFINE_BOOL(ue3_mouse_invert_y, false, "COGBox", "Native mouse look: invert up / down");
 REXCVAR_DEFINE_BOOL(ue3_mouse_aim_assist, false, "COGBox",
                     "Native mouse look (Gears 1 / 2): keep the aim friction for the mouse too");
@@ -229,6 +232,52 @@ inline void Drain(double* dx, double* dy) {
 // then the keyboard / mouse driver ignores the mouse (no focus) and never asks for the capture again. On a mouse event
 // while our window is the foreground window but not "focused", the focus is requested again (on the UI thread, at most
 // every 500 ms), which sends the got-focus event the driver waits for.
+// GitHub #430 (Proton, also possible on Windows): while mouse look has the mouse, a click could land on the COGBox
+// launcher behind the game, and the pointer could drift onto a second monitor - SDL's pointer lock does not always hold
+// (under Wine its relative mode can fall back to recentring the cursor, which leaves it free between two moves). So,
+// while the camera owns the mouse (capture requested, mouse look active, no in-game menu) and our window is in front,
+// the pointer is clipped to the window's client area (ClipCursor, which Wine implements); it is released on focus loss,
+// when a menu opens, and when capture ends. --ue3_mouse_confine=false = as before.
+inline std::atomic<bool> g_clipped{false};
+inline void Confine(rex::ui::Window* w, bool want) {
+  if (!REXCVAR_GET(ue3_mouse_confine)) want = false;
+  HWND fg = nullptr;
+  if (want) {
+    fg = GetForegroundWindow();
+    DWORD pid = 0;
+    if (!w || !w->HasFocus() || !fg || !GetWindowThreadProcessId(fg, &pid) || pid != GetCurrentProcessId()) want = false;
+  }
+  if (!want) {
+    if (g_clipped.exchange(false)) ClipCursor(nullptr);
+    return;
+  }
+  RECT r{};
+  if (!GetClientRect(fg, &r) || r.right <= r.left || r.bottom <= r.top) return;
+  POINT p[2] = {{r.left, r.top}, {r.right, r.bottom}};
+  ClientToScreen(fg, &p[0]);
+  ClientToScreen(fg, &p[1]);
+  const RECT want_rect{p[0].x, p[0].y, p[1].x, p[1].y};
+  RECT cur{};
+  if (g_clipped.load() && GetClipCursor(&cur) && EqualRect(&cur, &want_rect)) return;
+  if (!ClipCursor(&want_rect)) return;
+  if (!g_clipped.exchange(true)) {
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 3)
+      REXLOG_INFO("ue3_mouse_confine: pointer kept inside the game window ({}x{}) while mouse look has it", want_rect.right - want_rect.left,
+                  want_rect.bottom - want_rect.top);
+  }
+}
+inline bool CameraOwnsMouse(rex::ui::Window* w) {
+  return w && w->IsMouseCaptureRequested() && rex::input::mnk::IsMouseLookActive() && !XenosInGameMenuIsOpen();
+}
+class FocusListener : public rex::ui::WindowListener {
+ public:
+  void OnLostFocus(rex::ui::UISetupEvent&) override { Confine(nullptr, false); }
+  void OnMinimized(rex::ui::UIEvent&) override { Confine(nullptr, false); }
+  void OnClosing(rex::ui::UIEvent&) override { Confine(nullptr, false); }
+};
+inline FocusListener g_focus_listener;
+
 inline std::atomic<int64_t> g_focus_heal_last{0};
 inline std::atomic<int> g_focus_heals{0};
 inline void FocusHeal(rex::ui::Window* w) {
@@ -250,8 +299,10 @@ inline void FocusHeal(rex::ui::Window* w) {
 
 class Listener : public rex::ui::WindowInputListener {
  public:
+  void OnMouseDown(rex::ui::MouseEvent& e) override { Confine(e.target(), CameraOwnsMouse(e.target())); }   // GitHub #430
   void OnMouseMove(rex::ui::MouseEvent& e) override {
     FocusHeal(e.target());   // 0.5.0: see FocusHeal
+    Confine(e.target(), CameraOwnsMouse(e.target()));   // GitHub #430
     if (XenosInGameMenuIsOpen()) {   // PR #134 (Flippage): the in-game menu is open - its mouse, not the camera's
       double x, y;
       Drain(&x, &y);
@@ -740,6 +791,7 @@ inline void Install(const Build& b, rex::ui::Window* window) {
   }
   rex::cvar::SetFlagByName("mnk_mouse_stick", "false");
   window->AddInputListener(&g_listener, 1);
+  window->AddListener(&g_focus_listener);   // GitHub #430: release the pointer clip on focus loss
   g_on.store(true);
   REXLOG_INFO("ue3_mouse_look: on for {} (entry {:08X})", b.name, b.entry_fn);
   if (REXCVAR_GET(ue3_mouse_turn_cap)) {   // the limit itself is logged at the first mouse motion (TurnCap)
