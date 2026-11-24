@@ -87,7 +87,7 @@ other, or fall out of sync. Update with the launcher's "new version" notice or f
 New in 0.6.8
 ------------
 - SMOOTHER, WITH SHORTER FREEZES: shaders are prepared on background threads that scale with your CPU (DirectX 12;
-  off on Vulkan, where they measured slower). Up to 31% more FPS, and the worst freeze is shorter in every game.
+  off on Vulkan, where they measured slower). Up to 32% more FPS, and the worst freeze is shorter in every game.
 - In-match chat no longer stalls level loading.
 - Steam Deck / Linux: DirectX 12 is the default under Proton; if it can't start, COGBox switches that game to Vulkan
   and starts it again. "Preparing shaders" no longer hangs at 99% on one very slow shader (#443).
