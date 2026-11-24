@@ -3,7 +3,7 @@
 Shagg, 23 Nov 2026: an AUDIO section on the launcher's Gameplay tab (no Audio tab). No 7.1, no Night Mode, no device
 picker.
 
-## Sound output (`--audio_channels`, SDK patch 125)
+## Sound output (`--audio_channels`, SDK patch 126 - PR #441; replaces patch 125)
 
 One value for all games (Shared). The shared SDL3 driver always mixes 5.1; the switch picks what reaches the device:
 

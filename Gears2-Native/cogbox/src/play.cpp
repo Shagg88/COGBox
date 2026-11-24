@@ -8,6 +8,7 @@
 #include "x360fs.h"
 #include "crash_dump.h"
 #include "social_model.h"   // kPreferLobbyPrefix (0.6.4)
+#include "mod_conflicts.h"   // the mods' folders listed again when a game closes
 
 #include <windows.h>
 #include <cstdio>
@@ -340,6 +341,7 @@ void play_start(App &a, int g, bool prepare)
     refresh_games(a, false);
     GameState &st = a.st[g];
     if (st.ready != R_READY) { set_message(a, std::string(d.name) + " isn't ready to play yet - add your copy first.", true); return; }
+    if (!a.cur[g].str("AudioDevice").empty()) audio_devices_refresh(a);   // GitHub #425: a headset plugged in since
     env_refresh(a, g);
     gs::Game G = (gs::Game)g;
     gs::Version ver = gs::effective_version(G, a.cur[g], a.env[g]);
@@ -660,6 +662,7 @@ void play_poll(App &a)
     a.run.proc = nullptr;
     achievements_tab_reload();   // achievements part 4: its new unlocks
     int g = a.run.game;
+    mod_conflicts_refresh(g);   // (the mods' folders listed again: a game run can be when files changed)
     const GameDef &d = game_def(g);
     int64_t secs = std::max<int64_t>(0, unix_now() - a.run.started);
     {   // Shagg 23 Nov (docs/audio.md): a slider changed in the game's own audio menu is kept - the launcher takes it back

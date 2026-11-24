@@ -319,7 +319,7 @@ MenuFile LoadMenuFile(const std::string& path) {
     if (std::find(m.tabs.begin(), m.tabs.end(), o.tab) == m.tabs.end()) m.tabs.push_back(o.tab);
   // 0.4.9: a fixed tab order, whatever order the file lists them in (unknown tabs after these, in file order)
   {
-    static const char* const kOrder[] = {"Display", "Graphics", "Controls", "Gameplay", "Achievements"};
+    static const char* const kOrder[] = {"Display", "Graphics", "Controls", "Gameplay", "Audio", "Achievements"};   // GitHub #425: Audio
     auto rank = [](const std::string& t) {
       for (size_t i = 0; i < std::size(kOrder); ++i) if (t == kOrder[i]) return int(i);
       return int(std::size(kOrder));

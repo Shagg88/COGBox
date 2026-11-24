@@ -1026,6 +1026,133 @@ int summary() {
         Store st2; st2.load_ini(st.save_ini());
         if (st2.view(Game::Gears1, envs[static_cast<int>(Game::Gears1)]).i("TriggerRumble") != 1) bad("ini round trip");
     }
+    // GitHub #425: the AUDIO tab - Output device, Speaker setup, Night mode (the runtime's switches, SDK patch 126) and the
+    // Mute option moved there with its id. Each switch only when it isn't the runtime's default and the runtime has it.
+    {
+        auto bad = [&](const std::string& w) { std::cout << "FAIL audio tab: " << w << "\n"; ++fails; };
+        static_assert(Tab::Gameplay < Tab::Audio && Tab::Audio < Tab::Achievements, "AUDIO between GAMEPLAY and ACHIEVEMENTS");
+        if (std::string(tab_name(Tab::Audio)) != "Audio") bad("tab name");
+        const std::string speakers = "Speakers (Realtek(R) Audio)", headset = "Headset Earphone (USB Audio)";
+        static const char* const needles[3] = { "The sound output device, by its name as Windows lists it",
+                                                "Speaker setup: 0 = automatic",
+                                                "Night mode: a gentle compressor on the game's sound" };
+        for (int g = 0; g < kGameCount; ++g) {
+            const Game game = static_cast<Game>(g);
+            const std::string gs = " (game " + std::to_string(g) + ")";
+            const Option* dev = find_option(game, "AudioDevice");
+            const Option* ch = find_option(game, "AudioChannels");
+            const Option* nm = find_option(game, "NightMode");
+            const Option* mu = find_option(game, "Mute");
+            if (!dev || dev->kind != Kind::Text || dev->scope != Scope::Shared || dev->tab != Tab::Audio || dev->label != "Output device")
+                bad("Output device option" + gs);
+            if (!ch || ch->kind != Kind::Choice || ch->scope != Scope::Shared || ch->tab != Tab::Audio || ch->def != 0 ||
+                ch->choices.size() != 5 || ch->label != "Speaker setup")
+                bad("Speaker setup option" + gs);
+            if (!nm || nm->kind != Kind::Bool || nm->scope != Scope::Shared || nm->tab != Tab::Audio || nm->def != 0 || nm->label != "Night mode")
+                bad("Night mode option" + gs);
+            if (!mu || mu->tab != Tab::Audio || std::string(tab_name(mu->tab)) != "Audio") bad("Mute not on the Audio tab" + gs);
+            if (!dev || !ch || !nm) continue;
+            // rt / exe: the runtime DLL / the exe has the three switches' descriptions; devices: the PC's output devices
+            auto run = [&](bool rt, bool exe, const std::vector<std::string>& devices, const std::string& device, int channels,
+                           bool night, std::vector<std::string>* notes = nullptr) {
+                Environment e; e.update_ready = true; e.audio_devices = devices;
+                auto has = [](const std::string& n) { for (const char* x : needles) if (n == x) return true; return false; };
+                e.cap.exe_has = [exe, has](const std::string& n) { return exe && has(n); };
+                e.cap.runtime_has = [rt, has](const std::string& n) { return rt && has(n); };
+                e.cap.file_next_to_exe = [](const std::string&) { return false; };
+                Store st; st.texts["AudioDevice"] = device;
+                Settings s = st.view(game, e);
+                s.set("AudioChannels", channels); s.set("NightMode", night ? 1 : 0);
+                std::vector<std::string> out;
+                for (const std::string& x : build_args(game, effective_version(game, s, e), s, e, notes))
+                    if (x.find("audio_") != std::string::npos) out.push_back(x);
+                return out;
+            };
+            const std::vector<std::string> pc = { speakers, headset };
+            if (!run(true, false, pc, "", 0, false).empty()) bad("the defaults send something" + gs);
+            static const char* const k_ch[5] = { "", "--audio_channels=1", "--audio_channels=2", "--audio_channels=6", "--audio_channels=8" };
+            for (int c = 1; c < 5; ++c) {
+                const auto a = run(true, false, pc, "", c, false);
+                if (a.size() != 1 || a[0] != k_ch[c]) bad("Speaker setup " + std::to_string(c) + gs);
+            }
+            {
+                const auto a = run(true, false, pc, "", 0, true);
+                if (a.size() != 1 || a[0] != "--audio_night_mode=true") bad("Night mode" + gs);
+            }
+            {
+                const auto a = run(true, false, pc, headset, 0, false);
+                if (a.size() != 1 || a[0] != "--audio_output_device=\"" + headset + "\"") bad("Output device not sent" + gs);
+                const auto lower = run(true, false, pc, "speakers (realtek(r) audio)", 0, false);
+                if (lower.size() != 1 || lower[0] != "--audio_output_device=\"speakers (realtek(r) audio)\"") bad("Output device case" + gs);
+            }
+            {
+                // review: a device the launcher doesn't see now is still sent (the runtime falls back to the default
+                // device itself), with no note in args.txt - only the AUDIO tab says it is missing
+                std::vector<std::string> notes;
+                const auto a = run(true, false, { speakers }, headset, 0, false, &notes);
+                bool noted = false;
+                for (const std::string& n : notes) if (n.find("Output device") != std::string::npos) noted = true;
+                if (a.size() != 1 || a[0] != "--audio_output_device=\"" + headset + "\"" || noted)
+                    bad("a device not plugged in now is not sent, or noted" + gs);
+                const auto none = run(true, false, {}, headset, 0, false);
+                if (none.size() != 1) bad("Output device not sent without a device list" + gs);
+            }
+            {
+                const auto a = run(false, true, pc, headset, 4, true);   // a game linked with the runtime: the exe has them
+                if (a.size() != 3) bad("switches in the exe not sent" + gs);
+            }
+            // an older build: all three greyed with the short reason, nothing sent
+            if (!run(false, false, pc, headset, 4, true).empty()) bad("sent to a build without the switches" + gs);
+            {
+                Environment e; e.update_ready = true;
+                e.cap.exe_has = [](const std::string&) { return false; };
+                e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+                Store st; Settings s = st.view(game, e);
+                for (const Option* o : { dev, ch, nm }) {
+                    const Availability av = available(*o, game, Version::TitleUpdate, s, e);
+                    if (av.ok || av.why != "Needs a newer COGBox build.") bad("not greyed on an older build: " + o->id + gs);
+                }
+                Environment full = e;
+                full.cap.runtime_has = [](const std::string& n) { for (const char* x : needles) if (n == x) return true; return false; };
+                for (const Option* o : { dev, ch, nm })
+                    if (!available(*o, game, Version::TitleUpdate, s, full).ok) bad("greyed with the switches: " + o->id + gs);
+                // live in the in-game menu: night mode only (the device and the speakers are chosen when the sound starts)
+                s.set("NightMode", 1);
+                const auto live = live_lines(game, Version::TitleUpdate, s, full);
+                if (!live.count("NightMode") || live.count("AudioChannels") || live.count("AudioDevice")) bad("live lines" + gs);
+            }
+        }
+        // one value for all four games; the device kept by name in the ini; a Mute=1 saved before the move still loads
+        Environment envs[kGameCount];
+        for (Environment& e : envs) { e.update_ready = true; e.audio_devices = { speakers, headset }; }
+        Store st;
+        Settings g3 = st.view(Game::Gears3, envs[1]);
+        g3.t["AudioDevice"] = headset; g3.set("AudioChannels", 2); g3.set("NightMode", 1);
+        st.commit(Game::Gears3, g3, envs[1]);
+        for (int g = 0; g < kGameCount; ++g) {
+            const Settings v = st.view(static_cast<Game>(g), envs[g]);
+            if (v.str("AudioDevice") != headset || v.i("AudioChannels") != 2 || v.i("NightMode") != 1) bad("not shared to game " + std::to_string(g));
+        }
+        const std::string ini = st.save_ini();
+        Store st2; st2.load_ini(ini);
+        if (st2.view(Game::Gears1, envs[3]).str("AudioDevice") != headset || st2.save_ini() != ini ||
+            ini.find("AudioDevice=" + headset) == std::string::npos) bad("ini round trip");
+        Store st3; st3.load_ini("[General]\nMute=1\n");
+        if (st3.view(Game::Gears2, envs[0]).i("Mute") != 1) bad("a saved Mute=1 is lost");
+        Store st4;
+        if (!st4.view(Game::Gears2, envs[0]).str("AudioDevice").empty()) bad("Output device default");
+        const Option* dev = find_option(Game::Gears2, "AudioDevice");
+        if (dev && sanitize_text(*dev, "  Speakers \"Front\"\t(USB)\n ") != "Speakers Front(USB)") bad("Output device sanitise");
+        // present: compared as saved (sanitised) and in any case - a listed name with quotes matches the saved one
+        {
+            Environment e; e.audio_devices = { "Speakers \"Front\" (USB)", headset };
+            if (!audio_device_present(e, "Speakers Front (USB)")) bad("present: a listed name with quotes");
+            if (!audio_device_present(e, "headset earphone (usb audio)")) bad("present: any case");
+            if (audio_device_present(e, "Headset") || audio_device_present(e, "")) bad("present: part of a name or empty");
+            e.audio_devices.clear();
+            if (audio_device_present(e, headset)) bad("present: an empty list");
+        }
+    }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;
 }

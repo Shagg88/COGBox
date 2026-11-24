@@ -18,7 +18,9 @@ constexpr int kGameCount = 4;
 // on with --gow3_first_person=true / --gow2_ / --gowj_ in extra-args.txt. true = the Gameplay tab offers it again.
 constexpr bool kOfferFirstPerson = false;
 enum class Version { TitleUpdate = 0, Disc = 1 };   // PS1 125 $verNames (index 0 = the title update)
-enum class Tab { Display, Graphics, Controls, Gameplay, Achievements };   // = the page's tab index (ABOUT is after)
+// = the page's tab index (SOCIAL, MODS, ABOUT are after). GitHub #425: Audio before Achievements - tabs are not saved by
+// index (options by id, the in-game menu by tab_name()), and page.cpp / front.cpp / main.cpp name these indexes.
+enum class Tab { Display, Graphics, Controls, Gameplay, Audio, Achievements };
 // Text (0.4.8, GitHub #229): a short line of text (Settings::t), always Scope::Shared, kept in [General] of the settings
 // file; every value goes through sanitize_text() on the way in and out, so only its allowed characters ever reach the
 // file or the command line.
@@ -73,6 +75,10 @@ struct Environment {
     // reads them (no software adapters, no Microsoft Basic Render Driver). The Graphics card option is sent only when its
     // saved name is one of these. Empty = not worked out (the option sends nothing: Automatic).
     std::vector<std::string> graphics_cards;
+    // GitHub #425: the sound output devices the game can choose from - SDL's playback devices' names, as the runtime's SDL
+    // lists them (SDK patch 126). The Output device option is sent only when its saved name is one of these. Empty = not
+    // worked out (the option sends nothing: System default).
+    std::vector<std::string> audio_devices;
     int screen_count = 1;           // PS1 146 (Monitor is greyed with fewer than 2)
     // PS1 947-948: the screen the game uses - Monitor 1..N if within screen_count, else the main screen - its refresh
     // rate now (0 = unknown) and its device name (only for the note).
@@ -230,7 +236,8 @@ void set_value(Game g, Settings& s, const std::string& id, double value);
 // Kind::Text (0.4.8): the value as it may be stored and passed on. PeerIps (GitHub #229): IPv4 addresses only (what the
 // runtime's --net_peer_ip reads), separated by ", "; anything else is dropped, duplicates and 0.0.0.0 /
 // 255.255.255.255 too, at most 16 addresses. `dropped` (optional) gets how many entries were left out.
-// GraphicsCard (0.6.2, GitHub #304): an adapter's name - control characters and quotes dropped, trimmed, at most max_len bytes.
+// GraphicsCard (0.6.2, GitHub #304) and AudioDevice (GitHub #425): a device's name - control characters and quotes dropped,
+// trimmed, at most max_len bytes.
 std::string sanitize_text(const Option& o, const std::string& in, int* dropped = nullptr);
 // The characters a Kind::Text field accepts while typing (the rest are not entered at all).
 bool text_char_ok(const Option& o, unsigned c);
@@ -239,6 +246,9 @@ bool text_char_ok(const Option& o, unsigned c);
 std::string monitor_label(int index1, int width, int height, bool primary);
 // 0.6.2 (GitHub #304): the Graphics card option's saved name is one of env.graphics_cards (same letters, any case).
 bool graphics_card_present(const Environment& env, const std::string& name);
+// GitHub #425: the Output device option's saved name is one of env.audio_devices (same letters, any case, both as
+// sanitize_text keeps them).
+bool audio_device_present(const Environment& env, const std::string& name);
 // PS1 152: the main graphics card of a list.
 std::string main_gpu(const std::vector<std::string>& gpus);
 

@@ -658,29 +658,46 @@ std::vector<Option> make_options(Game g) {
                "The language of the spoken dialogue, separately from the menus and text (Game language). Needs that "
                "language's voice files on your copy (European copies have English, French, German, Italian, Spanish). "
                "Subtitles stored with the voices may follow them.", 0), "voicelang");
-    add(make("Mute", "Mute when the game is not the active window", Tab::Gameplay, Kind::Bool, SH, 0,
+    // ---- Audio (GitHub #425) -------------------------------------------------------------------------------------
+    // The runtime's sound output (SDK patch 126): every game's, so one value for all four. The id "Mute" is kept from
+    // when it was the only sound option (on Gameplay), so saved settings keep it.
+    {
+        Option o = make("AudioDevice", "Output device", Tab::Audio, Kind::Text, SH, 0,
+                        "Which speakers or headphones the game plays its sound on. System default follows the device "
+                        "Windows uses for sound, also when you change it while playing. Choose a device to always use "
+                        "that one. If the device you chose is not plugged in, the system default is used.", 0);
+        o.max_len = 160;
+        add(std::move(o), "audiodevice");
+    }
+    add(choice("AudioChannels", "Speaker setup", Tab::Audio, SH,
+               { "Automatic", "Mono", "Stereo", "5.1 surround", "7.1 surround" }, 0,
+               "How the game's 5.1 sound is laid out for your speakers. Automatic plays 5.1 on a surround device and "
+               "folds it to stereo otherwise. Stereo also suits headphones. Mono puts everything on both sides, for one "
+               "speaker or one ear. 7.1 surround is for 7.1 speakers: the surround channels play on both the side and "
+               "back speakers.", 0),
+        "audiochannels");
+    add(make("NightMode", "Night mode", Tab::Audio, Kind::Bool, SH, 0,
+             "Evens out the volume: quiet dialogue comes up and explosions and gunfire are softer, so you can play at a "
+             "low volume without missing speech or waking anyone.", 0),
+        "nightmode");
+    add(make("Mute", "Mute when the game is not the active window", Tab::Audio, Kind::Bool, SH, 0,
              "Silences the game while another window is in front; the sound comes back when you click back into the game.", 386),
-        "mute");   // Shagg 23 Nov: in the AUDIO section of this tab (page.cpp k_playAudio; no Audio tab)
-    // Shagg 23 Nov: the sound output layout (SDK patch 125, --audio_channels; one value for all games) and each game's
-    // own audio menu sliders (ue3/audio_menu.h, --<game>_audio_music / _effects / _dialogue). The sliders' first choice
-    // sends nothing (the game keeps its own value); a value changed in the game's menu comes back here when the game
-    // closes (audio_menu_readback), so it isn't overwritten at the next start. docs/audio.md.
-    add(choice("AudioChannels", "Sound output", Tab::Gameplay, SH, { "Auto (by your speakers)", "Mono", "Stereo", "5.1 surround" }, 0,
-               "Auto: 5.1 on surround speakers, a stereo mix on headphones and stereo speakers (as before). Mono: one "
-               "channel on both speakers (one ear or one speaker). Stereo: always the stereo mix. 5.1: always 5.1 - "
-               "Windows mixes it down if your speakers have fewer.", 0), "audiochannels");
+        "mute");
+    // Shagg 23 Nov: each game's own audio menu sliders (ue3/audio_menu.h, --<game>_audio_music / _effects / _dialogue),
+    // now on #441's Audio tab. First choice sends nothing (the game keeps its own value); a change made in the game's
+    // menu comes back here when the game closes (audio_menu_readback). docs/audio.md.
     {
         std::vector<std::string> steps = { "Game's own" };
         for (int i = 0; i <= kAudioMenuMax; ++i) steps.push_back(std::to_string(i));
-        add(choice("AudioMusic", "Music volume", Tab::Gameplay, OWN, steps, 0,
+        add(choice("AudioMusic", "Music volume", Tab::Audio, OWN, steps, 0,
                    "The game's own Music volume slider (its Options > Audio), set when the game starts. Game's own: "
                    "leave it as the game has it. A change you make in the game's menu shows here after the game closes.", 0),
             "audiomenu");
-        add(choice("AudioEffects", "Effects volume", Tab::Gameplay, OWN, steps, 0,
+        add(choice("AudioEffects", "Effects volume", Tab::Audio, OWN, steps, 0,
                    "The game's own Effects volume slider (its Options > Audio), set when the game starts. Game's own: "
                    "leave it as the game has it. A change you make in the game's menu shows here after the game closes.", 0),
             "audiomenu");
-        add(choice("AudioDialogue", "Dialogue volume", Tab::Gameplay, OWN, steps, 0,
+        add(choice("AudioDialogue", "Dialogue volume", Tab::Audio, OWN, steps, 0,
                    "The game's own Dialogue volume slider (its Options > Audio), set when the game starts. Game's own: "
                    "leave it as the game has it. A change you make in the game's menu shows here after the game closes.", 0),
             "audiomenu");
@@ -887,6 +904,7 @@ const char* tab_name(Tab t) {
     case Tab::Graphics: return "Graphics";
     case Tab::Controls: return "Controls";
     case Tab::Gameplay: return "Gameplay";
+    case Tab::Audio: return "Audio";   // GitHub #425
     case Tab::Achievements: return "Achievements";   // achievements part 4
     }
     return "?";
@@ -1048,8 +1066,13 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_exe(env, "gow2_frame_generation")) return no(not_yet(gi, "needs its next build"));
         if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll") && !dlss_fg_present(env))
             return no(not_yet(gi, "this build has no AMD or NVIDIA frame generation files"));
-    } else if (f == "audiochannels") {   // SDK patch 125 (in the runtime DLL; its description, a long literal)
-        if (!cap_rt(env, "Sound output layout") && !cap_exe(env, "Sound output layout")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "audiodevice" || f == "audiochannels" || f == "nightmode") {
+        // GitHub #425: the runtime's switches (SDK patch 126), by the start of each one's description (a long literal;
+        // in the runtime DLL, or in the exe of a game linked with the runtime)
+        const char* needle = f == "audiodevice" ? "The sound output device, by its name as Windows lists it"
+                             : f == "audiochannels" ? "Speaker setup: 0 = automatic"
+                                                    : "Night mode: a gentle compressor on the game's sound";
+        if (!cap_rt(env, needle) && !cap_exe(env, needle)) return no("Needs a newer COGBox build.");
     } else if (f == "audiomenu") {   // ue3/audio_menu.h (the ids cvar's description, the same literal in all four exes)
         if (!cap_exe(env, "Profile setting ids of the audio menu's music,effects,dialogue sliders")) return no(not_yet(gi, "needs its next build"));
         if (!kAudioMenuIdsKnown[gi]) return no(not_yet(gi, "the game's slider ids are not found yet"));
@@ -1501,13 +1524,14 @@ static bool parse_ipv4(const std::string& t, unsigned char out[4]) {
 
 bool text_char_ok(const Option& o, unsigned c) {
     if (o.id == "PeerIps") return (c >= '0' && c <= '9') || c == '.' || c == ',' || c == ' ';
-    if (o.id == "GraphicsCard") return c >= 0x20 && c != 0x7f && c != '"';
+    if (o.id == "GraphicsCard" || o.id == "AudioDevice") return c >= 0x20 && c != 0x7f && c != '"';
     return false;   // no other text option: nothing typed is accepted
 }
 
 std::string sanitize_text(const Option& o, const std::string& in, int* dropped) {
     if (dropped) *dropped = 0;
-    if (o.kind == Kind::Text && o.id == "GraphicsCard") {   // 0.6.2 (GitHub #304): an adapter's name, kept as the game reads it
+    // 0.6.2 (GitHub #304): an adapter's name, kept as the game reads it; GitHub #425: a sound device's name, the same way
+    if (o.kind == Kind::Text && (o.id == "GraphicsCard" || o.id == "AudioDevice")) {
         std::string out;
         for (unsigned char ch : in) if (ch >= 0x20 && ch != 0x7f && ch != '"') out += static_cast<char>(ch);
         out = trim(out);
@@ -1551,6 +1575,21 @@ bool graphics_card_present(const Environment& env, const std::string& name) {   
     if (name.empty()) return false;
     const std::string want = low(name);
     for (const std::string& n : env.graphics_cards) if (low(n) == want) return true;
+    return false;
+}
+
+bool audio_device_present(const Environment& env, const std::string& name) {   // GitHub #425
+    // both sides as they would be saved (review: a listed name with a quote or a tab is kept without it)
+    const Option* o = find_option(Game::Gears2, "AudioDevice");
+    if (!o) return false;
+    auto low = [&](const std::string& t) {
+        std::string c = sanitize_text(*o, t);
+        for (char& ch : c) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        return c;
+    };
+    const std::string want = low(name);
+    if (want.empty()) return false;
+    for (const std::string& n : env.audio_devices) if (low(n) == want) return true;
     return false;
 }
 
@@ -2487,11 +2526,22 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 926-928: mute, monitor, players
     if (on("Mute")) a.push_back(std::string("--") + k_procNames[gi] + "_mute_unfocused=true");
-    // Shagg 23 Nov: AUDIO - the output layout (0 = auto: nothing sent) and the game's own sliders (0 = the game's own)
-    if (avail("AudioChannels") && s.i("AudioChannels") > 0) {
-        static const char* const k_ch[] = { "auto", "1", "2", "6" };
-        a.push_back(std::string("--audio_channels=") + k_ch[std::min(3, s.i("AudioChannels"))]);
+    // GitHub #425 (SDK patch 126): the Audio tab - only what differs from the runtime's default (system default device,
+    // Automatic, night mode off), and only to a runtime that has the switch. A chosen device is sent even when the
+    // launcher doesn't see it now (review: it may be plugged in by the time the game starts, and the runtime falls back
+    // to the default device itself when it isn't there); only the AUDIO tab says it is missing.
+    if (avail("AudioDevice")) {
+        const Option* ao = find_option(g, "AudioDevice");
+        const std::string dev = ao ? sanitize_text(*ao, s.str("AudioDevice")) : std::string();
+        if (!dev.empty()) a.push_back("--audio_output_device=" + q(dev));
     }
+    if (avail("AudioChannels")) {
+        static const int k_channels[5] = { 0, 1, 2, 6, 8 };   // Automatic, Mono, Stereo, 5.1, 7.1
+        const int c = std::max(0, std::min(4, s.i("AudioChannels")));
+        if (c > 0) a.push_back("--audio_channels=" + std::to_string(k_channels[c]));
+    }
+    if (on("NightMode")) a.push_back("--audio_night_mode=true");
+    // Shagg 23 Nov: the game's own sliders (0 = the game's own value: nothing sent)
     for (int k = 0; k < 3; ++k)
         if (avail(k_audioMenuIds[k]) && s.i(k_audioMenuIds[k]) > 0)
             a.push_back(std::string("--") + k_procNames[gi] + "_audio_" + k_audioMenuKeys[k] + "=" +
@@ -2901,6 +2951,7 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         { "MatchChatBackground", { { "cogbox_match_chat_background", "dark" } } },
         { "HideNotes", { { "gow2_hide_onscreen_notes", "false" } } },
         { "Mute", { { p + "_mute_unfocused", "false" } } },
+        { "NightMode", { { "audio_night_mode", "false" } } },   // GitHub #425: SDK patch 126 reads it per sound callback
         { "Vibration", { { "vibration", "true" } } },
         { "DeadZoneL", { { "left_stick_deadzone_percentage", "0" } } },
         { "DeadZoneR", { { "right_stick_deadzone_percentage", "0" } } },
