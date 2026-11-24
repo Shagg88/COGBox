@@ -735,6 +735,65 @@ static void keys_section(App &a, int g)
         set_all(acts[0].cvar, acts[0].def);
         capture = -1;
     }
+    // Shagg 24 Nov: "Bind all games". Keys are copied by ACTION, not by controller button: Judgment's buttons differ (its
+    // Coalesced_INT.bin, job 1921: Y = switch weapon, LB = grenades, D-pad up = point of interest, D-pad down = tactical
+    // display; Gears 1-3: D-pad up = grenades, D-pad down = pistol, Y = point of interest, LB = tactical display). An
+    // action another game doesn't have (Pistol, Switch weapon) keeps that game's own key; a key the copy would give two
+    // actions in that game is taken from the action that didn't get it from here.
+    ImGui::SameLine();
+    if (small_button("Use these keys in all games")) {
+        std::vector<std::string> kept;
+        for (int o = 0; o < G_COUNT; o++) {
+            if (o == g) continue;
+            const auto &oacts = gs::key_actions((gs::Game)o);
+            const std::string osec = keys_section_name(o);
+            std::vector<std::string> copied;   // the keys given to this game's actions
+            for (const gs::KeyAction &ok : oacts) {
+                for (const gs::KeyAction &k : acts) {
+                    if (strcmp(k.what, ok.what)) continue;
+                    std::string v = key_get(a, g, k.cvar);
+                    if (v.empty()) v = k.def;
+                    a.ini.set(osec, ok.cvar, v);
+                    copied.push_back(v);
+                }
+            }
+            for (const gs::KeyAction &ok : oacts) {   // that game's own actions: drop keys the copy now uses
+                bool here = false;
+                for (const gs::KeyAction &k : acts) if (!strcmp(k.what, ok.what)) here = true;
+                if (here) continue;
+                std::string cur = key_get(a, o, ok.cvar);
+                if (cur.empty()) cur = ok.def;
+                std::string out;
+                for (size_t p0 = 0; p0 <= cur.size();) {
+                    size_t p1 = cur.find(',', p0);
+                    if (p1 == std::string::npos) p1 = cur.size();
+                    const std::string tok = cur.substr(p0, p1 - p0);
+                    p0 = p1 + 1;
+                    bool clash = false;
+                    for (const std::string &c : copied)
+                        for (size_t q0 = 0; q0 <= c.size();) {
+                            size_t q1 = c.find(',', q0);
+                            if (q1 == std::string::npos) q1 = c.size();
+                            if (tok != "None" && c.substr(q0, q1 - q0) == tok) clash = true;
+                            q0 = q1 + 1;
+                        }
+                    if (!tok.empty() && !clash) out += (out.empty() ? "" : ",") + tok;
+                }
+                a.ini.set(osec, ok.cvar, out.empty() ? std::string("None") : out);
+                kept.push_back(std::string(game_def(o).shortName) + ": " + tr(ok.what));
+            }
+        }
+        a.ini.save();
+        for (int o = 0; o < G_COUNT; o++) env_refresh(a, o);
+        keyNote = tr("Copied to the other games by action.");
+        if (!kept.empty()) {
+            keyNote += std::string(" ") + tr("Not in this game, so each kept its own key:");
+            for (size_t i = 0; i < kept.size(); i++) keyNote += (i ? ", " : " ") + kept[i];
+        }
+        capture = -1;
+    }
+    ui_tip("Gives Gears of War 1, 2, 3 and Judgment these keys, matched by what the action does (Judgment's buttons are laid "
+           "out differently, so its grenade, weapon switch and point of interest are matched by action, not by button).");
     // the press that sets the key: a frame after the click that chose the row, so that click isn't taken as the key
     if (capture >= 0 && ImGui::GetFrameCount() > captureFrame + 1) {
         const char *name = nullptr;
