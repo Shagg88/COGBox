@@ -2240,6 +2240,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // made are translated again only if the store lacks them (a read otherwise).
   void StartPreTranslate() {  // Init, after the shader cache and the DXBC store are set up
     const int32_t want = REXCVAR_GET(gow2_renderer_shader_precreate_threads);
+    // 24 Nov (menu-route jobs 2378x2 / 2379c2): automatic (-1) helps D3D12 (Gears 2 boot freeze 2.30 -> 1.08 s, steady
+    // 4.68 ms) but not Vulkan (Gears 2 boot 0.60 -> 1.02 s; Judgment steady 5.67 -> 6.83 ms) - so automatic is off on
+    // Vulkan (the render thread translates, as before); a number set by hand still applies on both APIs.
+    if (want < 0 && REXCVAR_GET(gow2_renderer_api) == "vulkan") {
+      REXLOG_INFO("gow2_renderer: background shader translation threads off on Vulkan (automatic; measured slower there) - "
+                  "--gow2_renderer_shader_precreate_threads=N sets them anyway");
+      return;
+    }
     if (!want || !cache_ || !cache_->Dxbc() || !REXCVAR_GET(gow2_renderer_dxbc_store) ||
         !REXCVAR_GET(gow2_renderer_shader_precreate))
       return;
