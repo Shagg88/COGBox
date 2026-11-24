@@ -6,8 +6,10 @@
 #include <xenos/chat_logic.h>
 #include <xenos/chat_panel.h>   // cogbox_match_chat
 
+#include <rex/cvar.h>
 #include <rex/logging/macros.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -15,6 +17,14 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+// 23 Nov (job 2378w): opening the object tables here, as soon as the game started, ran the full table scan (a page
+// check per read) in the middle of the first level load: Gears 2's direct-start load took 3.06 s instead of 0.70 s
+// (rc14 -> combo9, the build chat arrived in). Chat is only used in a match, so it now waits: it uses the tables once
+// another feature has opened them, and opens them itself only after this many seconds.
+REXCVAR_DEFINE_INT32(ue3_chat_open_delay, 120, "COGBox",
+                     "In-match chat: seconds after start before chat opens the engine's object tables itself (sooner "
+                     "if another feature has opened them). 0 = at once (the first chat builds; it slowed a direct level load)");
 
 namespace {
 namespace obj = ue3::obj;
@@ -49,6 +59,10 @@ double Seconds() {
 }
 
 void Resolve() {
+  const auto started = std::chrono::steady_clock::now();
+  const auto delay = std::chrono::seconds(std::max(0, REXCVAR_GET(ue3_chat_open_delay)));
+  while (!obj::Ready() && std::chrono::steady_clock::now() - started < delay)
+    std::this_thread::sleep_for(std::chrono::seconds(2));  // only a flag read while waiting; no table scan
   for (int attempt = 0; attempt < 60; attempt++) {
     if (attempt) std::this_thread::sleep_for(std::chrono::seconds(attempt < 15 ? 2 : 15));
     if (!obj::Ready() && !(g_config.open_objects && g_config.open_objects())) continue;
