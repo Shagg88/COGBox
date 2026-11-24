@@ -1,6 +1,23 @@
 # COGBox changes
 
-## Next (0.6.8, not released yet)
+## 0.6.8
+
+Smoother frame times without the freezes, and the reports against 0.6.7.
+
+- **Background shader translation on by default** (`--gow2_renderer_shader_precreate_threads=-1`: half the logical
+  processors, at least 2, 2 left for the game; normal priority on loading screens, lowest in play), with patch 0066
+  in all four games. Automatic leaves them off on Vulkan (measured slower there). Measured from the menus: up to 31%
+  more FPS (Gears 3 Vulkan), worst freeze shorter in every game.
+- **In-match chat freeze**: the chat's object-table scan ran during level loads (3.06 s instead of 0.70 s for one
+  Gears 2 load step). It now waits (`--ue3_chat_open_delay`, 120 s; 0 = as before).
+- **Proton / Wine: DirectX 12 by default** (#443); exit code 3 within 30 s without a crash dump switches that game to
+  Vulkan and starts it again. Recommended settings follow.
+- **Preparing shaders finishes** past a few driver-slow pipelines (#443: one took 213 s); they build in the background
+  on the next play. Pipelines taking 5 s or more are logged.
+- **Gears 2 reads Gears 1's unlocks** (#439, SDK patch 127, runtime 070).
+- Audio tab (PR #441, SDK patch 126), mod conflicts (PR #442), 1366 x 768 / 1600 x 900 (PR #440).
+- Judgment: Original Gears buttons. Use these keys in all games (by action). "Close COGBox?" Don't ask again.
+- Prompt style Xbox fixed; split-screen 1 or 2 players (#403); launcher layout fixes (#443).
 
 - **Always start the games from COGBox.** COGBox is not just a menu - it is the machine that runs the four
   recompiled games: it sets up the game files, renderer, settings, fixes, controllers and online play every time a

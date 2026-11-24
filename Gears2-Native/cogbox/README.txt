@@ -2,7 +2,7 @@ COGBox - Gears of War native PC ports
 =====================================
 
 COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
-Judgment. This README is for COGBox 0.6.7.
+Judgment. This README is for COGBox 0.6.8.
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project. COGBox isn't affiliated with Microsoft, Epic Games or The
 Coalition.
@@ -43,7 +43,7 @@ What you need
 
 Getting started
 ---------------
-1. Right-click COGBox-0.6.7.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
+1. Right-click COGBox-0.6.8.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
    7-zip.org) to a folder of its own that you can write to, for example C:\Games\COGBox. Don't start
    COGBox from inside the archive, and don't use Program Files (Windows protects it) - COGBox tells
    you on start-up if it's in such a place.
@@ -74,6 +74,23 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 Alt+Enter in the game window switches between windowed and borderless full screen (all four games; another key:
 --bind_cogbox_fullscreen=<key> in extra-args.txt, None = off).
+
+
+New in 0.6.8
+------------
+- SMOOTHER, WITH SHORTER FREEZES: shaders are prepared on background threads that scale with your CPU (DirectX 12;
+  off on Vulkan, where they measured slower). Up to 31% more FPS, and the worst freeze is shorter in every game.
+- In-match chat no longer stalls level loading.
+- Steam Deck / Linux: DirectX 12 is the default under Proton; if it can't start, COGBox switches that game to Vulkan
+  and starts it again. "Preparing shaders" no longer hangs at 99% on one very slow shader (#443).
+- Audio tab (output device, speaker setup up to 7.1, night mode; PR #441). Mod conflicts are shown (PR #442).
+  1366 x 768 and 1600 x 900 (PR #440).
+- Gears 2 sees Gears 1's unlocks (Carmine, RAAM, Kim; #439).
+- Judgment: "Original Gears buttons" (Controls). "Use these keys in all games" (Controls). "Close COGBox?" can be
+  turned off.
+- Fixed: button prompts stuck on Xbox / key caps; split-screen offers 2 players (the games' limit); launcher layout
+  on small screens (#443).
+- Always start the games from COGBox: a game started another way shows a warning.
 
 
 New in 0.6.7
