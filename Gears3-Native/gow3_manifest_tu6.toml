@@ -336,12 +336,21 @@ registers = ["r11", "r26"]
 
 # Cheats on TU6 (Shagg 2 Nov): TU6 compares a loaded file's SHA-1 (20 bytes, loop 0x82323C3C) with its stored value and
 # calls the dirty-disc error (sub_82CF8A90) when they differ - our patched GearGame.xxx (AllowCheats) differs. Before
-# `cmpwi cr6,r9,0` at 0x82323C5C (r9 = first differing byte, 0 = same): extras.cpp sets r9 = 0 only while --gow3_cheats
-# or --gow3_unlock_mutators is on, and logs it.
+# `cmpwi cr6,r9,0` at 0x82323C5C (r9 = first differing byte, 0 = same; computed digest at r1+96): extras.cpp sets
+# r9 = 0 only when that digest is one of our patched copies (#420), and logs it. r1+96: 0x82323C24 `addi r3,r1,96`,
+# 0x82323C28 `addi r4,r11,96` (r11 = lwz 356(r26), the finalised hasher), `li r5,20`, 0x82323C2C `bl 0x82CDD0E0` (memcpy); the loop
+# compares r1+128 (expected) with r1+96. Not reached with a difference for our files in the #420 launches.
 [[entrypoint.midasm_hook]]
 address = 0x82323C5C
 name = "Gow3Tu6PackageHashOk"
-registers = ["r9"]
+registers = ["r9", "r1"]
+
+# #420 task 5b: TU6's second SHA-1 compare (loop 0x822C9DF4 in sub_822C9D..: expected at r31+8, computed at r1+80 over
+# the block r31+0 / size r31+4); on a difference it calls the dirty-disc error. extras.cpp Gow3Tu6BlockHashOk.
+[[entrypoint.midasm_hook]]
+address = 0x822C9E14
+name = "Gow3Tu6BlockHashOk"
+registers = ["r9", "r31", "r1"]
 
 # GitHub #207 (0.4.5 crash in the Act 1 jail cutscene, guest read of 0x0000000C): sub_82B55900 (TU6) takes a finished
 # buffer off a voice (the atomic swap at this+720), then calls the voice's callback object (this+144) through its
@@ -353,6 +362,23 @@ address = 0x82B55AC4  # `lwz r11,0(r3)`: the callback object's vtable
 name = "Gow3VoiceCallbackGone"
 registers = ["r3"]
 jump_address_on_true = 0x82B55AD4
+
+# GitHub #420, the sniper zoom overlay side by side (game_patches.cpp Gow3CanvasMaterialTileFit, ue3/canvas_tile_clip.h):
+# the entry of UCanvas::DrawMaterialTile (sub_827485F8, called from execDrawMaterialTile, whose native-table entry is
+# 0x82749078): r3 canvas (OrgX +64, ClipX +72, ClipY +76), f1 X (absolute), f2 Y, f3 Z, f4 XL, f5 YL, f6 U, f7 V, f8 UL,
+# f9 VL (execDrawMaterialTile's own edge cuts adjust them in its stack slots first).
+[[entrypoint.midasm_hook]]
+address = 0x827485F8  # `mflr r12`, the function's first instruction
+name = "Gow3CanvasMaterialTileFit"
+registers = ["f1", "f4", "f5", "f6", "f7", "f8", "f9", "r3"]
+
+# GitHub #420, the Longshot's scope post-process side by side: execSetScalarParameterValue (sub_8251E7F0) just before
+# its virtual call (`addi r10,r11,1` after `lfs f1,80(r1)`): r3 the MIC, r4 the parameter's FName, f1 its value (game_patches.cpp
+# Gow3ScopeSplitParams).
+[[entrypoint.midasm_hook]]
+address = 0x8251E88C
+name = "Gow3ScopeSplitParams"
+registers = ["r3", "r4", "f1"]
 
 [[entrypoint.midasm_hook]]
 address = 0x82975134  # patch 0066: `bl 82B060B0` in the vertex-shader constructor 82974FD8 (TU6)

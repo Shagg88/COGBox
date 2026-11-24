@@ -118,6 +118,12 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
   asks the host's join beacon (TCP 8700) for a place as its own party, and the host's game picks the team - as strangers
   met on Xbox Live. Before, every Open matches joiner came in as a member of the host's party, on the host's team
   (Discord, 16 Nov). Join friend, invites and room codes keep the invite. Unit tests: 6 search cases, 1 message parse.
+- `sdk-patch117-player-devices.diff` (0.6.8, splitscreen; after 116): SDK patch 117: `--player_devices` assigns input devices to splitscreen players.
+  `DeviceInfo` gains `path` (SDL's `SDL_GetGamepadPath`); `DeviceKey` names a device across runs (`kbm` or `sdl:<guid>|<path>`, the
+  instance id when no path, so two identical pads stay distinct). `player_devices` is `;`-separated keys in player order (`auto` or
+  empty = Auto): an empty cvar keeps `SlotAssignment`; otherwise `ExplicitAssignment` gives each player its named device, and
+  absent-mapped and Auto players take the unchosen ones (pads by ordinal, then keyboard/mouse), so a late-connecting mapped pad takes
+  its place back. Unit tests: 9 cases in `tests/unit/input/input_assignment_test.cpp`.
 - `sdk-patch109-codegen-fixes.diff` (0.6.4, after 111; the code generator `rexglue.exe`, not the runtime; jobs 1941 /
   1942): three of rexglue's code generator fixes brought over. fctid / fctidz: a value of 2^63 or more saturates to the
   largest integer (c9f1938); srad / sraw: a shift of 64 / 32 or more sets CA from the sign (02a002f); vcmpbfp: a NaN sets
@@ -140,6 +146,15 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
   (`git -C thirdparty/FFmpeg apply`; that file is CRLF in the Windows checkout) - and again after every submodule or
   SDK update. Needs patch 80.
 - `sdk-patch126-audio-output-options.diff` (GitHub #425 / PR #441, the launcher's AUDIO tab; was 117 in the PR - renumbered, 117-119 were taken before (now 122-124); REPLACES patch 125: both define `--audio_channels`, so a runtime takes 126 and NOT 125; NOT BUILT into a release
+- `sdk-patch128-kbm-any-player.diff` (GitHub #420, 0.6.8 split screen; after 127, on top of 117; REPLACES patch 122: it
+  defines `--mnk_own_player` itself, so a runtime takes 128 and NOT 122): the keyboard/mouse can be any player's.
+  `ExplicitAssignment` (`--player_devices`) takes `kbm` as a key like a pad's, and Auto players take the unchosen devices
+  keyboard/mouse first, then pads by ordinal: all Auto = keyboard/mouse player 1, the first pad player 2; player 1 on a
+  named pad leaves the keyboard/mouse to the next Auto player (117 kept it on player 1 always). `SlotAssignment` (no
+  `--player_devices`) gets 122's `--mnk_own_player` (pads one slot on). `rex::input::KeyboardMouseUser()` reports the
+  guest user the keyboard/mouse feeds (-1 none) for the game side: COGBox's mouse look sends the mouse as that
+  player's ControllerId and split screen's button prompts ignore keyboard activity when it isn't player 1's. Unit tests:
+  `tests/unit/input/input_assignment_test.cpp` (all Auto, named pad, no keyboard, `kbm` chosen for player 2).
 - `sdk-patch127-other-title-achievements.diff` (GitHub #439): `--xam_other_title_achievements=TITLEID=path;...` - XamUserCreateAchievementEnumerator answers another title's id with that game's unlocked achievements (its COGBox achievements/<TITLEID>.toml) instead of the running game's. Gears 2 asks for Gears 1's (4D5307D5) to unlock Carmine, RAAM and Kim. Runtime 070 = 069 + 127.
   yet - needs a runtime build): three switches in `src/audio/sdl/sdl_audio_driver.cpp`, their defaults the behaviour
   before. `--audio_output_device=<name>`: the SDL playback device of that name (exact, else the first whose name

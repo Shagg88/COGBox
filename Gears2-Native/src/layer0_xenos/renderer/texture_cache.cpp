@@ -649,6 +649,12 @@ void SetSuppressDiskOverlaysForPrompts(bool suppress) {
   g_overlay_gen.fetch_add(1, std::memory_order_acq_rel);
 }
 
+bool DiskPromptOverlaysSuppressed() {
+  g_swap.Init();
+  std::lock_guard<std::mutex> lock(g_swap.mutex);
+  return g_swap.suppress_disk_prompt_overlays;
+}
+
 void ClearDynamicOverlays() {
   g_swap.Init();
   {

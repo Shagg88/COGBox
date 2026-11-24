@@ -61,6 +61,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
+#include <rex/input/device_assignment.h>   // GitHub #420: KeyboardMouseUser
 #include <rex/cvar.h>
 #include <rex/input/mnk/mnk_input_driver.h>
 #include <rex/logging/macros.h>
@@ -577,6 +578,13 @@ inline void MaybeLog(double x, double y, bool sent) {
   ax = ay = 0; frames = failed = 0; start = now;
 }
 
+// GitHub #420: the player the keyboard / mouse drives (the SDK's input assignment: player 1 unless split screen gives it
+// to another player); the mouse's motion goes in as that player's ControllerId. No keyboard / mouse: player 1.
+inline uint32_t MouseController() {
+  const int u = rex::input::KeyboardMouseUser();
+  return u > 0 ? uint32_t(u) : 0u;
+}
+
 // ---- Gears 3 / Judgment ----------------------------------------------------------------------------------------------
 inline bool SendViewport(const PPCContext& ctx, uint8_t* base, uint64_t key, double v) {
   PPCContext c = ctx;
@@ -586,7 +594,7 @@ inline bool SendViewport(const PPCContext& ctx, uint8_t* base, uint64_t key, dou
   return SafeCall(g_entry_orig, &c, base);
 }
 inline void ViewportAxisHook(PPCContext& ctx, uint8_t* base) {
-  if (!g_injecting && ctx.r5.u32 == 0) {  // player 1, once per frame (the first event that finds banked motion)
+  if (!g_injecting && ctx.r5.u32 == MouseController()) {  // the mouse's player, once per frame (the first event that finds banked motion)
     double x = 0, y = 0;
     uint64_t mx, my;
     if (NamesOk(base, &mx, &my) && Take(&x, &y, ctx.f2.f64)) {   // f2: the event's DeltaTime
@@ -610,7 +618,7 @@ inline bool SendClient(PPCContext& ctx, uint8_t* base, PPCFunc* fn, uint32_t cli
   PPCContext c = ctx;
   c.r3.u64 = client;
   c.r4.u64 = viewport;
-  c.r5.u64 = 0;  // ControllerId
+  c.r5.u64 = MouseController();  // ControllerId (GitHub #420: the keyboard / mouse player)
   c.r6.u64 = key;
   c.r9.u64 = 0;  // bGamepad
   c.f1.f64 = double(float(v));

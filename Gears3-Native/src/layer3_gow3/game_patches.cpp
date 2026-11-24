@@ -7,6 +7,7 @@
 // data addresses in gow3_addresses.h; notes/24).
 // Not needed in Gears 3: Gears 2's "Black Shading Fix" (Gears 3 sets its tiling flag 0x83428B98 to 0 itself, at
 // 0x82960B94; TU6: 0x83439358 at 0x82971B6C).
+#include <unordered_set>
 #include <rex/cvar.h>
 #include <rex/filesystem.h>   // rex::path_to_utf8 (#193 log)
 #include <rex/filesystem/vfs.h>
@@ -14,6 +15,7 @@
 #include <rex/ppc/context.h>
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
+#include <rex/system/thread_state.h>
 #include <rex/system/xmemory.h>
 #include <xenos/dev_tools.h>
 #include <xenos/frame_limiter.h>
@@ -24,6 +26,8 @@
 #include <ue3/script_input.h>
 #include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
 #include <ue3/name_tags.h>
+#include <ue3/split_layout.h>  // GitHub #420
+#include <ue3/canvas_tile_clip.h>  // GitHub #420: the zoom overlay side by side
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/tick_log.h>  // --gow3_tick_log (shared)
 #include <ue3/aspect.h>  // the ultrawide shape maths (shared)
@@ -499,11 +503,10 @@ void TickTimeline() { ue3::TickLog("gow3_tick_log", REXCVAR_GET(gow3_tick_log));
 REXCVAR_DEFINE_INT32(gow3_menu_fps, 60, "Gears3",
                      "GitHub #101: the engine's frame-rate limit on the title screen and its menus (0 = the player's)");
 REXCVAR_DEFINE_STRING(ue3_exec_each_level, "", "Gears3",
-                      "GitHub #208: console commands (';'-separated) run again each time a level opens - e.g. the "
-                      "two-player side-by-side split, which the game resets when a level starts");
+                      "GitHub #208: console commands (';'-separated) run again each time a level opens (for settings the "
+                      "game resets when a level starts)");
 namespace {
 std::atomic<bool> g_in_front_end{false};
-std::atomic<uint32_t> g_split_level_serial{0};  // GitHub #269: bumped at every level / front-end open
 bool Gow3NameHas(std::string_view s, std::string_view needle) {
   for (size_t i = 0; i + needle.size() <= s.size(); ++i) {
     size_t k = 0;
@@ -531,7 +534,6 @@ void OnGow3FileOpened(std::string_view path, const std::filesystem::path*) {
   // GitHub #208 / #136: commands run again at every level (the split-screen layout: the game sets its own when a
   // level starts, so --ue3_exec's one run at the front end was overwritten). Queued; run once a player exists.
   if (Gow3IsLevel(path) || front) {
-    g_split_level_serial.fetch_add(1, std::memory_order_relaxed);  // GitHub #269: Gow3SplitLayoutTick
     const std::string each = REXCVAR_GET(ue3_exec_each_level);
     if (!each.empty()) {
       size_t at = 0;
@@ -628,116 +630,172 @@ void Gow3FirstPersonTick();  // first_person.cpp (--gow3_first_person)
 // over calls, 16384 slots each), and with it off the left mouse button picked the right path again in the campaign
 REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, true, "Gears3",
                     "Path choice: the mouse button on a path's side picks that path (the trigger binds swap while it is open)");
-// GitHub #269 (was #136 / #208): two-player split side by side. One `set GameViewportClient DesiredSplitscreenType
-// eSST_2P_VERTICAL` when a level package OPENS (--ue3_exec_each_level) ran during the load, before the level's own
-// start-up - which sets the viewport client's split type again, so the game still split top / bottom (the reporter's
-// in-game Back binding, run after the level started, did work). With --gow3_split_vertical the viewport client is
-// watched instead: whenever two players are signed in and its DesiredSplitscreenType is not eSST_2P_VERTICAL, the same
-// console command is run again (rate-limited, with a longer wait after each quick reset by the game, 30 s at most).
-// 3 and 4 players and one player are left alone. Off by default (the launcher's "Two-player split: Side by side").
+// GitHub #269 / #420: two-player split side by side. The split is decided in UnrealScript
+// (GameViewportClient.UpdateActiveSplitscreenType / LayoutPlayers - no native function to hook). Task 5b: values written
+// from outside left the HUD laid out for top / bottom, so the game now makes the choice itself - --gow3_split_vertical
+// adds an Engine.xxx package patch (gow3_split_package_patch.h, extras.cpp) and every relayout (level start, options
+// apply, checkpoints) runs the game's own code with eSST_2P_VERTICAL. The tick below only reads and logs it (capped).
+// Off by default (the launcher's "Two-player split: Side by side").
 REXCVAR_DEFINE_BOOL(gow3_split_vertical, false, "Gears3",
-                    "GitHub #269: the two-player split side by side (eSST_2P_VERTICAL), set again whenever the game "
-                    "resets it (each level start)");
-void Gow3SplitLayoutTick() {
-  if (!REXCVAR_GET(gow3_split_vertical)) return;
-  static uint32_t ticks = 0;
-  if (++ticks % 20) return;  // three times a second at 60
+                    "GitHub #269 / #420: the two-player split side by side (eSST_2P_VERTICAL), chosen by the game's own "
+                    "script (Engine.xxx package patch)");
+// Class layout offsets, found once by the tick below (-1 until then). Written on the game thread only.
+static int g_split_vp_off = -1, g_split_players_off = -1, g_split_desired_off = -1, g_split_active_off = -1;
+// True while two players are side by side, read live from GEngine (for the canvas / material hooks, game thread): the
+// tick below runs from the frame-rate limiter's hook, which isn't reached in play without a frame limit (log: "did NOT
+// reach the limiter hook"), so a flag it set went stale in matches. Four guest reads; false until the offsets are known.
+static bool Gow3SideBySideNow() {
   namespace obj = ue3::obj;
-  if (!obj::Ready() && !obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar)) return;
-  using Clock = std::chrono::steady_clock;
-  static Clock::time_point next_lookup{}, last_set{};
-  static int vp_off = -1, desired_off = -1, active_off = -1, players_off = -1;
-  static uint32_t serial_seen = ~0u;
-  static int fails = 0;
-  static Clock::time_point vertical_since{};
-  static bool in_flight = false, warned = false;
-  const Clock::time_point now = Clock::now();
-  if (vp_off < 0 || desired_off < 0 || players_off < 0) {
+  if (g_split_active_off < 0 || g_split_vp_off < 0 || g_split_players_off < 0) return false;
+  const uint32_t engine = obj::Read32(gow3::addr::kGEngine);
+  if (!engine) return false;
+  const uint32_t viewport = obj::Read32(engine + uint32_t(g_split_vp_off));
+  if (!viewport || int(obj::Read32(engine + uint32_t(g_split_players_off) + 4)) != 2) return false;
+  const uint32_t a = viewport + uint32_t(g_split_active_off);
+  return uint8_t(obj::Read32(a & ~3u) >> (8 * (3 - (a & 3u)))) == ue3::kSplitVertical;
+}
+void Gow3SplitLayoutTick() {
+  if (!REXCVAR_GET(gow3_split_vertical)) return;   // reads only
+  namespace obj = ue3::obj;
+  // Offsets are class layout: found once (a failed class lookup scans every object: at most every 5 s). Objects are read
+  // from GEngine every frame, so a level change never leaves a stale pointer.
+  int& vp_off = g_split_vp_off;
+  int& players_off = g_split_players_off;
+  int& desired_off = g_split_desired_off;
+  int& active_off = g_split_active_off;
+  static bool gave_up = false;
+  if (desired_off < 0 || active_off < 0) {
+    if (gave_up) return;
+    using Clock = std::chrono::steady_clock;
+    static Clock::time_point next_lookup{};
+    const Clock::time_point now = Clock::now();
     if (now < next_lookup) return;
-    next_lookup = now + std::chrono::seconds(5);   // FindClass misses scan every object: not more often than this
+    next_lookup = now + std::chrono::seconds(5);
+    if (!obj::Ready() && !obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar)) return;
     const uint32_t engine_cls = obj::FindClass("Engine"), game_engine_cls = obj::FindClass("GameEngine");
     const uint32_t vpc_cls = obj::FindClass("GameViewportClient");
     if (!engine_cls || !game_engine_cls || !vpc_cls) return;
     vp_off = obj::PropertyOffset(game_engine_cls, "GameViewport");
     players_off = obj::PropertyOffset(engine_cls, "GamePlayers");
-    desired_off = obj::PropertyOffset(vpc_cls, "DesiredSplitscreenType");
-    active_off = obj::PropertyOffset(vpc_cls, "ActiveSplitscreenType");
-    REXLOG_INFO("gow3_split_vertical: GameViewport +0x{:X}, GamePlayers +0x{:X}, DesiredSplitscreenType +0x{:X}, "
-                "ActiveSplitscreenType +0x{:X}", vp_off, players_off, desired_off, active_off);
-    if (vp_off < 0 || desired_off < 0 || players_off < 0) {
-      REXLOG_WARN("gow3_split_vertical: viewport properties not found - the split is left as the game sets it");
-      vp_off = desired_off = players_off = -1;
-      next_lookup = now + std::chrono::hours(24 * 365);
+    const int desired = obj::PropertyOffset(vpc_cls, "DesiredSplitscreenType");
+    const int active = obj::PropertyOffset(vpc_cls, "ActiveSplitscreenType");
+    if (vp_off < 0 || players_off < 0 || desired < 0 || active < 0) {
+      REXLOG_WARN("gow3_split_vertical: viewport properties not found - the split is not logged");
+      gave_up = true;
       return;
     }
+    desired_off = desired;
+    active_off = active;
   }
   const uint32_t engine = obj::Read32(gow3::addr::kGEngine);
   if (!engine) return;
   const uint32_t viewport = obj::Read32(engine + uint32_t(vp_off));
-  const uint32_t players = obj::Read32(engine + uint32_t(players_off) + 4);  // TArray: data, count, max
-  if (!viewport || players != 2) {  // not two players: nothing to keep; a later start counts afresh
-    vertical_since = {};
-    in_flight = false;
-    return;
-  }
+  const int players = int(obj::Read32(engine + uint32_t(players_off) + 4));  // TArray: data, count, max
+  if (!viewport || players != 2) return;
   auto read8 = [](uint32_t a) { return uint8_t(obj::Read32(a & ~3u) >> (8 * (3 - (a & 3u)))); };
-  // ESplitScreenType (Engine.GameViewportClient): eSST_NONE, eSST_2P_HORIZONTAL, eSST_2P_VERTICAL, eSST_3P_*, eSST_4P
-  constexpr uint8_t kVertical = 2;
-  const uint8_t desired = read8(viewport + uint32_t(desired_off));
-  const uint8_t active = active_off >= 0 ? read8(viewport + uint32_t(active_off)) : 0xFF;
-  static uint8_t logged_desired = 0xFF, logged_active = 0xFF;
-  static int split_lines = 0;   // r36: every split log line is capped (a game that keeps resetting it cannot flood the log)
-  if ((desired != logged_desired || active != logged_active) && ++split_lines <= 300) {
-    REXLOG_INFO("gow3_split_vertical: split type desired {} active {} (2 = side by side)", desired, active);
-    logged_desired = desired;
-    logged_active = active;
+  const uint8_t desired = read8(viewport + uint32_t(desired_off)), active = read8(viewport + uint32_t(active_off));
+  // The split is the game's own choice (the Engine.xxx patch, extras.cpp); logged capped and only on change.
+  static uint8_t seen_desired = 0xFF, seen_active = 0xFF;
+  static int lines = 0;
+  if ((desired != seen_desired || active != seen_active) && ++lines <= 50)
+    REXLOG_INFO("gow3_split_vertical: the game set split type desired {} active {}{}", desired, active,
+                active == ue3::kSplitVertical ? " (side by side)" : "");
+  seen_desired = desired;
+  seen_active = active;
+}
+
+// GitHub #420, the sniper zoom overlay side by side (ue3/canvas_tile_clip.h FitFullViewTile16x9, as Gears 2's and
+// Judgment's): GearHUD_Base.DrawWeaponCrosshair draws Weap.GetZoomedHUDOverlay() with DrawMaterialTile(ClipX, ClipY), its
+// art made for a 16:9 view; on a 640x720 view it was squeezed to half width. At UCanvas::DrawMaterialTile's entry
+// (sub_827485F8, from execDrawMaterialTile 0x82749078; gow3_manifest_tu6.toml), only while two players are side by
+// side, a material tile covering the whole view samples a centred part of its texture (U 0.5, V 2 at 640x720). Gears 3's
+// arguments: r3 canvas, f1 X, f2 Y, f3 Z, f4 XL, f5 YL, f6 U, f7 V, f8 UL, f9 VL. One atomic load per material tile
+// otherwise. Capped log.
+void Gow3CanvasMaterialTileFit(PPCRegister& f1, PPCRegister& f4, PPCRegister& f5, PPCRegister& f6, PPCRegister& f7,
+                               PPCRegister& f8, PPCRegister& f9, PPCRegister& r3) {
+  if (!REXCVAR_GET(gow3_split_vertical) || !Gow3SideBySideNow()) return;
+  auto rf = [](uint32_t a) {
+    const uint32_t v = ue3::obj::Read32(a);
+    float f;
+    std::memcpy(&f, &v, 4);
+    return f;
+  };
+  const float org_x = rf(r3.u32 + 64), clip_x = rf(r3.u32 + 72), clip_y = rf(r3.u32 + 76);
+  const float u = float(f6.f64), ul = float(f8.f64), v = float(f7.f64), vl = float(f9.f64);
+  const ue3::TileUV t =
+      ue3::FitFullViewTile16x9(float(f1.f64), float(f4.f64), float(f5.f64), u, ul, v, vl, org_x, clip_x, clip_y, 2.0f);
+  if (t.u == u && t.ul == ul && t.v == v && t.vl == vl) return;
+  static std::atomic<int> n{0};
+  if (n++ < 16)
+    REXLOG_INFO("gow3_split_vertical: full-view material tile on {}x{}: u {} +{} v {} +{} -> u {} +{} v {} +{}", clip_x,
+                clip_y, u, ul, v, vl, t.u, t.ul, t.v, t.vl);
+  f6.f64 = double(t.u);
+  f8.f64 = double(t.ul);
+  f7.f64 = double(t.v);
+  f9.f64 = double(t.vl);
+}
+
+// GitHub #420: Gears 3's sniper zooms are a scope mesh plus a post-process material (not the HUD overlay of Gears 2 /
+// Judgment). GearScope_Sniper.EnableScope sets the material's WideScreen / SplitScreen scalars - 1 / 1 with two players,
+// for the top / bottom split the materials were made for, so side by side their rings were stretched tall. At
+// execSetScalarParameterValue's virtual call (sub_8251E7F0 +0x9C: r3 the MIC, r4 the parameter's FName, f1 the value),
+// only while two players are side by side, by the MIC's parent material: the Longshot's HUD_SniperScope_PostFX_INST gets
+// WideScreen -1, SplitScreen 4; the OneShot's HUD_ONESHOTScope_PostFX_INST -0.8 / -0.1 (each the values that matched
+// the one-player look in a live test, 2026-11-24). Any other material keeps the game's values. They were tuned on a
+// 16:9 picture (each half 640x720): an ultrawide (--gow3_ultrawide) or 4:3 / 16:10 picture (--video_mode_width /
+// height) keeps the game's values until those shapes are tuned too (Flippage: ultrawide later). Other parameters cost one
+// compare.
+REXCVAR_DECLARE(int32_t, video_mode_width);   // the SDK's (rex/ui/flags.h)
+REXCVAR_DECLARE(int32_t, video_mode_height);
+static int Gow3MicParentOffset() {
+  static int off = -2;
+  if (off == -2) {
+    const uint32_t cls = ue3::obj::FindClass("MaterialInstance");
+    off = cls ? ue3::obj::PropertyOffset(cls, "Parent") : -1;
+    REXLOG_INFO("gow3_split_vertical: MaterialInstance.Parent +{}", off);
   }
-  // 0.6.2 (GitHub #313): the layout is kept, not given up on. The first version of this watch counted every check within 2 s
-  // of a set as a "quick revert" while the layout was still not side by side - one set that took longer than that to
-  // run (the console queue waits for a player; a slow level start-up), or one reset by the game's own level start-up,
-  // gave the level up for good and the split went back to top / bottom ("worked only for a brief moment"). Now:
-  //  - a set is "in flight" until the layout is seen side by side; a set that does not show within 3 s was lost or
-  //    overwritten and is made again;
-  //  - a "quick revert" is only counted when the layout WAS seen side by side and the game turned it back within 10 s;
-  //  - after quick reverts (or lost sets) the wait before the next set doubles (2, 4, 8, 16, then 30 s at most), so the
-  //    game is never fought every frame, but it is never left alone for the rest of the level either; the count starts
-  //    again after 10 s of a layout that held, or at the next level.
-  const uint32_t serial = g_split_level_serial.load(std::memory_order_relaxed);
-  if (serial != serial_seen) {
-    serial_seen = serial;
-    fails = 0; in_flight = false; warned = false; vertical_since = {}; last_set = {};
+  return off;
+}
+void Gow3ScopeSplitParams(PPCRegister& r3, PPCRegister& r4, PPCRegister& f1) {
+  static uint32_t ws_idx = 0, ss_idx = 0;
+  const uint32_t idx = uint32_t(r4.u64 >> 32);
+  if (idx == 0 || !REXCVAR_GET(gow3_split_vertical)) return;
+  if ((ws_idx == 0 || ss_idx == 0) && idx != ws_idx && idx != ss_idx) {
+    // Each other parameter name is read once (until both are found, which needs a scope zoom).
+    static std::unordered_set<uint32_t> other;
+    if (other.count(idx)) return;
+    if (!ue3::obj::Ready()) return;
+    const std::string n = ue3::obj::Name(idx);
+    if (n == "WideScreen") ws_idx = idx;
+    else if (n == "SplitScreen") ss_idx = idx;
+    else other.insert(idx);
   }
-  if (desired == kVertical) {
-    if (vertical_since == Clock::time_point{}) vertical_since = now;
-    if (in_flight) {
-      in_flight = false;
-      if (++split_lines <= 300) REXLOG_INFO("gow3_split_vertical: side by side after {} ms", std::chrono::duration_cast<std::chrono::milliseconds>(now - last_set).count());
-    }
-    if (fails && now - vertical_since >= std::chrono::seconds(10)) fails = 0;  // it holds
-    return;
-  }
-  if (vertical_since != Clock::time_point{}) {  // it was side by side a moment ago: the game turned it back
-    const auto held = now - vertical_since;
-    vertical_since = {};
-    // r36: a reset within 10 s of holding counts (a game that resets the split every few seconds backs this off too;
-    // a layout that held longer was changed for a reason of the game's own and is simply set again)
-    if (held < std::chrono::seconds(10)) {
-      ++fails;
-      if (++split_lines <= 300) REXLOG_INFO("gow3_split_vertical: the game turned the split back after {} ms ({} quick reset(s) in a row)",
-                  std::chrono::duration_cast<std::chrono::milliseconds>(held).count(), fails);
-    }
-  }
-  if (in_flight && now - last_set < std::chrono::seconds(3)) return;  // the command has not run yet
-  if (in_flight) { in_flight = false; ++fails; }                       // it never showed: lost or overwritten
-  if (fails >= 5 && !warned) {
-    warned = true;
-    REXLOG_WARN("gow3_split_vertical: the game keeps resetting the split here - setting it again only every 30 s");
-  }
-  const auto gap = std::chrono::seconds(fails <= 0 ? 0 : std::min(30, 1 << std::min(fails, 5)));
-  if (last_set != Clock::time_point{} && now - last_set < gap) return;
-  last_set = now;
-  in_flight = true;
-  Ue3ConsoleQueue("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL");
+  if (idx != ws_idx && idx != ss_idx) return;
+  if (!Gow3SideBySideNow()) return;
+  static const bool picture_16x9 = [] {
+    const int32_t w = REXCVAR_GET(video_mode_width), h = REXCVAR_GET(video_mode_height);
+    const bool mode_16x9 = w <= 0 || h <= 0 || std::fabs(double(w) / double(h) - 16.0 / 9.0) < 0.01;
+    const bool on = !REXCVAR_GET(gow3_ultrawide) && mode_16x9;
+    if (!on) REXLOG_INFO("gow3_split_vertical: scope values tuned for 16:9 only - this picture keeps the game's");
+    return on;
+  }();
+  if (!picture_16x9) return;
+  // Which material: the MIC's parent's name (read at each call: two per zoom start).
+  enum Kind { kOther, kLongshot, kOneShot };
+  const int off = Gow3MicParentOffset();
+  const uint32_t parent = off >= 0 ? ue3::obj::Read32(r3.u32 + uint32_t(off)) : 0;
+  const std::string name = parent ? ue3::obj::ObjectName(parent) : std::string("?");
+  const Kind last_kind = name.find("HUD_SniperScope_PostFX") != std::string::npos   ? kLongshot
+                         : name.find("HUD_ONESHOTScope_PostFX") != std::string::npos ? kOneShot
+                                                                                    : kOther;
+  static std::atomic<int> m{0};
+  if (m++ < 16)
+    REXLOG_INFO("gow3_split_vertical: scope material '{}' ({})", name,
+                last_kind == kLongshot ? "Longshot values" : last_kind == kOneShot ? "OneShot values" : "left alone");
+  if (last_kind == kOther) return;
+  const bool ws = idx == ws_idx;
+  const double want = last_kind == kLongshot ? (ws ? -1.0 : 4.0) : (ws ? -0.8 : -0.1);
+  f1.f64 = want;
 }
 
 void Gow3PathChoiceTick() {
@@ -924,7 +982,7 @@ static void Gow3EngineFrameTicks() {
   TickTimeline();
   Gow3ModChaptersTick();
   Gow3PathChoiceTick();
-  Gow3SplitLayoutTick();       // GitHub #269
+  Gow3SplitLayoutTick();       // GitHub #269 / #420
   Gow3NativeUiViewportTick();  // 0.6.6 true 1080p: menus in the larger screen (off: one test)
   Gow3CheckpointStreamTick();  // GitHub #226
   Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)

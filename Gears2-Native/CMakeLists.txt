@@ -155,6 +155,8 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/tick_log.cpp  # --gow2_tick_log (Gears 3 / Judgment build it too)
     src/layer2_ue3/menu_fps.cpp  # GitHub #101 front-end cap (--gow2_menu_fps; Judgment builds it too)
     src/layer2_ue3/package_exports.cpp
+    src/layer2_ue3/package_patch.cpp  # GitHub #420: script package byte patches (Gears 3's, ported)
+    src/layer2_ue3/lzx.cpp
     src/layer2_ue3/console.cpp  # GitHub #264: engine console commands (--gow2_cheats, --ue3_hotkeys, --ue3_exec); Gears 3 builds it too
     src/layer2_ue3/objects.cpp  # GitHub #245: the engine's objects by name (ue3/objects.h; Gears 1 and Judgment build it too - Gears 3 has its own)
     src/layer2_ue3/name_tags.cpp  # GitHub #353: COGBox tags after the players' names (Gears 1 / 3 / J build it too)
@@ -451,6 +453,7 @@ if(GN_BUILD_TESTS)
         src/layer0_xenos/renderer/prompt_overlay_compositor.cpp
         tests/layer0_device_monitor_test.cpp
         tests/layer0_window_hotkey_test.cpp   # GitHub #316 (header only)
+        tests/layer0_pad_policy_test.cpp   # --player_devices wins over the COGBox pad assignment (header only)
         src/layer0_xenos/ui/input/prompt_device_monitor.cpp
         tests/layer0_ao_test.cpp
         tests/layer2_config_bundle_test.cpp
@@ -464,6 +467,12 @@ if(GN_BUILD_TESTS)
         tests/layer0_achievements_data_test.cpp
         src/layer0_xenos/ui/achievements_data.cpp
         tests/layer2_mouse_carry_test.cpp
+        tests/layer3_split_vertical_test.cpp   # GitHub #420 (header only)
+        tests/layer2_split_package_patch_test.cpp   # GitHub #420 task 6b
+        tests/layer3_gow2_scope_subtitle_test.cpp   # GitHub #420: Longshot overlay, subtitles
+        tests/layer2_pause_package_patch_test.cpp   # GitHub #420 task 13
+        src/layer2_ue3/package_patch.cpp
+        src/layer2_ue3/lzx.cpp
         tests/layer2_main_menu_exit_test.cpp
         src/layer2_ue3/main_menu_exit.cpp
         tests/layer2_package_exports_test.cpp

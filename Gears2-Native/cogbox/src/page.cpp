@@ -3,6 +3,7 @@
 #include <cctype>
 #include "app.h"
 #include "profiles.h"
+#include "input_devices.h"   // SDK patch 117: per-player input devices
 #include "social_net.h"   // social step 3: the multiplayer server
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
@@ -1237,6 +1238,61 @@ static void option_row(App &a, int g, const gs::Option &o)
         break;
     }
     case gs::Kind::Text: {
+        if (o.id.compare(0, 12, "PlayerDevice") == 0) {
+            // SDK patch 117: this player's controller or keyboard and mouse. Kept as "<key> ## <name last seen>"; a saved pad that
+            // is not plugged in stays in the list as "<name> (not connected)" and is still sent.
+            std::string key, name;
+            cogbox::UnpackPlayerDevice(a.cur[g].str(o.id), key, name);
+            const auto detected = cogbox::DetectControllers();
+            const auto items = cogbox::PlayerDeviceChoices(detected, key, name);
+            // GitHub #420: Auto says what it will give this player (SDK patch 128's order: keyboard and mouse first, then pads)
+            std::string auto_label = tr("Auto");
+            {
+                const int players = gs::played_players((gs::Game)g, a.cur[g]) + 1;   // as played (a saved 4 in Gears 3: 2)
+                const int me = o.id[12] - '1';
+                std::vector<std::string> chosen;
+                for (int k = 1; k <= players && k <= 4; k++) {
+                    std::string ck, cn;
+                    cogbox::UnpackPlayerDevice(a.cur[g].str("PlayerDevice" + std::to_string(k)), ck, cn);
+                    chosen.push_back(ck);
+                }
+                const auto eff = cogbox::EffectiveDevices(cogbox::ResolvePlayerDevices(chosen, players), detected, a.cur[g].b("Mnk"));
+                if (me >= 0 && me < (int)eff.size()) {
+                    const std::string& k = eff[(size_t)me];
+                    const std::string got = k == cogbox::KbmKey() ? std::string(tr(cogbox::KbmLabel())) : cogbox::DeviceLabel(items, k);
+                    auto_label += " (" + (got.empty() ? std::string(tr("nothing left")) : got) + ")";
+                }
+            }
+            std::string preview = auto_label;
+            for (const auto &c : items) if (!key.empty() && c.key == key) preview = c.key == cogbox::KbmKey() ? std::string(tr(c.label.c_str())) : c.label;
+            if (ImGui::BeginCombo("##v", preview.c_str())) {
+                for (const auto &c : items) {
+                    ImGui::PushID(c.key.c_str());
+                    const bool sel = c.key == key;
+                    const std::string lbl = c.key.empty() ? auto_label : c.key == cogbox::KbmKey() ? std::string(tr(c.label.c_str())) : c.label;
+                    if (ImGui::Selectable(lbl.c_str(), sel) && !sel) {
+                        std::string nm;   // the pad's own name (not "#2"), for "(not connected)" later
+                        for (const auto &d : detected) if (d.key == c.key) nm = d.name;
+                        a.cur[g].t[o.id] = cogbox::PackPlayerDevice(c.key, nm);
+                        // One device, one player: another player who had it goes back to Auto (else the later player
+                        // would keep it and this choice would do nothing - ResolvePlayerDevices).
+                        if (!c.key.empty())
+                            for (int k = 1; k <= 4; k++) {
+                                const std::string other = "PlayerDevice" + std::to_string(k);
+                                if (other == o.id) continue;
+                                std::string ok, on;
+                                cogbox::UnpackPlayerDevice(a.cur[g].str(other), ok, on);
+                                if (ok == c.key) a.cur[g].t[other] = "";
+                            }
+                        a.dirty[g] = true;
+                    }
+                    ImGui::PopID();
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            break;
+        }
         if (o.id == "GraphicsCard") {
             // 0.6.2 (GitHub #304): a list of the PC's graphics cards, by name. Automatic = nothing saved (the game picks).
             // A saved card this PC doesn't have (any more) shows as missing and is not sent - Automatic is used instead.
@@ -2025,7 +2081,7 @@ static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Blo
 static const char *const k_ctlPad[] = { "PadLayout", "ClassicButtons", "Vibration", "AdaptiveTriggers", "TriggerRumble", "PadPrompts", "PromptStyle", "DeadZoneL", "DeadZoneR", "LowLag", nullptr };
 static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
 static const char *const k_playGame[] = { "Lang", "VoiceLang", "SkipLogos", nullptr };
-static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", "PeerIps", nullptr };
+static const char *const k_playPlayers[] = { "Players", "SplitLayout", "PlayerDevice1", "PlayerDevice2", "PlayerDevice3", "PlayerDevice4", "SystemLink", "PeerIps", nullptr };
 static const char *const k_playExtras[] = { "OriginalUnlocks", "Mutators", nullptr };
 static const char *const k_playCheats[] = { "CheatGod", "CheatWeapons", "CheatSpeed", "CheatHud", "Cheats", nullptr };   // GitHub #342
 static const char *const k_audOutput[] = { "AudioDevice", "AudioChannels", nullptr };   // GitHub #425
@@ -2174,11 +2230,19 @@ void page_draw(App &a, ImVec2 size)
         }
         // grouped under a few headings (k_groups). An option not in the table shows in its tab's first group, so a
         // new option in gears_settings is never hidden.
+        {   // SDK patch 117: look for controllers again each time the Gameplay tab opens
+            static int lastTab = -1;
+            if (want == gs::Tab::Gameplay && lastTab != a.tab) cogbox::RefreshControllers();
+            lastTab = a.tab;
+        }
         std::vector<const gs::Option *> mine;
         for (const gs::Option &o : gs::options((gs::Game)g)) {
             if (o.tab != want) continue;
             if (o.id == "WineApi" && !a.env[g].wine) continue;   // Shagg 13:16: Proton / Wine only
             if (o.id == "LogLevel") continue;   // docs/logging.md: in its own BUG REPORTS section (bug_report_section)
+            // SDK patch 117: a "Player N input" list for each player, only with 2 or more players (1 player: the game switches itself)
+            if (o.id.compare(0, 12, "PlayerDevice") == 0 &&
+                !gs::available(o, (gs::Game)g, gs::effective_version((gs::Game)g, a.cur[g], a.env[g]), a.cur[g], a.env[g]).ok) continue;
             mine.push_back(&o);
         }
         const TabGroups &tg = k_groups[(int)want];

@@ -14,6 +14,10 @@
 // Our code (MIT).
 #include <ue3/config_bundle.h>
 #include <ue3/main_menu_exit.h>
+#include <ue3/gowj_pause_package_patch.h>  // GitHub #420 (task 13)
+#include <ue3/gowj_split_package_patch.h>  // GitHub #420 (task 7b)
+#include <ue3/gowj_prompt_height_package_patch.h>  // GitHub #420 (task 15b)
+#include <ue3/gowj_subtitle_region_package_patch.h>  // GitHub #420: side-by-side subtitles
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -26,6 +30,7 @@
 #include <rex/system/xmemory.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -45,6 +50,20 @@ namespace ue3 {
 bool ReadPackageExportPaths(const std::filesystem::path& file, std::set<std::string>* out);
 uint64_t WholeCompressedSize(const std::filesystem::path& file);  // 0.6.5 (#367): Gears 2's package_exports.cpp
 std::string DescribePackageSummary(const std::filesystem::path& file);  // Gears 2's package_exports.cpp (to-do 2)
+// GitHub #420 (task 7b): Gears 2's script package patch code (ue3/package_patch.h, built from GN_LAYER0_HOME), declared
+// here for the same reason.
+struct PackagePatch {
+  std::string file;
+  uint64_t offset = 0;
+  std::vector<uint8_t> expect, replace;
+  std::string note;
+};
+std::vector<PackagePatch> ParsePackagePatches(const std::string& spec, std::string* error);
+bool IsFullyCompressed(const std::vector<uint8_t>& in);
+bool DecompressFully(const std::vector<uint8_t>& in, std::vector<uint8_t>& out, std::string* error);
+int ApplyPackagePatches(std::vector<uint8_t>& data, const std::string& file, const std::vector<PackagePatch>& patches,
+                        std::vector<std::string>* log);
+void RememberPatchedPackageHash(const uint8_t* sha1);
 }  // namespace ue3
 
 REXCVAR_DEFINE_STRING(ue3_ini_edits, "", "Gears3",
@@ -64,6 +83,10 @@ REXCVAR_DEFINE_STRING(ue3_voice_language, "", "Gears3",
 REXCVAR_DEFINE_STRING(ue3_ini_bundle_dir, "GearGame\\CookedXbox360", "Gears3",
                       "Folder of the Coalesced_*.bin config bundles, relative to the game data root");
 REXCVAR_DEFINE_BOOL(gow_main_menu_exit, true, "ui", "Add Exit Game to the main menu; restart");
+REXCVAR_DECLARE(bool, gowj_split_vertical);  // layer 3 game_patches.cpp (GitHub #420)
+REXCVAR_DEFINE_BOOL(gowj_pause_fullscreen, false, "Judgment",
+                    "Split screen (two or more local players): the pause menu and its message boxes cover the whole "
+                    "window instead of the pausing player's view (patched GearGame.xxx; GitHub #420)");
 
 namespace {
 constexpr const char* kGameDevice = "\\Device\\Harddisk0\\Partition1";
@@ -709,6 +732,68 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
   }
   REXLOG_INFO("ue3_mods: {} folder view(s); {} hash table entries updated", devices, hashed);
 }
+// GitHub #420: a same-length script patch of one package (task 7b: Engine.xxx, ue3/gowj_split_package_patch.h; task 13:
+// GearGame.xxx, ue3/gowj_pause_package_patch.h). The package (a mod's copy if one has it) is decompressed, patched (every
+// expected byte checked first) and written to <user data>\package-patches; it then goes in front of the game's through
+// the mods' folder view, which gives it its table-of-contents line and start-up hash table entry. Its SHA-1 is
+// remembered (the integrity hooks accept only our copies). A different package is refused and left as it is. Every edit
+// of one spec is in the same file. As Gears 2's AddSplitPackagePatch. `what` names the switch in the log.
+void AddPackagePatch(rex::Runtime* runtime, std::map<std::string, std::filesystem::path>* mods, const char* spec,
+                     const char* what) {
+  namespace fs = std::filesystem;
+  std::string err;
+  const std::vector<ue3::PackagePatch> patches = ue3::ParsePackagePatches(spec, &err);
+  if (!err.empty() || patches.empty()) {
+    REXLOG_WARN("{}: {}", what, err);
+    return;
+  }
+  const std::string rel = REXCVAR_GET(ue3_ini_bundle_dir);
+  const fs::path dir = runtime->game_data_root() / fs::path(rel);
+  std::error_code ec;
+  std::string real;
+  for (const auto& e : fs::directory_iterator(dir, ec))
+    if (e.is_regular_file() && ModLower(rex::path_to_utf8(e.path().filename())) == ModLower(patches[0].file))
+      real = rex::path_to_utf8(e.path().filename());
+  if (real.empty()) {
+    REXLOG_WARN("{}: {} not found in {} - the game's own is used", what, patches[0].file, dir.string());
+    return;
+  }
+  const std::string key = RelKey(rel + "\\" + real);
+  const auto modCopy = mods->find(key);
+  const fs::path src = modCopy != mods->end() ? modCopy->second : dir / rex::to_path(real);
+  std::ifstream in(src, std::ios::binary);
+  std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+  in.close();   // the chained case writes this same file below
+  if (ue3::IsFullyCompressed(bytes)) {
+    std::vector<uint8_t> plain;
+    if (!ue3::DecompressFully(bytes, plain, &err)) {
+      REXLOG_WARN("{}: {}: can't decompress ({}) - the game's own is used", what, real, err);
+      return;
+    }
+    bytes.swap(plain);
+  }
+  std::vector<std::string> log;
+  const int applied = ue3::ApplyPackagePatches(bytes, real, patches, &log);
+  for (const std::string& l : log) REXLOG_INFO("{}: {}", what, l);
+  if (applied <= 0) {
+    REXLOG_WARN("{}: {} left as it is - the game's own is used", what, real);
+    return;
+  }
+  const fs::path out_dir = runtime->user_data_root() / "package-patches";
+  fs::create_directories(out_dir, ec);
+  const fs::path out = out_dir / rex::to_path(real);
+  std::ofstream o(out, std::ios::binary | std::ios::trunc);
+  o.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+  o.close();
+  if (!o) {
+    REXLOG_WARN("{}: could not write {}", what, out.string());
+    return;
+  }
+  ue3::RememberPatchedPackageHash(ue3::Sha1(bytes.data(), bytes.size()).data());
+  (*mods)[key] = out;
+  REXLOG_INFO("{}: {}: {} patch(es), {} bytes -> {} (served through the mods' folder view)", what, real, applied,
+              bytes.size(), out.string());
+}
 }  // namespace
 
 void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
@@ -728,6 +813,14 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
       }
     }
   } modsAtEnd{runtime, &mods, &modDirs};
+  if (REXCVAR_GET(gowj_split_vertical))   // GitHub #420 (task 7b)
+    AddPackagePatch(runtime, &mods, gowj::kSplitVerticalPackagePatch, "gowj_split_vertical");
+  if (gowj::PauseFullscreenWanted(REXCVAR_GET(gowj_pause_fullscreen), rex::cvar::Query<uint32_t>("local_players")))
+    AddPackagePatch(runtime, &mods, gowj::kPauseFullscreenPackagePatch, "gowj_pause_fullscreen");   // task 13
+  if (gowj::PromptHeightWanted(REXCVAR_GET(gowj_split_vertical), rex::cvar::Query<uint32_t>("local_players")))   // task 15b (GearGame.xxx too: chained)
+    AddPackagePatch(runtime, &mods, gowj::kPromptHeightPackagePatch, "gowj_prompt_height");
+  if (gowj::SubtitleRegionWanted(REXCVAR_GET(gowj_split_vertical), rex::cvar::Query<uint32_t>("local_players")))
+    AddPackagePatch(runtime, &mods, gowj::kSubtitleRegionPackagePatch, "gowj_split_vertical");   // subtitles, chained
   const std::string spec = REXCVAR_GET(ue3_ini_edits);
   const bool exit_menu = REXCVAR_GET(gow_main_menu_exit);
   if ((spec.empty() && !exit_menu) || !runtime || !runtime->file_system()) return;

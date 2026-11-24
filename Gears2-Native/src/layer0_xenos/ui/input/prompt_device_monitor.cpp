@@ -4,6 +4,7 @@
 #include <xenos/input/prompt_device_monitor.h>
 
 #include <rex/cvar.h>
+#include <rex/input/device_assignment.h>   // GitHub #420: KeyboardMouseUser
 #include <rex/input/input_system.h>
 #include <rex/logging/macros.h>
 #include <rex/runtime.h>
@@ -280,6 +281,41 @@ DeviceStyle PromptDeviceMonitor::ClassifyGamepad(int sdl_type, uint16_t vid, uin
   return DeviceStyle::kXbox;
 }
 
+namespace {
+// SDL GUID (32 hex digits): bytes 4-5 = USB vendor, 8-9 = product, little endian. 0 when it isn't one.
+// Non-USB (name / CRC based) GUIDs carry no VID / PID: they fall through to ClassifyGamepad's name rules.
+uint16_t GuidWord(const std::string& guid, size_t byte) {
+  if (guid.size() < 32) return 0;
+  const unsigned long lo = std::strtoul(guid.substr(byte * 2, 2).c_str(), nullptr, 16);
+  const unsigned long hi = std::strtoul(guid.substr(byte * 2 + 2, 2).c_str(), nullptr, 16);
+  return static_cast<uint16_t>(lo | (hi << 8));
+}
+}  // namespace
+
+std::optional<DeviceStyle> PromptDeviceMonitor::ClassifyPlayerOnePads(
+    const std::vector<rex::input::DeviceInfo>& p1_devices) const {
+  for (const auto& d : p1_devices) {
+    if (d.synthetic || d.nop) continue;
+    return ClassifyGamepad(0, GuidWord(d.guid, 4), GuidWord(d.guid, 8), d.name);
+  }
+  return std::nullopt;
+}
+
+void PromptDeviceMonitor::SetPlayerOneDevices(const std::vector<rex::input::DeviceInfo>& p1_devices) {
+  const std::optional<DeviceStyle> style = ClassifyPlayerOnePads(p1_devices);
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (style != p1_pad_style_)
+    REXLOG_INFO("prompt_device_monitor: player 1's pad style {}", style ? DeviceStyleName(*style) : "none (keyboard / mouse)");
+  p1_pad_style_ = style;
+}
+
+std::optional<DeviceStyle> PromptDeviceMonitor::PadActivityStyle(uint32_t local_players, uint32_t user,
+                                                                 std::optional<DeviceStyle> p1_style, DeviceStyle scanned) {
+  if (local_players < 2) return scanned;
+  if (user != 0) return std::nullopt;
+  return p1_style;  // player 1 has no pad (keyboard / mouse only): keep the style, never another player's pad type
+}
+
 std::optional<DeviceStyle> PromptDeviceMonitor::ParseModeOption(std::string_view mode) {
   const std::string m = ToLowerTrim(mode);
   if (m.empty() || m == "auto") return std::nullopt;
@@ -551,6 +587,10 @@ void PromptDeviceMonitor::NotifyKeyboardMouseActivity(uint64_t timestamp_ms) {
 // Keyboard / mouse after a pad: key caps once the pad has been quiet for kDebounceWindowMs (a key brushed while
 // playing on the pad doesn't flicker the prompts).
 void PromptDeviceMonitor::NoteKeyboardMouseLocked(uint64_t timestamp_ms, const char* reason) {
+  // GitHub #420: in split screen only player 1's control method picks the prompts, and the keyboard / mouse may be
+  // another player's (the launcher's per-player devices): then its keys, buttons and movement leave player 1's prompts
+  // alone. Here, where every keyboard / mouse path ends (key down, mouse button, mouse move, other activity).
+  if (rex::cvar::Query<uint32_t>("local_players") >= 2 && rex::input::KeyboardMouseUser() > 0) return;
   last_kbm_ms_ = timestamp_ms;
   if (!has_committed_auto_) {
     committed_auto_style_ = DeviceStyle::kKeyboard;
@@ -772,7 +812,18 @@ void PromptDeviceMonitor::ThreadMain() {
     if (now >= next_scan) {
       next_scan = now + kHardwareScanMs;
       scanned = ScanConnectedPadStyle();
-      if (scanned) SetDefaultGamepadStyle(*scanned);
+      // Task 14: split screen starts on player 1's pad (another player's pad never picks the prompts).
+      const uint32_t players = rex::cvar::Query<uint32_t>("local_players");
+      std::optional<DeviceStyle> p1;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        p1 = p1_pad_style_;
+      }
+      if (players >= 2) {
+        if (p1) SetDefaultGamepadStyle(*p1);
+      } else if (scanned) {
+        SetDefaultGamepadStyle(*scanned);
+      }
       Mode mode;
       DeviceStyle forced;
       bool kb_allowed;
@@ -809,6 +860,10 @@ void PromptDeviceMonitor::ThreadMain() {
     // one read). Plain XInput first - the real pads, never the keyboard - with the game's input system only when
     // XInput has none (SDL-only pads). The input system's state includes Keyboard and mouse's emulated pad, so there
     // its input counts only while keys / mouse are idle.
+    // Task 14 (#420): split screen reads player 1's devices only (guest user 0 of the input system: player 1's pads and
+    // keyboard / mouse); XInput's slot numbers say nothing about players, so it is not read there.
+    const uint32_t local_players = rex::cvar::Query<uint32_t>("local_players");
+    const bool split = local_players >= 2;
     bool any_connected = false;
     bool active = false;
     bool from_input_system = false;
@@ -826,7 +881,7 @@ void PromptDeviceMonitor::ThreadMain() {
       active = active || a;
     };
 #ifdef _WIN32
-    if (XInputGetStateFn get = ResolveXInputGetState()) {
+    if (XInputGetStateFn get = split ? nullptr : ResolveXInputGetState()) {
       for (DWORD i = 0; i < 4; ++i) {
         XINPUT_STATE s = {};
         if (get(i, &s) != ERROR_SUCCESS) continue;
@@ -836,7 +891,7 @@ void PromptDeviceMonitor::ThreadMain() {
     }
 #endif
     if (!any_connected && input) {
-      for (uint32_t i = 0; i < 4; ++i) {
+      for (uint32_t i = 0; i < (split ? 1u : 4u); ++i) {
         rex::input::X_INPUT_STATE st = {};
         if (input->GetStateForUI(i, &st) != rex::X_RESULT(0)) continue;  // X_ERROR_SUCCESS
         const int16_t sticks[4] = {static_cast<int16_t>(st.gamepad.thumb_lx), static_cast<int16_t>(st.gamepad.thumb_ly),
@@ -850,7 +905,16 @@ void PromptDeviceMonitor::ThreadMain() {
       std::copy(&cur[0][0], &cur[0][0] + 16, &prev[0][0]);
       has_prev = true;
       if (active && from_input_system && IsKeyboardMouseInUse(now)) active = false;
-      if (active) NotifyGamepadActivity(scanned.value_or(GetDefaultGamepadStyle()), now);
+      if (active) {
+        std::optional<DeviceStyle> p1;
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          p1 = p1_pad_style_;
+        }
+        // Only user 0 was read in split screen, so the user here is 0.
+        if (auto st = PadActivityStyle(local_players, 0, p1, scanned.value_or(GetDefaultGamepadStyle())))
+          NotifyGamepadActivity(*st, now);
+      }
     }
 
     EvaluateActiveStyle(now);

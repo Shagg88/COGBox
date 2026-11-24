@@ -28,17 +28,23 @@
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
+#include <rex/runtime.h>
 
 #include <ue3/auto_cheats.h>
 #include <xenos/chat_panel.h>   // in-match chat: the overlay side
 #include <ue3/chat.h>   // in-match chat (Y / U)
 #include <ue3/console.h>
 #include <ue3/match_guard.h>
+#include <ue3/package_patch.h>
 #include <ue3/settings_dump.h>
 
 #include "gow3_addresses.h"
+#include "gow3_pause_package_patch.h"
+#include "gow3_subtitle_region_package_patch.h"   // GitHub #420
+#include "gow3_split_package_patch.h"
 
 #include <atomic>
+#include <format>
 #include <string>
 
 REXCVAR_DEFINE_BOOL(ue3_dump_settings, false, "Gears3",
@@ -54,7 +60,12 @@ REXCVAR_DEFINE_BOOL(gow3_mute_unfocused, false, "Gears3",
                     "Mute the sound while another window is in front (sets audio_mute; a player's own --audio_mute=true is "
                     "left alone; gow3_app.h)");
 
+REXCVAR_DEFINE_BOOL(gow3_pause_fullscreen, false, "Gears3",
+                    "Split screen (two or more local players): the pause menu, Options and their message boxes cover the "
+                    "whole window instead of the pausing player's view (patched GearGame.xxx; GitHub #420)");
+
 REXCVAR_DECLARE(std::string, ue3_package_patches);  // layer 2 config_install.cpp
+REXCVAR_DECLARE(bool, gow3_split_vertical);           // game_patches.cpp (GitHub #420)
 
 namespace {
 // Offsets in the decompressed GearGame.xxx (86,443,270 bytes, MD5 dca12dda3cc43f2c415552054af12677), notes/25.
@@ -114,15 +125,54 @@ void Gow3InstallExtras() {
     AddPackagePatch(kMutatorsPatch);
     REXLOG_INFO("gow3_unlock_mutators: every mutator unlocked");
   }
+  if (REXCVAR_GET(gow3_split_vertical)) {   // GitHub #420: the game's own script picks side by side for two players
+    AddPackagePatch(gow3::kSplitVerticalPackagePatch);
+    REXLOG_INFO("gow3_split_vertical: Engine.xxx patched - two players get the game's side-by-side split");
+  }
+  if (gow3::SubtitleRegionWanted(REXCVAR_GET(gow3_split_vertical), rex::cvar::Query<uint32_t>("local_players"))) {
+    AddPackagePatch(gow3::kSubtitleRegionPackagePatch);   // GitHub #420: subtitles near the bottom side by side
+    REXLOG_INFO("gow3_split_vertical: Engine.xxx patched - side by side, subtitles near the bottom");
+  }
+  // GitHub #420 (task 13): the pause menu over the whole window in split screen (gow3_pause_package_patch.h)
+  if (gow3::PauseFullscreenWanted(REXCVAR_GET(gow3_pause_fullscreen), rex::cvar::Query<uint32_t>("local_players"))) {
+    AddPackagePatch(gow3::kPauseFullscreenPackagePatch);
+    REXLOG_INFO("gow3_pause_fullscreen: GearGame.xxx patched - the pause menu covers the whole window in split screen");
+  }
 }
 
 // TU6 only (gow3_manifest_tu6.toml): the 20-byte SHA-1 compare before the dirty-disc error. r9 = the first differing
-// byte (0 = same). Treated as same only while a package patch of ours is on, so the game's own files are always checked.
-void Gow3Tu6PackageHashOk(PPCRegister& r9) {
-  if (r9.u32 == 0 || !(REXCVAR_GET(gow3_cheats) || REXCVAR_GET(gow3_unlock_mutators))) return;
-  static int n = 0;
-  if (n++ < 8) REXLOG_INFO("gow3 TU6: package hash differs (patched package) - accepted for cheats / mutators");
+// byte (0 = same; the computed digest is at r1+96). #420: treated as same only when that digest is one of our patched
+// copies (ue3::IsPatchedPackageHash), or - as before #420 - while --gow3_cheats / --gow3_unlock_mutators is on (any
+// patched package); otherwise every other file is always checked.
+// Evidence (TU6 disassembly): 0x82323C1C `lwz r11,356(r26)` (the hasher, finalised by sub_8230BCF8 just before);
+// 0x82323C20 `li r5,20`, 0x82323C24 `addi r3,r1,96`, 0x82323C28 `addi r4,r11,96`, 0x82323C2C `bl 0x82CDD0E0` (memcpy:
+// the 20-byte computed digest to r1+96); then `addi r11,r1,128` (expected) / `addi r10,r1,96` (computed) and the byte
+// loop 0x82323C3C. In the #420 launches this compare never reported a difference for our patched files (no log line
+// from this hook); the whole-file check they meet is 0x822C9E14 (Gow3Tu6BlockHashOk).
+void Gow3Tu6PackageHashOk(PPCRegister& r9, PPCRegister& r1) {
+  if (r9.u32 == 0) return;
+  const uint8_t* m = rex::Runtime::instance()->virtual_membase();
+  // Our split-screen package patches (GitHub #420) by their hash; cheats / mutators as before (any patched package).
+  if (!ue3::IsPatchedPackageHash(m + r1.u32 + 96) && !(REXCVAR_GET(gow3_cheats) || REXCVAR_GET(gow3_unlock_mutators))) return;
+  static std::atomic<int> n{0};
+  if (n++ < 8) REXLOG_INFO("gow3 TU6: package hash differs (patched package) - accepted");
   r9.u64 = 0;
+}
+
+// #420 task 5b (gow3_manifest_tu6.toml): TU6's whole-file SHA-1 compare at 0x822C9E14 (expected r31+8, computed r1+80
+// over the file r31+0 / size r31+4); a difference calls the dirty-disc error. Accepted only when the computed hash is
+// one of our own patched copies (ue3::IsPatchedPackageHash), so every other file is still checked. Capped log.
+void Gow3Tu6BlockHashOk(PPCRegister& r9, PPCRegister& r31, PPCRegister& r1) {
+  if (r9.u32 == 0) return;
+  const uint8_t* m = rex::Runtime::instance()->virtual_membase();
+  const bool ours = ue3::IsPatchedPackageHash(m + r1.u32 + 80);
+  static std::atomic<int> n{0};
+  if (n++ < 16) {
+    const uint8_t* s = m + r31.u32 + 4;
+    REXLOG_INFO("gow3 TU6: file hash differs ({} bytes) - {}", uint32_t(s[0]) << 24 | uint32_t(s[1]) << 16 | uint32_t(s[2]) << 8 | s[3],
+                ours ? "our patched package, accepted" : "not ours, left to the game");
+  }
+  if (ours) r9.u64 = 0;
 }
 
 // UEngine::GetMaxTickRate, overridden: the original, then any queued console commands (ctx left as the original left

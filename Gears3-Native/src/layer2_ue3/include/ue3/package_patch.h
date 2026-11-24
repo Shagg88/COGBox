@@ -41,4 +41,9 @@ bool DecompressFully(const std::vector<uint8_t>& in, std::vector<uint8_t>& out, 
 int ApplyPackagePatches(std::vector<uint8_t>& data, const std::string& file, const std::vector<PackagePatch>& patches,
                         std::vector<std::string>* log = nullptr);
 
+// #420: the SHA-1 of every patched copy we serve (whole file, as stored), so a game-side whole-file hash check can let
+// exactly those through and still refuse anything else.
+void RememberPatchedPackageHash(const uint8_t* sha1);
+bool IsPatchedPackageHash(const uint8_t* sha1);
+
 }  // namespace ue3

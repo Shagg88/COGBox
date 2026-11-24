@@ -107,6 +107,7 @@ void Gow1InstallCheats() {
 // override runs with --gow1_cheats on or off; it also drives the DualSense trigger feel (GitHub #245).
 void Gow1AdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers, --pad_trigger_rumble)
 void Gow1NativeUiViewportTick(bool (*open_objects)());   // game_patches.cpp (0.6.6 true 1080p menus)
+void Gow1SplitLogTick(bool (*open_objects)());   // game_patches.cpp (GitHub #420, --gow1_split_vertical)
 extern "C" void __imp__sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base);
 extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
   __imp__sub_8222A6E0(ctx, base);
@@ -120,6 +121,7 @@ extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
   ue3::cheats::Tick(ctx, base);   // GitHub #342 (ue3/auto_cheats.h; off: four flag tests)
   Gow1AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   Gow1NativeUiViewportTick(&OpenObjects);   // 0.6.6: true 1080p menus (game_patches.cpp; off: one test)
+  Gow1SplitLogTick(&OpenObjects);   // GitHub #420: reads and logs the split only (off: one test)
 }
 
 // GitHub #353, the kill feed: Gears 1's HUD draws each kill-feed line from the players' live names (DeathData holds the

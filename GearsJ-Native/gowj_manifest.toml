@@ -298,6 +298,24 @@ name = "GowjUltrawideFov"
 registers = ["f0", "f31"]  # 0.5.0: f31 = the player's view FOV (PlayerController +936), for aim / zoom sensitivity
 after_instruction = true
 
+# GitHub #420 task 7b (--gowj_split_vertical's patched Engine.xxx; game_patches.cpp GowjPackageHashOk / GowjFileHashOk).
+# TU4 has Gears 3 TU6's two SHA-1 compares, each followed by `li r3,0` / `bl 0x82DBDAD8` (which calls
+# XamShowDirtyDiscErrorUI):
+#  - sub_8231AA20: digest memcpy'd to r1+96 (`addi r3,r1,96` / `addi r4,r11,96`, r11 = lwz 356(r26), `li r5,20`), loop
+#    0x8231ABDC compares r1+128 (expected) with it; at `cmpwi cr6,r9,0` (0x8231ABFC) r9 = first difference, 0 = same.
+#  - sub_822C1E20: SHA-1 of the block r31+0 / size r31+4 into r1+80 (bl 0x82301D10), loop 0x822C1E84 compares r31+8
+#    (expected) with it; at `addic r11,r9,-1` (0x822C1EA4) r9 = first difference.
+# Each sets r9 = 0 only when the computed digest is one of our own patched copies (ue3::IsPatchedPackageHash).
+[[entrypoint.midasm_hook]]
+address = 0x8231ABFC
+name = "GowjPackageHashOk"
+registers = ["r9", "r1"]
+
+[[entrypoint.midasm_hook]]
+address = 0x822C1EA4
+name = "GowjFileHashOk"
+registers = ["r9", "r31", "r1"]
+
 # Experiment --gowj_native_lines (game_patches.cpp): true 1080p - the screen width and what follows it.
 [[entrypoint.midasm_hook]]
 address = 0x82992694  # `lis r11,-31925`: the clamped width in r5 (before it)
@@ -357,6 +375,33 @@ jump_address_on_true = 0x82CBA688
 address = 0x8243CF68  # `stfs f0,316(r31)`: the blended film-grain amount
 name = "GowjNoFilmGrain"
 registers = ["f0"]
+
+# GitHub #420, the side-by-side glow (game_patches.cpp GowjQuadClampToView, ue3/split_quad_clamp.h): the entry of
+# DrawDenormalizedQuad (sub_827DA688: f1-f8 = X, Y, SizeX, SizeY, U, V, SizeU, SizeV; TargetSizeX r1+84, TextureSizeX
+# r1+100; called by every post-process pass). With two players side by side, a quad drawing into one half of its target
+# reads only the same half of its source (RenderDoc: the bloom / streak quads read 2 texels into the other view's half).
+[[entrypoint.midasm_hook]]
+address = 0x827DA688  # `mflr r12`, the function's first instruction
+name = "GowjQuadClampToView"
+registers = ["f1", "f3", "f5", "f7", "r1"]
+
+# GitHub #420, Judgment's GIB / EXECUTION band side by side (game_patches.cpp GowjCanvasTileClip, ue3/canvas_tile_clip.h):
+# the entry of UCanvas::DrawTile (sub_8275DC00, reached from execDrawTile's native-table entry 0x8275E228): r3 canvas
+# (OrgX +64, ClipX +72), f1 X (absolute: OrgX + CurX), f2 Y, f3 Z, f4 XL, f5 YL, f6 U, f7 V, f8 UL, f9 VL. It cuts tiles
+# at the canvas's right and bottom edges only; side by side the left edge is cut here too.
+[[entrypoint.midasm_hook]]
+address = 0x8275DC00  # `mflr r12`, the function's first instruction
+name = "GowjCanvasTileClip"
+registers = ["f1", "f4", "f6", "f8", "r3"]
+
+# GitHub #420, Judgment's Longshot zoom overlay side by side (game_patches.cpp GowjCanvasMaterialTileFit,
+# ue3/canvas_tile_clip.h): the entry of UCanvas::DrawMaterialTile (sub_8275DD98, called from execDrawMaterialTile's
+# native-table entry 0x8275E8E0): r3 canvas (OrgX +64, ClipX +72, ClipY +76), f1 X (absolute), f2 Y, f3 XL, f4 YL, f5 U,
+# f6 V, f7 UL, f8 VL (execDrawMaterialTile's own left-edge cut adjusts U / UL in the slots it passes as f5 / f7).
+[[entrypoint.midasm_hook]]
+address = 0x8275DD98  # `mflr r12`, the function's first instruction
+name = "GowjCanvasMaterialTileFit"
+registers = ["f1", "f3", "f4", "f5", "f6", "f7", "f8", "r3"]
 
 [[entrypoint.midasm_hook]]
 address = 0x82995C6C  # patch 0066: `bl 82BE3158` in the vertex-shader constructor 82995B10

@@ -3,7 +3,11 @@
 #include <ue3/config_bundle.h>
 #include <ue3/package_patch.h>
 
+#include <algorithm>
+#include <array>
 #include <cstring>
+#include <mutex>
+
 #include <format>
 #include <sstream>
 
@@ -156,4 +160,23 @@ int ApplyPackagePatches(std::vector<uint8_t>& data, const std::string& file, con
   return int(mine.size());
 }
 
+}  // namespace ue3
+
+namespace ue3 {
+namespace {
+std::mutex g_hash_mutex;
+std::vector<std::array<uint8_t, 20>> g_hashes;
+}  // namespace
+void RememberPatchedPackageHash(const uint8_t* sha1) {
+  std::array<uint8_t, 20> h;
+  std::memcpy(h.data(), sha1, 20);
+  std::lock_guard<std::mutex> lock(g_hash_mutex);
+  if (std::find(g_hashes.begin(), g_hashes.end(), h) == g_hashes.end()) g_hashes.push_back(h);
+}
+bool IsPatchedPackageHash(const uint8_t* sha1) {
+  std::lock_guard<std::mutex> lock(g_hash_mutex);
+  for (const auto& h : g_hashes)
+    if (std::memcmp(h.data(), sha1, 20) == 0) return true;
+  return false;
+}
 }  // namespace ue3
