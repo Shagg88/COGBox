@@ -2063,6 +2063,19 @@ bool ShaderCache::TranslateDxbcOnly(const uint32_t* dwords, size_t dword_count, 
   return true;
 }
 
+bool ShaderCache::PreTranslate(const uint32_t* dwords, size_t dword_count, bool is_vertex) {  // 23 Nov, any thread
+  const gpu::ShaderIL il = backend_.GetShaderIL();
+  if (!dxbc_ || (il != gpu::ShaderIL::kDxil && il != gpu::ShaderIL::kSpirv) || !dwords || !dword_count) return false;
+  const ucode::DecodeOptions decode_options = DecodeOptions();
+  const ucode::Program program = ucode::Decode(dwords, dword_count, is_vertex, decode_options);
+  const hlsl::HlslOptions options = TranslateOptions(is_vertex, 0, dwords, dword_count);
+  const uint64_t key = DxbcStoreKey(dwords, dword_count, is_vertex, decode_options, options);
+  if (!key) return false;  // no store: nothing to hand over, the render thread translates as before
+  // The DXBC only (spirv false): on Vulkan GetImpl converts a store miss to SPIR-V on its own background threads.
+  const dxbc_gen::DxbcTranslation dt = TranslateDxbcFor(program, options, false, nullptr, key);
+  return dt.ok;
+}
+
 gpu::ShaderHandle ShaderCache::GetNativeHdr(uint64_t hash, const uint32_t* dwords, size_t count, bool canvas_material) {
   if (!dxbc_ || !dwords ||
       (!native_hdr::IsScene(hash) && !native_hdr::FindUi(hash) && !canvas_material)) return 0;

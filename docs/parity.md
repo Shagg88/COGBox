@@ -20,6 +20,7 @@ exists in that game)? If yes, port it (hook found and checked against that game'
 |---|---|---|---|
 | `option shadow_cap` | G2 G3 J | G1 | Smart Shadow Cuts (J since 23 Nov: G3's gather function, layer 2 `ue3/shadow_cap.h`). G1 has projected shadow maps too (its Engine script: LightComponent.ShadowProjectionTechnique / ModShadowColor, Engine.Min/MaxShadowResolution) but no shadow counter of the G2 or G3/J shape - its gather function needs its own trace. Side find: the launcher says G1 has no shadow-size setting, but Engine.MinShadowResolution exists in its script (an ini edit may give it Shadow detail) |
 | `hook ShadowCap` | G2 G3 J | G1 | |
+| `hook WatchXGOffsetBaseTextureAddress` | G2 | G1 G3 J | Since 23 Nov it also feeds the texture pre-load (layer 0 `XenosGuestTextureAddressed`, `--gow2_renderer_texture_preload`, off by default): UE3 gives each texture its memory through the XDK's XGOffsetBaseTextureAddress(header r3, base r4, mip r5). Applies to all four (same XDK call in every UE3 360 game). To port: find the function in each game's image the way patch 0066 did (match G2's TU6 829BAD88 / base 829A0DF0 bytes; first instruction `mflr r12`), add a midasm hook at its first instruction with r3 r4 r5 that calls `XenosGuestTextureAddressed`, and check its generated code on the PC. The renderer checks the header layout itself at run time (first 64 headers, logged). Until then G1 / G3 / J keep the texture-load budget only |
 
 ## On hold (Shagg)
 
@@ -98,7 +99,6 @@ Reviewed and deliberately not done for now (Shagg's call); they count as reviewe
 | `hook WatchMipRealloc` | G2 | |
 | `hook WatchPoolDefrag` | G2 | |
 | `hook WatchUnlock` | G2 | |
-| `hook WatchXGOffsetBaseTextureAddress` | G2 | |
 | `hook WatchXGOffsetResourceAddress` | G2 | |
 | `hook WatchXGSetCubeTextureHeaderEx` | G2 | |
 | `hook WatchXGSetIndexBufferHeader` | G2 | |

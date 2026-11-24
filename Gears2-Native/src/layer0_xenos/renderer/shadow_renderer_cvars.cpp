@@ -256,6 +256,30 @@ REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_priority, -2, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_shader_precreate_ms, 6, "Gears2",
                     "Patch 0066: the most time per frame spent translating shaders the game created (ms); the rest "
                     "waits for the next frame");
+REXCVAR_DEFINE_INT32(gow2_renderer_shader_precreate_threads, 0, "Gears2",
+                     "23 Nov (Shagg: shaders behind the loading screen; \"we have 16 threads\"): patch 0066's translation "
+                     "of the shaders the game creates moves off the render thread onto this many background threads "
+                     "(below normal priority); they put each translation into the DXBC store, and the render thread "
+                     "then only reads it back (before: all ~7,000 Gears 2 shaders translated on the render thread, at "
+                     "most 6 ms a frame). -1 = automatic (a quarter of the usable logical processors, 2 - 8), 0 = off "
+                     "(as before), N = N. Needs --gow2_renderer_dxbc_store (default on); else the render thread "
+                     "translates as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_shader_precreate_guess_play, true, "Gears2",
+                    "23 Nov (D3D12 level-start hitches): patch 0066's guessed pipelines (one full pipeline per created "
+                    "shader, a whole driver compile each on D3D12) are queued also while the game is played. false = "
+                    "only on loading screens and menus (frames under 64 draws); the ones made during play wait for the "
+                    "next such frame (true = as before)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_texture_preload, false, "Gears2",
+                    "23 Nov (first-play stutter: hundreds of new textures at the first frame of play): textures the "
+                    "game sets up while loading (the XDK's XGOffsetBaseTextureAddress, a hook in the game's code - "
+                    "Gears 2 only so far) are created and uploaded on loading-screen frames, so their first draw finds "
+                    "them ready. A texture written again later still reloads (page watch, as for any texture). Off by "
+                    "default until tested");
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_texture_preload_ms, 12.0, "Gears2",
+                      "23 Nov: the most time per loading-screen frame (under 64 draws) spent pre-loading textures "
+                      "(--gow2_renderer_texture_preload)");
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_texture_preload_play_ms, 0.0, "Gears2",
+                      "23 Nov: the same during play (64+ draws). 0 = pre-loads wait for the next loading screen");
 REXCVAR_DEFINE_INT32(gow2_renderer_play_hold_max_ms, 1000, "Gears2",
                     "Patch 0064: the longest one mid-play hold may wait (ms); then the frame is shown as it is");
 REXCVAR_DEFINE_BOOL(gow2_renderer_texture_batch, false, "Gears2",

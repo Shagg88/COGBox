@@ -192,6 +192,12 @@ class ShaderCache {
   // False when the DXBC back end is off or the shader is not translatable to DXBC. On Vulkan: the SPIR-V instead
   // (converted, optimised and stored exactly as for a draw - warm pipeline libraries).
   bool TranslateDxbcOnly(const uint32_t* dwords, size_t dword_count, bool is_vertex, std::vector<uint8_t>& out);
+  // 23 Nov (Shagg: "we have 16 threads"): patch 0066's translation off the render thread. Translates these dwords
+  // exactly as Get would (same decode / translation options, same DxbcStoreKey) and puts the result into the DXBC
+  // store, so the render thread's later Get of the same shader is a store hit (a read, no translation). Any thread
+  // (the same rule as TranslateDxbcOnly, which patch 0068's prebuild thread calls). Keeps and creates nothing in this
+  // cache. False when there is no DXBC store or the shader does not translate to DXBC (Get then does what it did).
+  bool PreTranslate(const uint32_t* dwords, size_t dword_count, bool is_vertex);
   // Exact Gears 2 scene / Canvas profile, a DXBC twin for float HDR composition.
   // Does not replace the guest's normal shader or change its constant layout.
   gpu::ShaderHandle GetNativeHdr(uint64_t hash, const uint32_t* dwords, size_t count, bool canvas_material = false);

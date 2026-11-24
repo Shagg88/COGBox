@@ -105,6 +105,15 @@ class TextureCache {
   uint32_t Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t slots_cube, uint32_t slots_3d, uint64_t frame,
                 gpu::TextureView views[96], gpu::SamplerDesc samplers[32]);
   const TextureCacheStats& Stats() const { return stats_; }
+  // 23 Nov (texture pre-load, shadow_renderer DrainTexturePreload): loads the texture of this fetch constant (host
+  // byte order, 6 dwords) through the same Lookup a draw's bind makes, so that bind is a hit - created, uploaded,
+  // page-watched and hashed now. The host kind is guessed from the fetch's dimension (cube -> cube, 3D -> 3D, else
+  // 2D), as a draw would fetch it. Not held back by --gow2_renderer_texture_load_budget_ms (the caller has its own
+  // budget). True = a new texture was loaded; false = known already (or not a texture fetch). Call FinishPreloads
+  // after a batch (the GPU-path untile work of batched loads).
+  bool Preload(const uint32_t* tf, uint64_t frame);
+  void FinishPreloads() { RunGpuJobs(); }
+  uint64_t PreloadHits() const { return preload_hits_; }  // first binds that found a pre-loaded texture
   uint64_t CreateRetries() const { return create_retries_total_; }  // patch 0149: session totals
   uint64_t ScaledDropped() const { return scaled_evicted_total_; }
   // GPU loads (upl-n106): uncompressed 2D textures are untiled by this compute pipeline (builtin kUntileCs) from the
@@ -260,6 +269,7 @@ class TextureCache {
     std::string failure;  // non-empty: this guest texture can't be represented (stand-in)
     bool load_failed = false;  // 0.6.2 (#311): the last Load did not complete; Lookup loads it again (once a frame)
     uint64_t retry_frame = ~0ull;
+    bool preloaded = false;  // 23 Nov: loaded by Preload, not yet bound by a draw
     bool deferred = false;  // 23 Nov (stutter): new texture held back - this frame's load budget was used (loads later)
     uint64_t deferred_frame = ~0ull;  // first frame it was held back (loaded anyway 8 frames later)
     uint32_t retry_count = 0;
@@ -335,6 +345,8 @@ class TextureCache {
   };
   std::unordered_map<uint64_t, PackShared> pack_shared_;
   uint64_t frame_now_ = 0;  // Lookup's frame (ReleasePack stamps it)
+  bool preloading_ = false;     // 23 Nov: inside Preload (no load-budget hold-back)
+  uint64_t preload_hits_ = 0;
   double frame_load_ms_ = 0.0;      // 23 Nov: time spent loading new textures this frame (load budget)
   uint32_t deferred_this_frame_ = 0;  // new textures held back this frame
   uint64_t deferred_total_ = 0;

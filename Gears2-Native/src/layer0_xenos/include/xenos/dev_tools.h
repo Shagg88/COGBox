@@ -171,6 +171,10 @@ void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_
 // address and size in bytes - so the renderer can translate it and have the driver build it before the first draw.
 // Any thread; no-op unless our renderer runs (--gow2_renderer_shader_precreate, default on).
 void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t size_bytes);
+// 23 Nov (texture pre-load): a game hook (layer 1/3) reports a texture the game has just given memory - the XDK's
+// XGOffsetBaseTextureAddress(header, base, mip), at its first instruction - so the renderer can create and upload it on
+// a loading-screen frame before its first draw. Any thread; no-op unless --gow2_renderer_texture_preload is on.
+void XenosGuestTextureAddressed(uint32_t header, uint32_t base_address, uint32_t mip_address);
 // Patch 0068: false unless our renderer runs the DXBC path with --gow2_renderer_shader_prebuild (default on), so
 // layer 2 reads nothing otherwise.
 bool XenosPrebuildWanted();
