@@ -261,8 +261,8 @@ REXCVAR_DEFINE_INT32(gow2_renderer_shader_precreate_threads, 0, "Gears2",
                      "of the shaders the game creates moves off the render thread onto this many background threads "
                      "(below normal priority); they put each translation into the DXBC store, and the render thread "
                      "then only reads it back (before: all ~7,000 Gears 2 shaders translated on the render thread, at "
-                     "most 6 ms a frame). -1 = automatic (half the usable logical processors, at least 2; normal priority on "
-                     "loading screens / menus, below normal in play), 0 = off "
+                     "most 6 ms a frame). -1 = automatic (half the usable logical processors, at least 2, no upper cap, 2 left "
+                     "for the game; normal priority on loading screens / menus, lowest in play), 0 = off "
                      "(as before), N = N. Needs --gow2_renderer_dxbc_store (default on); else the render thread "
                      "translates as before");
 REXCVAR_DEFINE_BOOL(gow2_renderer_shader_precreate_guess_play, true, "Gears2",
