@@ -193,6 +193,14 @@ void legal_notice_ask(App &a)
     a.modal.check = "Don't show this again";
     a.modal.checked = a.ini.get("Notices", "LegalNever") == kLegalNoticeVersion;
 }
+// GitHub #443: "Close COGBox?" can be switched off (its own "Don't ask again", or About > Ask before closing COGBox)
+void ask_quit(App &a)
+{
+    if (a.ini.geti("Launcher", "AskQuit", 1) == 0) { a.quit = true; return; }
+    ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
+    a.modal.check = "Don't ask again";
+    a.modal.checked = false;
+}
 static void answered(App &a)
 {
     Modal m = a.modal;      // a copy: the answer may ask a new question
@@ -217,7 +225,10 @@ static void answered(App &a)
     }
     else if (m.tag == "legaldecline") { a.quit = true; return; }
     else if (m.tag == "crash") play_answer(a, m);
-    else if (m.tag == "quit" && m.answer == 0) a.quit = true;   // job 526
+    else if (m.tag == "quit" && m.answer == 0) {   // job 526
+        if (m.checked) { a.ini.seti("Launcher", "AskQuit", 0); a.ini.save(); }   // GitHub #443
+        a.quit = true;
+    }
     else if (m.tag == "whatsnew") {   // to-do 13: this version's release notes (legal2-050: on GitLab)
         a.ini.set("Notices", "WhatsNewSeen", COGBOX_VERSION);
         a.ini.save();
@@ -1070,7 +1081,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         // job 526: Start (Options) or Esc on the library screen asks to close COGBox (asked after this frame's drawing, so
         // the same Esc doesn't also answer it)
         if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
-            ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
+            ask_quit(a);
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 8, 8, 10, 255);
         SDL_RenderClear(ren);

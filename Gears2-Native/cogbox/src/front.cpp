@@ -1029,7 +1029,7 @@ void front_draw(App &a, ImVec2 size)
             const bool can = !a.run.proc && !a.modal.open && a.job.state.load() != 1;
             if ((th_button((lbl + "##frontexit").c_str(), es, can, F_BOLD, a.padConnected && a.frontSel == 13) ||
                  (nav && a.padConnected && a.frontSel == 13 && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) && can)
-                ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
+                ask_quit(a);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayNormal))
                 ImGui::SetTooltip("%s", a.run.proc ? tr("Close the game first.") : tr("Close COGBox."));
             ImGui::PopItemFlag();

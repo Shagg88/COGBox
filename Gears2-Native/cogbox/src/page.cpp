@@ -1916,6 +1916,9 @@ static void about_tab(App &a, int g)
     bool chk = a.ini.geti("Updates", "Check", 1) != 0;
     if (ImGui::Checkbox(tr("Check GitHub for a newer COGBox at start"), &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
     ui_tip("Only the release page's address is asked for; nothing about you or this PC is sent.");
+    bool askq = a.ini.geti("Launcher", "AskQuit", 1) != 0;   // GitHub #443
+    if (ImGui::Checkbox(tr("Ask before closing COGBox"), &askq)) { a.ini.seti("Launcher", "AskQuit", askq ? 1 : 0); a.ini.save(); }
+    ui_tip("Off: Esc, Start or the Exit button on the library screen closes COGBox at once.");
 
     // ---- LICENCES (0.4.8): the third-party terms, and NVIDIA's attribution for DLSS / DLSS Frame Generation / Reflex
     // (NVIDIA RTX SDKs License 7.1(b): attribute the SDK in the application's about box)

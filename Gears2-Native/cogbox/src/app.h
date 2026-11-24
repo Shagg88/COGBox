@@ -159,6 +159,7 @@ const char *pad_name(const App &a, const char *xbox);
 bool pad_capturing(const App &a);   // 0.6.3: the controller layout list is waiting for a button (see App::padCaptureFrame)
 void set_borderless(App &a, bool on);   // job 523: saved in CogBox.ini [Window] Borderless
 void set_fullscreen(App &a, bool on);   // job 523: saved in CogBox.ini [Window] Fullscreen
+void ask_quit(App &a);   // GitHub #443: the "Close COGBox?" question, unless switched off
 void ask(App &a, const std::string &tag, int game, const std::string &title, const std::string &text,
          std::vector<std::string> buttons, const std::string &data = "");
 
