@@ -49,7 +49,7 @@ REXCVAR_DEFINE_INT32(gow2_texture_cpu_threads, 0, "Gears2",
 REXCVAR_DEFINE_DOUBLE(gow2_renderer_texture_load_budget_ms, 4.0, "Gears2",
                       "23 Nov (first-play stutter: G2 loaded 377 new textures in one frame = 59 ms at gameplay start): once "
                       "new-texture loads in a frame have taken this many ms, further NEW textures wait for a later frame "
-                      "(a stand-in is drawn meanwhile; each one loads within 8 frames at most). Textures already loaded are "
+                      "(a stand-in is drawn meanwhile; within 8 frames, or up to 60 when every frame is full). Textures already loaded are "
                       "never held back. 0 = off (load everything at once, as before). Default 4 (jobs 2378e / 2378i: G2 level start 112 -> 64 ms, no visible stand-ins after the fade-in; G1 / G3 / J unchanged)");
 REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
                       "Diagnostic (job 299): log a frame whose texture loads took longer than this many ms, split into "
@@ -1015,7 +1015,11 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   Entry& e = *it->second;
   if (e.deferred) {  // 23 Nov: a new texture held back on an earlier frame - load it now unless this frame is full too
     const double budget = REXCVAR_GET(gow2_renderer_texture_load_budget_ms);
-    if (frame == e.deferred_frame || (budget > 0.0 && frame_load_ms_ >= budget && frame < e.deferred_frame + 8)) {
+    // Review 23 Nov: past 8 frames a held texture still waits while this frame has loaded 2x the budget (so a big burst
+    // doesn't all land on frame N+8), but never longer than 60 frames.
+    const bool overdue = frame >= e.deferred_frame + 8;
+    if (frame == e.deferred_frame ||
+        (budget > 0.0 && frame < e.deferred_frame + 60 && frame_load_ms_ >= (overdue ? 2.0 * budget : budget))) {
       ++deferred_this_frame_;
       return done(e, "deferred: this frame's texture-load budget is used");
     }

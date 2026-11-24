@@ -135,3 +135,5 @@ gameplay by docs/test-routes.md, play 60 s, quit, then press "Collect logs for a
 5. Crash: with Everything, `--gow2_crash_test=<mode>` in extra-args.txt; the .dmp is bigger than at Normal and opens in
    WinDbg / Visual Studio.
 6. An older exe: the option is greyed ("Not yet in ... needs its next build").
+
+**Screenshots are not masked (review 23 Nov).** Text files in the zip have user names, PC names, paths, IP addresses and gamertags masked. The screenshots (up to 40) are pictures: a gamertag shown on screen (HUD, lobby, profile screens) stays visible. Look through `shots\` before sharing the zip publicly.

@@ -63,7 +63,8 @@ class AudioMenu {
     REXLOG_INFO("{}: ids music={} effects={} dialogue={}; launcher values music={} effects={} dialogue={} (-1 = the "
                 "game's own)", option_, slider_[0].id, slider_[1].id, slider_[2].id, values[0], values[1], values[2]);
   }
-  bool On() const { return known_; }   // something to read back (the getter hook is needed)
+  // Review 23 Nov: the getter hook only when the launcher set a value (with "Game's own" everywhere nothing is hooked)
+  bool On() const { return known_ && (values_[0] >= 0 || values_[1] >= 0 || values_[2] >= 0); }
 
   // After the getter returned `found` (its r3) for (self, id, value_addr).
   // Returns true when the caller must report the setting as found (its r3 = 1): job 2378j - Judgment / Gears 3 read 41-43
