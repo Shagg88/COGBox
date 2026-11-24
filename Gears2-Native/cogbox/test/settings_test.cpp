@@ -1154,15 +1154,14 @@ int summary() {
             if (audio_device_present(e, headset)) bad("present: an empty list");
         }
     }
-    // GitHub #443: Players 3 / 4 greyed where the game refuses them (Gears 1-3: two), a saved 4 played as 2 with a note;
-    // Judgment keeps 3 / 4 (not checked yet, "Untested")
+    // GitHub #443: Players 3 / 4 greyed (every game refuses a third local player), a saved 4 played as 2 with a note
     {
         auto bad = [&](const std::string& what) { std::cout << "FAIL #443 players: " << what << "\n"; ++fails; };
         for (int g = 0; g < kGameCount; ++g) {
             const Game game = static_cast<Game>(g);
             const Option* o = find_option(game, "Players");
             if (!o) { bad("no Players option in game " + std::to_string(g)); continue; }
-            const int max = game == Game::Judgment ? 4 : 2;
+            const int max = 2;
             if (max_local_players(game) != max) bad("max for game " + std::to_string(g));
             for (int i = 0; i < 4; ++i) {
                 const Availability ca = choice_available(*o, game, i);
@@ -1184,8 +1183,9 @@ int summary() {
                 bad("saved 4 players, game " + std::to_string(g));
             // the two-player split layout follows the count played (a saved 4 in Gears 3 is played as 2)
             const Option* sl = find_option(game, "SplitLayout");
-            if (sl && game != Game::Judgment && can(game, sl->feature, effective_version(game, s, e), e).ok &&
+            if (sl && can(game, sl->feature, effective_version(game, s, e), e).ok &&
                 !available(*sl, game, effective_version(game, s, e), s, e).ok) bad("split layout with a saved 4, game " + std::to_string(g));
+            if (played_players(game, s) != 1) bad("played_players, game " + std::to_string(g));   // the front screen's plates, F8's value
             s.set("Players", 1);
             const auto two = build_args(game, effective_version(game, s, e), s, e);
             if (std::find(two.begin(), two.end(), "--local_players=2") == two.end()) bad("2 players, game " + std::to_string(g));
@@ -1196,12 +1196,12 @@ int summary() {
         auto bad = [&](const std::string& what) { std::cout << "FAIL #443 menu order: " << what << "\n"; ++fails; };
         const Option* res = find_option(Game::Gears2, "Resolution");
         const Option* win = find_option(Game::Gears2, "WindowSize");
-        const Option* fov = find_option(Game::Gears2, "PromptStyle");
-        if (!res || !win || !fov) bad("options missing");
+        const Option* prompts = find_option(Game::Gears2, "PromptStyle");
+        if (!res || !win || !prompts) bad("options missing");
         else {
             if (res->choices.size() != 8 || menu_order_line(*res, res->choices.size()) != "0|6|7|5|1|2|3") bad("Resolution: " + menu_order_line(*res, res->choices.size()));
             if (win->choices.size() != 7 || menu_order_line(*win, win->choices.size()) != "0|1|6|2|3|4|5") bad("WindowSize: " + menu_order_line(*win, win->choices.size()));
-            if (!menu_order_line(*fov, fov->choices.size()).empty()) bad("PromptStyle has an order line");
+            if (!menu_order_line(*prompts, prompts->choices.size()).empty()) bad("PromptStyle has an order line");
             if (choice_order(*res, res->choices.size()) != std::vector<int>({ 0, 6, 7, 5, 1, 2, 3 })) bad("page order");
             // the order holds the indexes (the saved values): 720p, 768p, 900p, 1080p, 1440p, 4K, 5K
             const std::vector<int> ord = choice_order(*res, res->choices.size());

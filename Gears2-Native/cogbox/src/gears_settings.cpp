@@ -1270,7 +1270,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "Ssil" && s.i("AO") != 2 && s.i("AO") != 3) {                    // SSIL runs on XeGTAO's depth pyramid
         a.ok = false; a.why = "Needs Ambient occlusion: On."; return a;
     }
-    else if (o.id == "SplitLayout") on = std::min(s.i("Players"), max_local_players(g) - 1) == 1;   // GitHub #136: 2 players only (#443: as played)
+    else if (o.id == "SplitLayout") on = played_players(g, s) == 1;   // GitHub #136: 2 players only (#443: as played)
     else if (o.id == "PeerIps") on = s.b("SystemLink");                              // GitHub #229
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
     else if (o.id == "AspectRatio") on = !s.b("Ultrawide");                          // 0.4.9: 4:3 not with ultrawide
@@ -1294,8 +1294,13 @@ Availability choice_available(const Option& o, Game g, int index) {
 int max_local_players(Game g) {
     // GitHub #443 (Steam Deck tester): with 3 or 4 the games refuse at their menus - Gears 1 and 2 "Only two signed-in
     // gamer profiles can play on one Xbox 360 console" (Coalesced TwoPlayersOnly_Message), Gears 3 "Only two active
-    // players can play on one Xbox 360 console". Judgment's limit is not checked yet: its 3 and 4 stay offered (Untested).
-    return g == Game::Judgment ? 4 : 2;
+    // players can play on one Xbox 360 console"; Judgment's Coalesced_INT has the same TwoPlayersOnly_Message.
+    (void)g;
+    return 2;
+}
+
+int played_players(Game g, const Settings& s) {
+    return std::max(0, std::min(s.i("Players"), max_local_players(g) - 1));
 }
 
 std::vector<int> choice_order(const Option& o, size_t count) {
@@ -1351,8 +1356,7 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         base += "\nYour graphics card: " + (gpu.empty() ? std::string("not detected") : gpu);
     }
     if (g == Game::Judgment && o.id == "FpsMode") return not_yet(2, "game's own counter") + " " + base;   // PS1 476
-    if (g == Game::Judgment && o.id == "Players")   // GitHub #443: Gears 1-3 refuse a third player; Judgment's limit not checked
-        return "Untested in Judgment - 3 and 4 players may be refused by the game, as in the other three games. " + base;
+    if (g == Game::Judgment && o.id == "Players") return "Untested in Judgment. " + base;
     if (o.id == "SystemLink" && g != Game::Gears2 && a.ok)   // Shagg 16:07: all four games' title updates; Gears 2 tested
         return std::string("Untested in ") + (g == Game::Gears3 ? "Gears 3" : g == Game::Judgment ? "Judgment" : "Gears 1") + " - please tell us in #72. " + base;                 // PS1 477
     if (g == Game::Gears1 && o.id == "FpsMode") return not_yet(3, "game's own counter") + " " + base;
@@ -2485,7 +2489,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     // GitHub #443: a saved count above what the game allows (Gears 1-3: two) is played as that many, with a note
-    const int players = std::max(0, std::min(s.i("Players"), max_local_players(g) - 1));
+    const int players = played_players(g, s);
     if (avail("Players") && s.i("Players") > players)
         notes.push_back("launcher: Players " + std::to_string(s.i("Players") + 1) + " - this game allows " +
                         std::to_string(players + 1) + " local players - started with " + std::to_string(players + 1));

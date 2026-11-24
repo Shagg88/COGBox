@@ -594,10 +594,16 @@ Action DrawSettings(const Look& L, SettingsPage& pg) {
         if (ImGui::BeginCombo("##v", (*r.choices)[size_t(cur)].c_str(), ImGuiComboFlags_HeightLarge)) {
           open_here = true;
           // GitHub #443: COGBox's order (Render resolution by size; the value stays the index) - only when every
-          // entry is a choice; otherwise index order as before
+          // entry is a choice and none is listed twice; otherwise index order as before
           std::vector<int> list;
-          if (r.order) for (int c : *r.order) if (c >= 0 && c < n) list.push_back(c);
-          if (!r.order || list.size() != r.order->size() || list.empty()) {
+          std::vector<bool> seen(size_t(n), false);
+          bool bad = false;
+          if (r.order) for (int c : *r.order) {
+            if (c < 0 || c >= n || seen[size_t(c)]) { bad = true; break; }
+            seen[size_t(c)] = true;
+            list.push_back(c);
+          }
+          if (!r.order || bad || list.empty()) {
             list.clear();
             for (int c = 0; c < n; ++c) list.push_back(c);
           }

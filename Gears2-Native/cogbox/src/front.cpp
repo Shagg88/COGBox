@@ -549,7 +549,7 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
     th_plate(dl, o, ImVec2(o.x + w, o.y + h), S(6), hov || psel);
     // GitHub #443 (Steam Deck tester: "no highlighting when hovered"): the lit plate only changed its edge and a shade -
     // lifted under the mouse as a button is (a lighter body; the edge and rivets stay)
-    if (hov) th_plate_fill(dl, ImVec2(o.x + S(1.5f), o.y + S(1.5f)), ImVec2(o.x + w - S(1.5f), o.y + h - S(1.5f)), S(5), IM_COL32(255, 255, 255, 18));
+    if (hov) th_plate_fill(dl, ImVec2(o.x + S(1.5f), o.y + S(1.5f)), ImVec2(o.x + w - S(1.5f), o.y + h - S(1.5f)), S(5), IM_COL32(255, 255, 255, 30));
     // the badge: a dark disc, a crimson ring, the first letter (or a head-and-shoulders mark when no name is set)
     const ImVec2 c(o.x + S(10) + r, o.y + h * 0.5f);
     dl->AddCircleFilled(c, r, U(ImVec4(0.05f, 0.05f, 0.06f, 1)), 32);
@@ -854,7 +854,8 @@ void front_draw(App &a, ImVec2 size)
         ImVec2 po(S(26) + S(42) + F_TITLE->CalcTextSizeA(FS(F_TITLE), FLT_MAX, 0, "COGBOX").x + S(22), S(18));
         po.x += player_plate(a, dl, po, nav) + S(10);
         // 0.4.9 split-screen: one more plate per extra player of the game in front (its Players setting)
-        const int extra = nLib > 0 && game_is_port(a.front) ? std::max(0, std::min(3, a.cur[a.front].i("Players"))) : 0;
+        // (GitHub #443: as played - a saved 4 in Gears 3 is 2 players, one extra plate)
+        const int extra = nLib > 0 && game_is_port(a.front) ? std::min(3, gs::played_players((gs::Game)a.front, a.cur[a.front])) : 0;
         for (int p = 2; p <= extra + 1; p++) po.x += player_plate(a, dl, po, nav, p) + S(10);
     }
 

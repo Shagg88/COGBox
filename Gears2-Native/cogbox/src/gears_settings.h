@@ -163,8 +163,10 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
 // languages Gears 1 has no text for; Players counts the game refuses (GitHub #443).
 Availability choice_available(const Option& o, Game g, int index);
 // GitHub #443: the most local (split-screen) players the game lets play - Gears 1, 2 and 3 refuse a third ("Only two
-// signed-in gamer profiles / active players can play on one Xbox 360 console"). Judgment: not known, the option's 4.
+// signed-in gamer profiles / active players can play on one Xbox 360 console"); Judgment too (its TwoPlayersOnly_Message).
 int max_local_players(Game g);
+// The Players value as played (0 = 1 player ... 3 = 4): the saved one, at most the game's max_local_players - 1.
+int played_players(Game g, const Settings& s);
 // The order a choice list is shown in, as indexes (the saved value stays the index): Render resolution and Window size
 // by size, and the choices no longer offered left out. Used by the settings page and the in-game menu (order= line).
 std::vector<int> choice_order(const Option& o, size_t count);

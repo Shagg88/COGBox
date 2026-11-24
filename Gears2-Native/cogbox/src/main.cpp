@@ -863,7 +863,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     social_restart(a);   // social step 3: the SOCIAL tab's worker, when the multiplayer server is enabled
     // job 523: Wine / Proton (Linux, Steam Deck) - ntdll has wine_get_version there
     a.wine = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
-    if (getenv("COGBOX_WINE")) a.wine = true;   // test switch: the Proton / Wine buttons and notes on Windows (layout shots)
+    if (getenv("COGBOX_WINE")) a.wine = true;   // test switch: the Proton / Wine buttons and notes on Windows - layout shots only; don't Play
     // job 643: a Mac (CrossOver / Game Porting Toolkit) - Wine's host system is Darwin there. Vulkan can't start on a
     // Mac (CrossOver offers Vulkan 1.2, the renderer needs 1.3: GitHub #36 / #40), so DirectX 12 (D3DMetal) is its default.
     if (a.wine) {

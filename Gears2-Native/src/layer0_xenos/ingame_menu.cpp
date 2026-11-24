@@ -317,7 +317,10 @@ MenuFile LoadMenuFile(const std::string& path) {
       size_t a = 0;
       for (;;) {
         const size_t b = v.find('|', a);
-        o.order.push_back(std::atoi(v.substr(a, b == std::string::npos ? std::string::npos : b - a).c_str()));
+        const std::string n = v.substr(a, b == std::string::npos ? std::string::npos : b - a);
+        char* end = nullptr;
+        const long i = n.empty() ? -1 : std::strtol(n.c_str(), &end, 10);
+        if (!n.empty() && end && *end == 0 && i >= 0 && i < 1000) o.order.push_back(int(i));   // empty / junk: skipped
         if (b == std::string::npos) break;
         a = b + 1;
       }

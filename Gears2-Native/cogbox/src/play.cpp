@@ -267,6 +267,7 @@ static void write_menu_file(App &a, int g, gs::Version ver, const std::string &l
         if (o.id == "Version") continue;          // 0.6.6: one version (the title update) - nothing to choose
         gs::Availability av = gs::available(o, G, ver, a.cur[g], a.env[g]);
         double v = a.cur[g].has(o.id) ? a.cur[g].f(o.id) : o.def;
+        if (o.id == "Players") v = gs::played_players(G, a.cur[g]);   // GitHub #443: the count this play has (a saved 4 in Gears 3: 2)
         std::vector<std::string> choices = o.id == "Monitor" ? monitor_choices() : o.choices;
         const char *kind = o.kind == gs::Kind::Bool ? "bool" : o.kind == gs::Kind::Choice ? "choice" : o.kind == gs::Kind::Int ? "int" : "float";
         char nums[160];
