@@ -11,6 +11,7 @@
 #include "dlss_custom.h"   // 0.4.9: Custom DLSS file
 #include "save_import.h"   // 0.6.1: Import saves
 #include "fabricator_state.h"   // the MODS tab's "More in FABRICATOR" (the LIBRARY opens on this game)
+#include "mod_conflicts.h"   // the MODS tab's note under a mod that shares files with another
 #include <filesystem>
 #include "imgui_internal.h"
 
@@ -1500,6 +1501,13 @@ static void mods_tab(App &a, int g)
         if (ml[g].empty()) { lamp_line(0, "No mods yet"); ui_tip(k_noModsTip); }
         bool changed = false;
         const float bw = T(90);   // Up / Down: one column at the right, the same size
+        {   // review: the tab opened (or another game's) - the mods' folders listed again for the conflicts
+            static int s_frame = -10, s_game = -1;
+            if (ImGui::GetFrameCount() - s_frame > 1 || g != s_game) mod_conflicts_refresh(g);
+            s_frame = ImGui::GetFrameCount();
+            s_game = g;
+        }
+        const std::shared_ptr<const ModConflictSet> conflicts = mod_conflicts_get(g);
         for (size_t i = 0; i < ml[g].size(); i++) {
             const ModItem &m = ml[g][i];
             ImGui::PushID((int)i + 8000);
@@ -1526,6 +1534,35 @@ static void mods_tab(App &a, int g)
             if (m.textures) lamp_line(m.enabled ? 1 : 0, m.textures == 1 ? tr(std::string("Texture pack: 1 texture"))
                                                                          : trf("Texture pack: {1} textures", { std::to_string(m.textures) }));
             for (const std::string &n : m.notes) ui_note("mod.ini: " + n, col::amber);
+            // KiltedKernel: the files it shares with other ticked mods (mod_conflicts.h) - the first, how many more, and
+            // all of them with their paths on hover (the FABRICATOR's LIBRARY has a line each)
+            if (const ModConflicts *c = m.enabled && conflicts ? conflicts->find(m.folder) : nullptr) {
+                std::vector<std::pair<const ModConflictPair *, int>> v;
+                for (const ModConflictPair &p : c->replaced_by) v.push_back({ &p, 0 });
+                for (const ModConflictPair &p : c->tex_loses) v.push_back({ &p, 2 });
+                for (const ModConflictPair &p : c->replaces) v.push_back({ &p, 1 });
+                for (const ModConflictPair &p : c->tex_wins) v.push_back({ &p, 3 });
+                if (!v.empty()) {
+                    std::string t = mod_conflict_text(*v[0].first, v[0].second);
+                    if (v.size() > 1) t += "  " + trf("(+{1} more)", { std::to_string(v.size() - 1) });
+                    lamp_line(2, t);   // (an amber lamp, as the tab's other lines about a mod)
+                    if (ImGui::IsItemHovered()) {   // file names: TextUnformatted only
+                        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(S(640), FLT_MAX));
+                        ImGui::BeginTooltip();
+                        const size_t kMax = 6;   // (then "and N more": the LIBRARY has a line each)
+                        for (size_t k = 0; k < v.size() && k < kMax; k++) {
+                            if (k) ImGui::Dummy(ImVec2(0, S(4)));
+                            ImGui::TextUnformatted(mod_conflict_text(*v[k].first, v[k].second).c_str());
+                            for (const std::string &x : mod_conflict_tip(*v[k].first, v[k].second)) ImGui::TextUnformatted(x.c_str());
+                        }
+                        if (v.size() > kMax) {
+                            ImGui::Dummy(ImVec2(0, S(4)));
+                            ImGui::TextUnformatted(trf("and {1} more - see the FABRICATOR's LIBRARY", { std::to_string(v.size() - kMax) }).c_str());
+                        }
+                        ImGui::EndTooltip();
+                    }
+                }
+            }
             ImGui::PopID();
         }
         ImGui::Dummy(ImVec2(0, S(4)));

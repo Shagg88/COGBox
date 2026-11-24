@@ -22,6 +22,9 @@ Windows runs, and archives inside the mod are left out when it is added. Folders
 (junctions or symlinks) are not followed: copy the files in (the log names any link it skipped).
 
 **Load order:** the Mods tab's order, top to bottom. Where two mods have the same file, the lower one wins.
+COGBox shows it under both mods (the Mods tab and the FABRICATOR's LIBRARY): which files, and which mod's copy the game
+uses. Config fragments (`config\*.ini`) are not shown as clashes: they are merged in load order, not replaced, and
+where two mods set the same key the lower mod's value is used.
 
 ## mod.ini
 
@@ -165,7 +168,8 @@ mods\MyTextures\
 - **Known limit - textures the game reads by texel:** a few textures are read by texel position rather than stretched
   over a surface (look-up tables, some fonts and UI pieces). A bigger replacement of one of those is read at the
   wrong place, so it shows only part of the image. Keep such textures at the original size (1x).
-- **Order:** where two packs replace the same texture, the mod lower in the list wins, as with files.
+- **Order:** where two packs replace the same texture, the mod lower in the list wins, as with files - even when their
+  files are named differently (only the hash at the start counts). COGBox shows the textures two packs share.
 - **Folders left out:** `dump`, `.build` and `replace_<name>` folders inside a mod are not read.
 - Bigger textures take more video memory: a 4x pack has 16 times the pixels.
 
