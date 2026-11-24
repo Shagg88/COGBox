@@ -662,6 +662,8 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
         ImGui::SetNextItemWidth(S(260));
         const bool enter = ImGui::InputText("##gamertag", buf, sizeof(buf),
                                             ImGuiInputTextFlags_CallbackCharFilter | ImGuiInputTextFlags_EnterReturnsTrue, filter);
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive())   // GitHub #443: the box showed no hover highlight
+            ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), U(col::red), S(3), 0, S(1.5f));
         bool save = enter;
         if (pad) {
             static bool upper = true;
