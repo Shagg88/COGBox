@@ -279,8 +279,15 @@ bool th_tab(const char *label, bool selected, ImVec2 size)
     dl->PathFillConvex(U(selected ? col::steelHi : hov ? col::steel : ImVec4(0.09f, 0.10f, 0.11f, 0.9f)));
     if (selected) dl->AddRectFilled(ImVec2(a.x + c, a.y), ImVec2(b.x - c, a.y + S(3)), U(col::redHi));
     if (focused) dl->AddRect(a, b, U(col::text, 0.8f), 0, 0, S(1.5f));
-    ImGui::PushFont(F_HEAD, FS(F_HEAD) * 0.86f);
+    float fs = FS(F_HEAD) * 0.86f;
+    ImGui::PushFont(F_HEAD, fs);
     ImVec2 ts = ImGui::CalcTextSize(label);
+    if (ts.x > size.x - S(8) && ts.x > 0) {   // GitHub #425: nine tabs - a long (translated) name is made smaller to fit
+        ImGui::PopFont();
+        fs *= std::max(0.6f, (size.x - S(8)) / ts.x);
+        ImGui::PushFont(F_HEAD, fs);
+        ts = ImGui::CalcTextSize(label);
+    }
     dl->AddText(ImVec2(a.x + (size.x - ts.x) * 0.5f, a.y + (size.y - ts.y) * 0.5f + S(1)), U(selected ? col::text : col::dim), label);
     ImGui::PopFont();
     ImGui::PopID();

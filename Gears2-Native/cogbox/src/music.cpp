@@ -358,6 +358,35 @@ void music_stop()
     g_lock = nullptr;
 }
 
+// GitHub #425: the AUDIO tab's Output device list - SDL's playback devices by name, the names the game's own SDL lists
+// (the runtime matches the saved name: SDK patch 117). Here because the music owns the launcher's SDL audio; the
+// subsystem is only held for the call (SDL counts its users, so the music's stream is not touched).
+std::vector<std::string> audio_output_devices()
+{
+    std::vector<std::string> out;
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) return out;
+    int n = 0;
+    if (SDL_AudioDeviceID *ids = SDL_GetAudioPlaybackDevices(&n)) {
+        for (int i = 0; i < n; i++)
+            if (const char *name = SDL_GetAudioDeviceName(ids[i]))
+                if (*name && std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+        SDL_free(ids);
+    }
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    return out;
+}
+
+void audio_devices_refresh(App &a, bool force)
+{
+    // review: opening SDL's audio to list the devices can take a moment (WASAPI) - not more often than every 3 s
+    static Uint64 last = 0;
+    const Uint64 now = SDL_GetTicks();
+    if (!force && last && now - last < 3000) return;
+    last = now;
+    a.audioDevices = audio_output_devices();
+    for (int g = 0; g < G_COUNT; g++) a.env[g].audio_devices = a.audioDevices;
+}
+
 // CogBox.exe --musictest <key> <copy> <report.txt>: one game's track from one copy (folder, image or GoD header), with
 // what was found on the way; COGBOX_MUSIC_DUMP=<folder> also writes the decoded track. Players never see it.
 int music_test(const std::string &key, const std::string &copy, const std::string &report)

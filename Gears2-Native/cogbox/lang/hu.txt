@@ -1756,3 +1756,19 @@ Gears 2 and Gears 3: how much brighter than normal white explosions, muzzle flas
 With FSR or DLSS: draw the 3D scene at a lower resolution and let the upscaler fill in the detail - more frames per second, a little softer. HUD and menus stay at the full resolution.\nPerformance needs render resolution 2x (1440p) or 4x; Quality and Ultra performance need 3x (4K). = FSR vagy DLSS esetén: a 3D jelenet alacsonyabb felbontásban rajzolódik, és a felskálázó tölti ki a részleteket - több képkocka másodpercenként, kicsit lágyabb kép. A HUD és a menük teljes felbontásban maradnak.\nA Teljesítményhez 2x (1440p) vagy 4x renderelési felbontás kell; a Minőséghez és az Ultra teljesítményhez 3x (4K).
 Hand-added = Kézzel hozzáadva
 Put in the mods folder by hand, not added by COGBox - COGBox never deletes it. To remove it, delete its folder yourself (Open folder). = Kézzel helyezd a mods mappába; mivel nem a COGBox adta hozzá, a COGBox sosem fogja törölni. Az eltávolításhoz töröld ki saját kezűleg a mappáját (Mappa megnyitása).
+# GitHub #425: the AUDIO tab
+AUDIO = HANG
+Audio = Hang
+OUTPUT = KIMENET
+VOLUME = HANGERŐ
+Output device = Kimeneti eszköz
+Speaker setup = Hangszóró-beállítás
+Night mode = Éjszakai mód
+Mono = Mono
+Stereo = Sztereó
+5.1 surround = 5.1 térhatású
+7.1 surround = 7.1 térhatású
+System default = Rendszer alapértelmezett
+(not found - the system default is used) = (nem található - a rendszer alapértelmezettje használatos)
+Needs a newer COGBox build. = Újabb COGBox build szükséges.
+The output device you chose is not plugged in at the moment - the game uses the system default device. = A választott kimeneti eszköz most nincs csatlakoztatva - a játék a rendszer alapértelmezett eszközét használja.

@@ -236,6 +236,7 @@ void env_refresh(App &a, int g)
     e.gpu_name = gs::main_gpu(a.gpus);
     e.graphics_cards.clear();   // 0.6.2 (GitHub #304)
     for (const GpuCard &c : a.gpuCards) e.graphics_cards.push_back(c.name);
+    e.audio_devices = a.audioDevices;   // GitHub #425
     int n = 0;
     SDL_DisplayID *ids = SDL_GetDisplays(&n);
     e.screen_count = std::max(1, n);
@@ -1189,6 +1190,30 @@ static void option_row(App &a, int g, const gs::Option &o)
             }
             break;
         }
+        if (o.id == "AudioDevice") {
+            // GitHub #425: a list of the PC's sound output devices, by name. System default = nothing saved (the game follows
+            // Windows' default device). A saved device that isn't plugged in shows as missing and is not sent.
+            const std::string cur = a.cur[g].str(o.id);
+            std::string preview = tr("System default");
+            if (!cur.empty())   // an empty list (SDL's audio didn't start) says nothing about the device
+                preview = a.env[g].audio_devices.empty() || gs::audio_device_present(a.env[g], cur)
+                              ? cur : cur + " " + tr("(not found - the system default is used)");
+            if (ImGui::BeginCombo("##v", preview.c_str())) {
+                if (ImGui::Selectable(tr("System default"), cur.empty())) { if (!cur.empty()) { a.cur[g].t[o.id] = std::string(); a.dirty[g] = true; } }
+                for (const std::string &name : a.audioDevices) {
+                    ImGui::PushID(name.c_str());
+                    const std::string clean = gs::sanitize_text(o, name);   // as it is saved
+                    const bool sel = !cur.empty() && _stricmp(clean.c_str(), cur.c_str()) == 0;
+                    if (ImGui::Selectable(name.c_str(), sel)) {
+                        if (clean != cur) { a.cur[g].t[o.id] = clean; a.dirty[g] = true; }
+                    }
+                    ImGui::PopID();
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            break;
+        }
         // 0.4.8 (GitHub #229): a one-line text box. Only the option's characters can be typed (gs::text_char_ok) and at
         // most max_len; the value kept is gs::sanitize_text's (what isn't valid is dropped and said so under the row).
         static char buf[512];
@@ -1269,6 +1294,12 @@ static void option_row(App &a, int g, const gs::Option &o)
         const std::string cur = a.cur[g].str(o.id);
         if (!cur.empty() && !gs::graphics_card_present(a.env[g], cur))
             ui_note("The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic).", col::amber);
+    }
+    // GitHub #425: a device saved before that isn't plugged in now (or another PC's) - say so, and what happens
+    if (av.ok && o.id == "AudioDevice") {
+        const std::string cur = a.cur[g].str(o.id);
+        if (!cur.empty() && !a.env[g].audio_devices.empty() && !gs::audio_device_present(a.env[g], cur))
+            ui_note("The output device you chose is not plugged in at the moment - the game uses the system default device.", col::amber);
     }
     // GitHub #90: a language saved before (or from another copy) that this copy doesn't have - say so before the launch,
     // with what the game uses instead (the launcher doesn't pass it, gears_settings build_args)
@@ -1850,26 +1881,31 @@ static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Poo
 static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
 static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "AdaptiveTriggers", "TriggerRumble", "PadPrompts", "PromptStyle", "DeadZoneL", "DeadZoneR", "LowLag", nullptr };
 static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
-static const char *const k_playGame[] = { "Lang", "VoiceLang", "SkipLogos", "Mute", nullptr };
+static const char *const k_playGame[] = { "Lang", "VoiceLang", "SkipLogos", nullptr };
 static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", "PeerIps", nullptr };
 static const char *const k_playExtras[] = { "OriginalUnlocks", "Mutators", nullptr };
 static const char *const k_playCheats[] = { "CheatGod", "CheatWeapons", "CheatSpeed", "CheatHud", "Cheats", nullptr };   // GitHub #342
+static const char *const k_audOutput[] = { "AudioDevice", "AudioChannels", nullptr };   // GitHub #425
+static const char *const k_audVolume[] = { "NightMode", "Mute", nullptr };
 static const char *const k_achPopups[] = { "AchievementStyle", "AchievementColour", "AchievementPosition", "AchievementSound",
                                            "HideAchievementPopups", nullptr };   // PR #187
 static const char *const k_none[] = { nullptr };
-static const TabGroups k_groups[5] = {   // one per gs::Tab, in its order
+static const TabGroups k_groups[6] = {   // one per gs::Tab, in its order
     { { "SCREEN", "FRAME RATE", "PICTURE", nullptr }, { k_dispScreen, k_dispFrames, k_dispPicture, k_none }, { 0, 1, 1, 0 } },
     { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none }, { 0, 1, 0, 0 } },
     { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none }, { 0, 0, 0, 0 } },
     { { "GAME", "PLAYERS", "EXTRAS", "CHEATS" }, { k_playGame, k_playPlayers, k_playExtras, k_playCheats }, { 0, 0, 1, 1 } },
+    { { "OUTPUT", "VOLUME", nullptr, nullptr }, { k_audOutput, k_audVolume, k_none, k_none }, { 0, 0, 0, 0 } },
     { { "ACHIEVEMENT POPUPS", nullptr, nullptr, nullptr }, { k_achPopups, k_none, k_none, k_none }, { 0, 0, 0, 0 } },
 };
 
 // ---- the page --------------------------------------------------------------------------------------------------------
-static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ACHIEVEMENTS", "SOCIAL", "MODS", "ABOUT" };   // the one sound option is in Gameplay
-static const int k_tabCount = 8;
-static const int k_tabSocial = 5;   // social step 3; the tabs before it are gs::Tab's (ACHIEVEMENTS = gs::Tab::Achievements)
-static const int k_tabMods = 6;     // ABOUT is the last
+// the tabs before SOCIAL are gs::Tab's, in its order (GitHub #425: AUDIO); app.h names the ones after (kTabSocial ...)
+static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "AUDIO", "ACHIEVEMENTS", "SOCIAL", "MODS", "ABOUT" };
+static const int k_tabCount = kTabCount;
+static const int k_tabSocial = kTabSocial;   // social step 3
+static const int k_tabMods = kTabMods;       // ABOUT is the last
+static_assert(sizeof k_tabs / sizeof k_tabs[0] == kTabCount, "a tab name for each tab");
 
 static std::string summary(App &a, int g)
 {
@@ -1965,6 +2001,12 @@ void page_draw(App &a, ImVec2 size)
     // LB / RB switch tabs while the bar is not chosen
     if (a.barSel < 0 && !padCap && ImGui::IsKeyPressed(ImGuiKey_GamepadL1)) a.tab = (a.tab + k_tabCount - 1) % k_tabCount;
     if (a.barSel < 0 && !padCap && ImGui::IsKeyPressed(ImGuiKey_GamepadR1)) a.tab = (a.tab + 1) % k_tabCount;
+    {   // GitHub #425: the sound output devices are listed again whenever the AUDIO tab opens (a headset plugged in since)
+        static int lastTab = -1, lastFrame = -10;
+        if (ImGui::GetFrameCount() > lastFrame + 1) lastTab = -1;   // the page was closed in between
+        if (a.tab == (int)gs::Tab::Audio && lastTab != a.tab) audio_devices_refresh(a);
+        lastTab = a.tab; lastFrame = ImGui::GetFrameCount();
+    }
     dl->AddLine(ImVec2(p0.x + S(24), ty + tabH), ImVec2(p1.x - S(24), ty + tabH), U(col::redHi, 0.7f), S(2));
 
     // the rows

@@ -340,6 +340,7 @@ void play_start(App &a, int g, bool prepare)
     refresh_games(a, false);
     GameState &st = a.st[g];
     if (st.ready != R_READY) { set_message(a, std::string(d.name) + " isn't ready to play yet - add your copy first.", true); return; }
+    if (!a.cur[g].str("AudioDevice").empty()) audio_devices_refresh(a);   // GitHub #425: a headset plugged in since
     env_refresh(a, g);
     gs::Game G = (gs::Game)g;
     gs::Version ver = gs::effective_version(G, a.cur[g], a.env[g]);

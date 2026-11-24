@@ -1,0 +1,596 @@
+diff --git a/include/rex/audio/output_mix.h b/include/rex/audio/output_mix.h
+new file mode 100644
+index 0000000..7173d35
+--- /dev/null
++++ b/include/rex/audio/output_mix.h
+@@ -0,0 +1,124 @@
++// COGBox SDK patch 117 (GitHub #425): the output stage's extra mixes for --audio_channels (mono, 7.1), the
++// --audio_night_mode compressor and --audio_output_device's name match. Pure functions on the interleaved float frames
++// SDLAudioDriver::SDLCallback hands SDL (and on device names), kept here so tests/unit/audio can check them without a
++// sound device.
++#pragma once
++
++#include <algorithm>
++#include <cmath>
++#include <cctype>
++#include <cstddef>
++#include <string>
++#include <vector>
++
++namespace rex::audio {
++
++// --audio_channels=1: the stereo fold (conversion.h) made centred mono - the same signal on both channels, so a mono
++// speaker or one ear of a headset gets everything. Half of each side, so the sum never clips: a sound in the middle
++// keeps its level, one panned hard to one side comes out 6 dB quieter.
++inline void FoldStereoToMono(float* lr, size_t frames) {
++  for (size_t i = 0; i < frames; ++i) {
++    const float m = 0.5f * (lr[i * 2] + lr[i * 2 + 1]);
++    lr[i * 2] = m;
++    lr[i * 2 + 1] = m;
++  }
++}
++
++// --audio_channels=8: the games mix 5.1 (FL FR FC LFE BL BR, the XAudio order, also SDL's). A 7.1 device (SDL order
++// FL FR FC LFE BL BR SL SR) gets the front, centre and LFE as they are and each surround channel on both its back and
++// side speaker at -3 dB, so the surround sound comes from all around the listener at the level it had on one speaker.
++// In place: `buf` holds `frames` 5.1 frames and has room for as many 7.1 frames. Worked from the last frame back, as the
++// output grows (a frame's 7.1 slot never overlaps an earlier frame's 5.1 one).
++inline void Expand51To71(float* buf, size_t frames) {
++  constexpr float k = 0.70710678f;
++  for (size_t i = frames; i-- > 0;) {
++    const float* s = buf + i * 6;
++    const float fl = s[0], fr = s[1], fc = s[2], lfe = s[3], bl = s[4], br = s[5];
++    float* d = buf + i * 8;
++    d[0] = fl;
++    d[1] = fr;
++    d[2] = fc;
++    d[3] = lfe;
++    d[4] = bl * k;
++    d[5] = br * k;
++    d[6] = bl * k;
++    d[7] = br * k;
++  }
++}
++
++// --audio_night_mode: a gentle compressor on the final mix, so quiet dialogue stays clear at a low volume while
++// explosions and gunfire no longer jump out. One peak follower for all channels (so the picture never moves to one
++// side), 4:1 above -30 dBFS, 5 ms attack, 200 ms release, +9 dB of makeup gain, then a limiter that never lets a
++// sample past -1 dBFS (instant attack, 50 ms release). A full-scale peak comes out near -13.5 dBFS and speech at
++// -36 dBFS at -27 dBFS: about 36 dB of range becomes 13.5. Not used at all while the switch is off (the mix is
++// untouched).
++class NightMode {
++ public:
++  static constexpr float kThresholdDb = -30.0f;
++  static constexpr float kRatio = 4.0f;
++  static constexpr float kAttackMs = 5.0f;
++  static constexpr float kReleaseMs = 200.0f;
++  static constexpr float kMakeupDb = 9.0f;
++  static constexpr float kCeiling = 0.89125094f;  // -1 dBFS
++  static constexpr float kLimiterReleaseMs = 50.0f;
++
++  void Reset() {
++    env_ = 0.0f;
++    limit_ = 1.0f;
++  }
++
++  // `data`: `frames` interleaved frames of `channels` floats, changed in place.
++  void Process(float* data, size_t frames, size_t channels, float sample_rate) {
++    if (sample_rate != rate_) SetRate(sample_rate);
++    const float threshold = DbToGain(kThresholdDb);
++    const float makeup = DbToGain(kMakeupDb);
++    const float exponent = 1.0f / kRatio - 1.0f;
++    for (size_t i = 0; i < frames; ++i) {
++      float* f = data + i * channels;
++      float peak = 0.0f;
++      for (size_t c = 0; c < channels; ++c) peak = std::max(peak, std::fabs(f[c]));
++      env_ = peak + (peak > env_ ? attack_ : release_) * (env_ - peak);
++      if (env_ < 1e-9f) env_ = 0.0f;  // no denormals while the game is silent
++      const float comp = env_ > threshold ? std::pow(env_ / threshold, exponent) : 1.0f;
++      const float gain = comp * makeup;
++      limit_ = 1.0f + limiter_release_ * (limit_ - 1.0f);
++      if (peak * gain * limit_ > kCeiling) limit_ = kCeiling / (peak * gain);
++      const float g = gain * limit_;
++      for (size_t c = 0; c < channels; ++c) f[c] = std::clamp(f[c] * g, -kCeiling, kCeiling);
++    }
++  }
++
++  static float DbToGain(float db) { return std::pow(10.0f, db / 20.0f); }
++
++ private:
++  void SetRate(float sample_rate) {
++    rate_ = sample_rate;
++    auto coeff = [sample_rate](float ms) { return std::exp(-1000.0f / (ms * sample_rate)); };
++    attack_ = coeff(kAttackMs);
++    release_ = coeff(kReleaseMs);
++    limiter_release_ = coeff(kLimiterReleaseMs);
++  }
++
++  float rate_ = 0.0f;
++  float attack_ = 0.0f, release_ = 0.0f, limiter_release_ = 0.0f;
++  float env_ = 0.0f;    // the peak follower (linear)
++  float limit_ = 1.0f;  // the limiter's gain
++};
++
++// --audio_output_device: which of `names` (the playback devices SDL lists) the saved name means - the same name, else
++// the first that contains it, any case. -1: none (an empty name never matches).
++inline int MatchDeviceName(const std::string& want, const std::vector<std::string>& names) {
++  if (want.empty()) return -1;
++  auto lower = [](std::string t) {
++    for (char& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
++    return t;
++  };
++  for (size_t i = 0; i < names.size(); ++i)
++    if (names[i] == want) return static_cast<int>(i);
++  const std::string want_low = lower(want);
++  for (size_t i = 0; i < names.size(); ++i)
++    if (lower(names[i]).find(want_low) != std::string::npos) return static_cast<int>(i);
++  return -1;
++}
++
++}  // namespace rex::audio
+diff --git a/include/rex/audio/sdl/sdl_audio_driver.h b/include/rex/audio/sdl/sdl_audio_driver.h
+index 32bf802..2d54ed0 100644
+--- a/include/rex/audio/sdl/sdl_audio_driver.h
++++ b/include/rex/audio/sdl/sdl_audio_driver.h
+@@ -19,6 +19,7 @@
+ #include <thread>
+ 
+ #include <rex/audio/audio_driver.h>
++#include <rex/audio/output_mix.h>
+ #include <rex/thread.h>
+ 
+ #include <SDL3/SDL.h>
+@@ -42,6 +43,10 @@ class SDLAudioDriver : public AudioDriver {
+   // on Windows); false leaves SDL shut down. And the silent sink that stands in when no output opens.
+   bool TryOpenSdl(bool allow_fallbacks);
+   bool OpenSdlOutput(const char* driver);
++  // Patch 117: the playback device --audio_output_device names (0 = the default device: empty, not found, or lost
++  // during this run); and, every 5 s while it plays, whether it is still there - if not, the default device instead
++  SDL_AudioDeviceID ChosenPlaybackDevice();
++  void CheckNamedDevice();
+   void CloseSdlOutput();
+   bool log_failures_ = true;  // false while the silent sink retries (a failed try every 5 s is not worth a log line)
+   void StartSilentSink(bool allow_retry);
+@@ -55,6 +60,16 @@ class SDLAudioDriver : public AudioDriver {
+   std::atomic<bool> silent_stop_{false};
+   bool sdl_initialized_ = false;
+   uint8_t sdl_device_channels_ = 0;
++  // COGBox SDK patch 117 (GitHub #425): --audio_channels=1 sends the stereo fold as centred mono (sdl_device_channels_
++  // stays 2); --audio_output_device named a device that was found (the stream then stays on it: no default-device poll);
++  // --audio_night_mode's compressor, used only on the SDL callback thread, started afresh whenever the switch goes on
++  // named_id_: that device's SDL id; skip_named_device_: it was lost, so this run stays on the default device
++  bool mono_ = false;
++  bool named_device_ = false;
++  SDL_AudioDeviceID named_id_ = 0;
++  bool skip_named_device_ = false;
++  NightMode night_mode_;
++  bool night_mode_on_ = false;
+   // COGBox patch 66 (GitHub #203): the Windows default output device last checked, and frames since the last check
+   std::wstring default_endpoint_id_;
+   uint32_t endpoint_check_frames_ = 0;
+diff --git a/src/audio/sdl/sdl_audio_driver.cpp b/src/audio/sdl/sdl_audio_driver.cpp
+index d46f9e9..7f8cf2a 100644
+--- a/src/audio/sdl/sdl_audio_driver.cpp
++++ b/src/audio/sdl/sdl_audio_driver.cpp
+@@ -18,6 +18,7 @@
+ #include <rex/audio/conversion.h>
+ #include <rex/audio/downmix.h>
+ #include <rex/audio/flags.h>
++#include <rex/audio/output_mix.h>
+ #include <string_view>
+ #include <rex/audio/sdl/sdl_audio_driver.h>
+ #include <rex/cvar.h>
+@@ -43,6 +44,16 @@ REXCVAR_DEFINE_BOOL(audio_force_silent, false, "Audio",
+ REXCVAR_DEFINE_BOOL(audio_restore_session_volume, true, "Audio",
+                     "Unmute / restore this game's own Windows volume-mixer slider when it is muted or at 0 on the "
+                     "output device in use (checked at start and whenever the Windows default device changes)");
++// COGBox patch 117 (GitHub #425): the launcher's Audio tab. Defaults = the behaviour before.
++REXCVAR_DEFINE_STRING(audio_output_device, "", "Audio",
++                      "The sound output device, by its name as Windows lists it (exact, else any device whose name "
++                      "contains this text); empty = the system default device, followed when it changes");
++REXCVAR_DEFINE_INT32(audio_channels, 0, "Audio",
++                     "Speaker setup: 0 = automatic (5.1 when the device has more than two channels, else stereo), "
++                     "1 = mono, 2 = stereo, 6 = 5.1 surround, 8 = 7.1 surround");
++REXCVAR_DEFINE_BOOL(audio_night_mode, false, "Audio",
++                    "Night mode: a gentle compressor on the game's sound so quiet dialogue stays clear at a low volume "
++                    "and loud moments are softer (4:1 above -30 dBFS, +9 dB, limited at -1 dBFS)");
+ 
+ namespace {
+ #ifdef _WIN32
+@@ -74,7 +85,7 @@ struct EndpointEnumerator {
+   EndpointEnumerator& operator=(const EndpointEnumerator&) = delete;
+ };
+ 
+-std::wstring CheckDefaultEndpointSession(bool inspect) {
++std::wstring CheckDefaultEndpointSession(bool inspect, bool named_device = false) {
+   std::wstring id_out;
+   thread_local EndpointEnumerator holder;
+   IMMDeviceEnumerator* en = holder.Get();
+@@ -119,7 +130,8 @@ std::wstring CheckDefaultEndpointSession(bool inspect) {
+                            : (REXCVAR_GET(audio_restore_session_volume) ? " - restoring it failed" : " - left as it is"));
+     }
+     {
+-      REXAPU_INFO("audio: Windows default output: device volume {}%{}, this game's mixer slider {}%{}",
++      REXAPU_INFO("audio: Windows default output{}: device volume {}%{}, this game's mixer slider {}%{}",
++                  named_device ? " (not the device in use: --audio_output_device)" : "",
+                   static_cast<int>(dev_vol * 100.0f + 0.5f), dev_mute ? " (device MUTED)" : "",
+                   static_cast<int>(app_vol * 100.0f + 0.5f), app_mute ? " (muted)" : "");
+     }
+@@ -162,16 +174,31 @@ bool SDLAudioDriver::OpenSdlOutput([[maybe_unused]] const char* driver) {
+   }
+   sdl_initialized_ = true;
+ 
++  // Patch 117 (GitHub #425): --audio_channels decides what is submitted. 0 = as before: 5.1, or stereo when the device
++  // has two channels or fewer. 1 / 2 submit the stereo fold from the start (1 as centred mono, the same on both sides);
++  // 6 / 8 keep 5.1 / 7.1 whatever the device reports (SDL mixes it down for a device with fewer channels).
++  int want_channels = REXCVAR_GET(audio_channels);
++  if (want_channels != 0 && want_channels != 1 && want_channels != 2 && want_channels != 6 && want_channels != 8) {
++    static std::atomic<bool> logged{false};
++    if (!logged.exchange(true))
++      REXAPU_WARN("audio: --audio_channels={} is not 0, 1, 2, 6 or 8 - automatic is used", want_channels);
++    want_channels = 0;
++  }
++  mono_ = want_channels == 1;
++  const SDL_AudioDeviceID chosen = ChosenPlaybackDevice();
++  named_device_ = chosen != 0;
++  named_id_ = chosen;
++  const SDL_AudioDeviceID open_id = chosen ? chosen : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
++
+   SDL_AudioSpec desired_spec = {};
+   SDL_AudioSpec obtained_spec = {};
+   desired_spec.freq = frame_frequency_;
+   desired_spec.format = SDL_AUDIO_F32LE;
+-  desired_spec.channels = frame_channels_;
+-  sdl_device_channels_ = frame_channels_;
++  desired_spec.channels = want_channels == 0 ? static_cast<int>(frame_channels_) : std::max(want_channels, 2);
++  sdl_device_channels_ = static_cast<uint8_t>(desired_spec.channels);
+   // r37: the stream is published to sdl_stream_ only once it plays (SubmitFrame on the game thread reads it); until then
+   // it is this function's own, and every failure below destroys it here
+-  SDL_AudioStream* stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec,
+-                                                      SDLCallback, this);
++  SDL_AudioStream* stream = SDL_OpenAudioDeviceStream(open_id, &desired_spec, SDLCallback, this);
+   auto fail = [&stream]() { if (stream) { SDL_DestroyAudioStream(stream); stream = nullptr; } return false; };
+   if (!stream) {
+     if (log_failures_) REXAPU_ERROR("SDL_OpenAudioDeviceStream() failed: {}", SDL_GetError());
+@@ -191,13 +218,13 @@ bool SDLAudioDriver::OpenSdlOutput([[maybe_unused]] const char* driver) {
+ 
+   // A 1-channel device gets the stereo fold too, then SDL collapses to mono.
+   // Handing it a 6ch stream instead would use SDL's own downmix.
+-  if (obtained_spec.channels <= 2) {
++  // Patch 117: only for the automatic speaker setup (a chosen one is kept as it is).
++  if (want_channels == 0 && obtained_spec.channels <= 2) {
+     SDL_DestroyAudioStream(stream);
+     stream = nullptr;
+     desired_spec.channels = 2;
+     sdl_device_channels_ = 2;
+-    stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec,
+-                                       SDLCallback, this);
++    stream = SDL_OpenAudioDeviceStream(open_id, &desired_spec, SDLCallback, this);
+     if (!stream) {
+       if (log_failures_) REXAPU_ERROR("SDL_OpenAudioDeviceStream() stereo fallback failed: {}", SDL_GetError());
+       return false;
+@@ -213,9 +240,11 @@ bool SDLAudioDriver::OpenSdlOutput([[maybe_unused]] const char* driver) {
+   // first thing worth knowing when a report says the balance is wrong on one
+   // speaker setup and right on another.
+   const char* device_name = SDL_GetAudioDeviceName(sdl_device);
+-  REXAPU_INFO("audio endpoint '{}': {} ch, {} Hz, format 0x{:04X}; submitting {} ch",
+-              device_name ? device_name : "?", obtained_spec.channels, obtained_spec.freq,
+-              static_cast<uint32_t>(obtained_spec.format), static_cast<int>(sdl_device_channels_));
++  REXAPU_INFO("audio endpoint '{}'{}: {} ch, {} Hz, format 0x{:04X}; submitting {} ch{}{}",
++              device_name ? device_name : "?", named_device_ ? " (--audio_output_device)" : "",
++              obtained_spec.channels, obtained_spec.freq, static_cast<uint32_t>(obtained_spec.format),
++              static_cast<int>(sdl_device_channels_), mono_ ? " (mono)" : "",
++              want_channels != 0 ? " (--audio_channels)" : "");
+ 
+   if (!SDL_ResumeAudioDevice(sdl_device)) {
+     if (log_failures_) REXAPU_ERROR("SDL_ResumeAudioDevice() failed: {}", SDL_GetError());
+@@ -226,6 +255,60 @@ bool SDLAudioDriver::OpenSdlOutput([[maybe_unused]] const char* driver) {
+   return true;
+ }
+ 
++// Patch 117 (GitHub #425): the device --audio_output_device names - its exact name, else the first whose name contains
++// the text (any case), as the launcher saves the name SDL lists. Not found (unplugged, renamed): the default device, and
++// the names there are go to the log once.
++SDL_AudioDeviceID SDLAudioDriver::ChosenPlaybackDevice() {
++  const std::string want = REXCVAR_GET(audio_output_device);
++  if (want.empty() || skip_named_device_) return 0;
++  int count = 0;
++  SDL_AudioDeviceID* ids = SDL_GetAudioPlaybackDevices(&count);
++  std::vector<std::string> names;
++  std::vector<SDL_AudioDeviceID> listed;
++  for (int i = 0; ids && i < count; ++i) {
++    const char* name = SDL_GetAudioDeviceName(ids[i]);
++    if (!name) continue;
++    names.push_back(name);
++    listed.push_back(ids[i]);
++  }
++  SDL_free(ids);
++  const int at = MatchDeviceName(want, names);
++  if (at >= 0) return listed[static_cast<size_t>(at)];
++  static std::atomic<bool> logged{false};
++  if (!logged.exchange(true)) {
++    std::string all;
++    for (const std::string& n : names) all += (all.empty() ? "'" : ", '") + n + "'";
++    REXAPU_WARN("audio: --audio_output_device '{}' not found - using the system default device (devices: {})", want,
++                all.empty() ? "none" : all);
++  }
++  return 0;
++}
++
++// Patch 117: a device chosen by name that is unplugged during play. SDL never moves its stream (as it does the default
++// device's): the stream runs on silently and the device drops out of SDL's list, so the list is checked in patch 66's
++// 5 s slot. Gone: the stream and SDL's audio are closed and opened again on the default device for the rest of this
++// run (patch 66's following of the Windows default comes back with it); if that fails, the silent sink takes over.
++// On the game thread, in SubmitFrame; the SDL callback stops with the stream, and frames wait in frames_queued_.
++void SDLAudioDriver::CheckNamedDevice() {
++  int count = 0;
++  SDL_AudioDeviceID* ids = SDL_GetAudioPlaybackDevices(&count);
++  bool listed = false;
++  for (int i = 0; ids && i < count; ++i) listed = listed || ids[i] == named_id_;
++  SDL_free(ids);
++  if (listed) return;
++  REXAPU_WARN("audio: the output device chosen with --audio_output_device is gone - using the system default device");
++  CloseSdlOutput();  // sdl_stream_ to nullptr and destroyed, then SDL's audio quit (initialised for that stream)
++  skip_named_device_ = true;
++  if (TryOpenSdl(false)) {
++#ifdef _WIN32
++    default_endpoint_id_ = CheckDefaultEndpointSession(true);
++#endif
++    return;
++  }
++  if (silent_thread_.joinable()) silent_thread_.join();  // a sink that handed over to SDL earlier has returned
++  StartSilentSink(true);
++}
++
+ void SDLAudioDriver::CloseSdlOutput() {
+   if (SDL_AudioStream* stream = sdl_stream_.exchange(nullptr)) SDL_DestroyAudioStream(stream);
+   if (sdl_initialized_) {
+@@ -314,7 +397,7 @@ bool SDLAudioDriver::Initialize() {
+   }
+   if (TryOpenSdl(true)) {
+ #ifdef _WIN32
+-    default_endpoint_id_ = CheckDefaultEndpointSession(true);
++    default_endpoint_id_ = CheckDefaultEndpointSession(true, named_device_);
+ #endif
+     return true;
+   }
+@@ -341,20 +424,32 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
+   // Patch 66 (#203): about every 5 s (1000 frames of 256 samples at 48 kHz), notice a new Windows default output
+   // device - SDL has already moved the stream to it - and check this game's mixer slider there too.
+   // r37: the stream is read once (the silent sink may hand over to a new one); frames are only counted while one plays
++  // Patch 117: while a device chosen by name plays, the stream stays on it - the slot checks that the device is still
++  // there instead (CheckNamedDevice; on every platform, below).
+   SDL_AudioStream* const live_stream = sdl_stream_.load();
+   if (live_stream && ++endpoint_check_frames_ >= 1000) {
+     endpoint_check_frames_ = 0;
+-    const std::wstring id = CheckDefaultEndpointSession(false);
+-    if (!id.empty() && id != default_endpoint_id_) {
+-      const char* name = SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(live_stream));
+-      SDL_AudioSpec spec = {};
+-      const bool have = SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(live_stream), &spec, nullptr);
+-      REXAPU_INFO("audio: Windows default output device changed; the stream follows it, now '{}': {} ch, {} Hz", name ? name : "?",
+-                  have ? spec.channels : 0, have ? spec.freq : 0);
+-      CheckDefaultEndpointSession(true);
+-      default_endpoint_id_ = id;
++    if (named_device_) {
++      CheckNamedDevice();
++    } else {
++      const std::wstring id = CheckDefaultEndpointSession(false);
++      if (!id.empty() && id != default_endpoint_id_) {
++        const char* name = SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(live_stream));
++        SDL_AudioSpec spec = {};
++        const bool have = SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(live_stream), &spec, nullptr);
++        REXAPU_INFO("audio: Windows default output device changed; the stream follows it, now '{}': {} ch, {} Hz",
++                    name ? name : "?", have ? spec.channels : 0, have ? spec.freq : 0);
++        CheckDefaultEndpointSession(true);
++        default_endpoint_id_ = id;
++      }
+     }
+   }
++#else
++  SDL_AudioStream* const live_stream = sdl_stream_.load();
++  if (live_stream && named_device_ && ++endpoint_check_frames_ >= 1000) {
++    endpoint_check_frames_ = 0;
++    CheckNamedDevice();  // patch 117
++  }
+ #endif
+ 
+   static uint32_t sdl_submit_count = 0;
+@@ -407,6 +502,10 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
+   const StereoFold fold = GetStereoFold();
+   const SurroundMix mix = GetSurroundMix();
+   const float gain = GetOutputGain();
++  // Patch 117: night mode is read on every callback (the in-game menu can switch it); off = the mix untouched
++  const bool night = REXCVAR_GET(audio_night_mode);
++  if (night && !driver->night_mode_on_) driver->night_mode_.Reset();
++  driver->night_mode_on_ = night;
+   while (additional_amount > 0) {
+     static uint32_t sdl_callback_count = 0;
+     std::unique_lock<std::mutex> guard(driver->frames_mutex_);
+@@ -431,15 +530,25 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
+           case 2:
+             conversion::sequential_6_BE_to_interleaved_2_LE(data, buffer, channel_samples_, fold,
+                                                             gain);
++            if (driver->mono_) FoldStereoToMono(data, channel_samples_);  // patch 117
+             break;
+           case 6:
+             conversion::sequential_6_BE_to_interleaved_6_LE(data, buffer, channel_samples_, mix,
+                                                             gain);
+             break;
++          case 8:  // patch 117: the 5.1 mix on a 7.1 layout (data has room for 8 channels)
++            conversion::sequential_6_BE_to_interleaved_6_LE(data, buffer, channel_samples_, mix,
++                                                            gain);
++            Expand51To71(data, channel_samples_);
++            break;
+           default:
+             assert_unhandled_case(driver->sdl_device_channels_);
+             break;
+         }
++        if (night) {
++          driver->night_mode_.Process(data, channel_samples_, driver->sdl_device_channels_,
++                                      static_cast<float>(frame_frequency_));
++        }
+       }
+       if (!SDL_PutAudioStreamData(stream, data, len)) {
+         REXAPU_ERROR("SDL_PutAudioStreamData() failed: {}", SDL_GetError());
+diff --git a/tests/unit/CMakeLists.txt b/tests/unit/CMakeLists.txt
+index 21f28ca..3a5f695 100644
+--- a/tests/unit/CMakeLists.txt
++++ b/tests/unit/CMakeLists.txt
+@@ -19,6 +19,7 @@ add_executable(unit_tests
+     input/input_assignment_test.cpp
+     input/guide_for_game_test.cpp
+     input/tap_latch_test.cpp
++    audio/output_mix_test.cpp
+     codegen/codegen_writer_test.cpp
+     codegen/output_partition_test.cpp
+     codegen/output_stamp_test.cpp
+diff --git a/tests/unit/audio/output_mix_test.cpp b/tests/unit/audio/output_mix_test.cpp
+new file mode 100644
+index 0000000..8b5e81e
+--- /dev/null
++++ b/tests/unit/audio/output_mix_test.cpp
+@@ -0,0 +1,143 @@
++// COGBox SDK patch 117 (GitHub #425): the speaker setup's mono and 7.1 mixes and the night mode compressor.
++#include <catch2/catch_test_macros.hpp>
++
++#include <algorithm>
++#include <cmath>
++#include <string>
++#include <vector>
++
++#include <rex/audio/output_mix.h>
++
++using rex::audio::Expand51To71;
++using rex::audio::MatchDeviceName;
++using rex::audio::FoldStereoToMono;
++using rex::audio::NightMode;
++
++namespace {
++constexpr float kRate = 48000.0f;
++
++bool Near(float a, float b, float tol = 1e-5f) { return std::fabs(a - b) <= tol; }
++
++float Peak(const std::vector<float>& v) {
++  float p = 0.0f;
++  for (float x : v) p = std::max(p, std::fabs(x));
++  return p;
++}
++
++// `frames` stereo frames of a 1 kHz sine at `level` (linear peak) on both channels
++std::vector<float> Sine(size_t frames, float level) {
++  std::vector<float> v(frames * 2);
++  for (size_t i = 0; i < frames; ++i) {
++    const float s = level * std::sin(2.0f * 3.14159265f * 1000.0f * static_cast<float>(i) / kRate);
++    v[i * 2] = s;
++    v[i * 2 + 1] = s;
++  }
++  return v;
++}
++
++// the night mode's output for a steady sine, after it has settled (1 s in), in 256-frame blocks as the callback
++std::vector<float> Settled(NightMode& n, float level) {
++  const size_t frames = 256 * 188;
++  std::vector<float> v = Sine(frames, level);
++  for (size_t at = 0; at < frames; at += 256) n.Process(v.data() + at * 2, 256, 2, kRate);
++  return std::vector<float>(v.end() - 9600, v.end());  // the last 100 ms
++}
++}  // namespace
++
++TEST_CASE("Mono puts half of each side on both channels", "[audio]") {
++  std::vector<float> v = {1.0f, 0.0f, 0.5f, 0.5f, -0.25f, 0.75f};
++  FoldStereoToMono(v.data(), 3);
++  CHECK(Near(v[0], 0.5f));
++  CHECK(Near(v[1], 0.5f));
++  CHECK(Near(v[2], 0.5f));
++  CHECK(Near(v[3], 0.5f));
++  CHECK(Near(v[4], 0.25f));
++  CHECK(Near(v[5], 0.25f));
++}
++
++TEST_CASE("7.1 keeps the front, centre and LFE and spreads each surround over back and side", "[audio]") {
++  const size_t frames = 5;
++  std::vector<float> v(frames * 8, 99.0f);
++  for (size_t i = 0; i < frames; ++i)
++    for (size_t c = 0; c < 6; ++c) v[i * 6 + c] = static_cast<float>(i * 10 + c + 1) / 100.0f;
++  Expand51To71(v.data(), frames);
++  const float k = 0.70710678f;
++  for (size_t i = 0; i < frames; ++i) {
++    const float* d = v.data() + i * 8;
++    auto in = [i](size_t c) { return static_cast<float>(i * 10 + c + 1) / 100.0f; };
++    CHECK(Near(d[0], in(0)));
++    CHECK(Near(d[1], in(1)));
++    CHECK(Near(d[2], in(2)));
++    CHECK(Near(d[3], in(3)));
++    CHECK(Near(d[4], in(4) * k));
++    CHECK(Near(d[5], in(5) * k));
++    CHECK(Near(d[6], in(4) * k));
++    CHECK(Near(d[7], in(5) * k));
++    // the surround power is kept: two speakers at -3 dB
++    CHECK(Near(d[4] * d[4] + d[6] * d[6], in(4) * in(4)));
++  }
++}
++
++TEST_CASE("Night mode lifts quiet sound and lowers loud sound", "[audio]") {
++  NightMode quiet, loud;
++  const float quiet_in = NightMode::DbToGain(-36.0f), loud_in = NightMode::DbToGain(-1.0f);
++  const float quiet_out = Peak(Settled(quiet, quiet_in));
++  const float loud_out = Peak(Settled(loud, loud_in));
++  // below the threshold (-30 dBFS): the makeup gain only (+9 dB), within the peak follower's ripple
++  CHECK(std::fabs(20.0f * std::log10(quiet_out / quiet_in) - NightMode::kMakeupDb) < 0.5f);
++  // above it: 4:1 - from -1 dBFS, 29 dB over, 21.75 dB less, +9 dB makeup = about -13.75 dBFS
++  CHECK(std::fabs(20.0f * std::log10(loud_out) - (-13.75f)) < 1.0f);
++  // 35 dB apart going in, about 13 coming out
++  const float range = 20.0f * std::log10(loud_out / quiet_out);
++  CHECK(range > 10.0f);
++  CHECK(range < 16.0f);
++}
++
++TEST_CASE("Night mode never goes past -1 dBFS, even on a sudden full-scale hit", "[audio]") {
++  NightMode n;
++  std::vector<float> v = Sine(4800, NightMode::DbToGain(-40.0f));  // quiet: the gain is at its highest
++  n.Process(v.data(), 4800, 2, kRate);
++  std::vector<float> hit(512 * 2);
++  for (size_t i = 0; i < hit.size(); ++i) hit[i] = (i / 2) % 2 ? -1.0f : 1.0f;
++  n.Process(hit.data(), 512, 2, kRate);
++  CHECK(Peak(hit) <= NightMode::kCeiling + 1e-6f);
++  CHECK(Peak(hit) > 0.5f);  // limited, not silenced
++}
++
++TEST_CASE("Night mode treats all channels alike and Reset starts it afresh", "[audio]") {
++  NightMode a, b;
++  std::vector<float> one = {0.9f, 0.1f, 0.9f, 0.1f};
++  std::vector<float> two = {0.9f, 0.1f, 0.9f, 0.1f};
++  a.Process(one.data(), 2, 2, kRate);
++  b.Process(two.data(), 2, 2, kRate);
++  CHECK(one == two);
++  CHECK(Near(one[0] / one[1], 9.0f, 1e-3f));  // one gain for both channels: the balance stays
++  a.Reset();
++  std::vector<float> again = {0.9f, 0.1f, 0.9f, 0.1f};
++  a.Process(again.data(), 2, 2, kRate);
++  CHECK(again == two);
++}
++
++TEST_CASE("Night mode decays to exactly zero in silence (no denormals)", "[audio]") {
++  NightMode n;
++  std::vector<float> v = Sine(4800, 0.5f);
++  n.Process(v.data(), 4800, 2, kRate);
++  std::vector<float> silence(48000 * 2, 0.0f);  // 1 s: the 200 ms release takes the follower far below 1e-9
++  n.Process(silence.data(), 48000, 2, kRate);
++  std::vector<float> one = {1e-12f, 1e-12f};
++  n.Process(one.data(), 1, 2, kRate);
++  CHECK(Peak(silence) == 0.0f);
++  CHECK(std::fabs(one[0]) < 1e-10f);
++}
++
++TEST_CASE("The saved output device name finds its device", "[audio]") {
++  const std::vector<std::string> names = {"Speakers (USB Audio)", "Speakers (Realtek(R) Audio)", "Headset Earphone (USB Audio)",
++                                          "Speakers"};
++  CHECK(MatchDeviceName("Speakers (Realtek(R) Audio)", names) == 1);    // the same name
++  CHECK(MatchDeviceName("Speakers", names) == 3);                       // the same name beats an earlier one containing it
++  CHECK(MatchDeviceName("headset earphone", names) == 2);               // part of a name, any case
++  CHECK(MatchDeviceName("usb audio", names) == 0);                      // the first that contains it
++  CHECK(MatchDeviceName("Monitor (NVIDIA High Definition Audio)", names) == -1);   // unplugged: the default device
++  CHECK(MatchDeviceName("", names) == -1);                              // empty: the default device
++  CHECK(MatchDeviceName("Speakers", {}) == -1);
++}

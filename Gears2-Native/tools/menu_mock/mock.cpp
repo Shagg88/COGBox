@@ -62,8 +62,8 @@ int main(int argc, char** argv) {
       else if (k == "live") o.live = true;
       else if (k == "choices") { size_t a = 0; for (;;) { size_t b = v.find('|', a); o.choices.push_back(v.substr(a, b - a)); if (b == std::string::npos) break; a = b + 1; } } }
     if (mf) fclose(mf); }
-  { static const char* const kOrder[] = {"Display", "Graphics", "Controls", "Gameplay", "Achievements"};   // as ingame_menu.cpp
-    auto rank = [](const std::string& t) { for (int i = 0; i < 5; ++i) if (t == kOrder[i]) return i; return 5; };
+  { static const char* const kOrder[] = {"Display", "Graphics", "Controls", "Gameplay", "Audio", "Achievements"};   // as ingame_menu.cpp
+    auto rank = [](const std::string& t) { for (int i = 0; i < 6; ++i) if (t == kOrder[i]) return i; return 6; };
     std::stable_sort(tabs.begin(), tabs.end(), [&](const std::string& a, const std::string& b) { return rank(a) < rank(b); }); }
   const std::string want = argc > 7 ? argv[7] : "Display";
   static int tab = 0; for (size_t t = 0; t < tabs.size(); ++t) if (tabs[t] == want) tab = int(t);
