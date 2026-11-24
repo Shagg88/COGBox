@@ -1069,8 +1069,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         textLastFrame = io.WantTextInput;
         // job 526: Start (Options) or Esc on the library screen asks to close COGBox (asked after this frame's drawing, so
         // the same Esc doesn't also answer it)
-        if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
-            ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
+        if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+            if (ask_before_closing(a.ini)) ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
+            else a.quit = true;   // GitHub #443: the question turned off (quitAskable: never while a game runs)
+        }
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 8, 8, 10, 255);
         SDL_RenderClear(ren);

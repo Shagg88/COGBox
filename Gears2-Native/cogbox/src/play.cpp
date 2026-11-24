@@ -282,11 +282,16 @@ static void write_menu_file(App &a, int g, gs::Version ver, const std::string &l
                 if (o.id == "AO") return i <= 2;   // 0.6.7: Off is offered again (GitHub #406)
                 if (o.id == "AAMode" || o.id == "Resolution") return i != 4;
                 if (o.id == "FrameGen") return (int)i != gs::k_fgDropped;   // review 20 Nov: the dropped frame generation too
+                if (o.id == "Players") return (int)i == (int)v || gs::choice_available(o, G, (int)i).ok;   // GitHub #443: not 3 / 4 where refused
                 return true;
             };
             for (size_t i = 0; i < choices.size(); i++)
                 t += (i ? "|" : "") + (!offered(i) ? std::string() : one_line(o.id == "Monitor" ? choices[i] : tr(choices[i])));
             t += "\r\n";
+            // GitHub #443: the order the launcher lists them in (Render resolution and Window size by size), as indexes;
+            // the values stay the indexes. A menu without order= support lists them in index order as before.
+            const std::string ord = gs::menu_order_line(o, choices.size());
+            if (!ord.empty()) t += "order=" + ord + "\r\n";
         }
         if (auto it = live.find(o.id); it != live.end())
             for (const std::string &l : it->second) t += "live=" + l + "\r\n";

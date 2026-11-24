@@ -8,6 +8,7 @@
 // extra (lines split by |), cards (the graphics cards the PC has, a/b - 0.6.2), and any option id (the setting's value; for
 // a text option such as GraphicsCard its text).
 #include "../src/gears_settings.h"
+#include "../src/util.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -1151,6 +1152,103 @@ int summary() {
             if (audio_device_present(e, "Headset") || audio_device_present(e, "")) bad("present: part of a name or empty");
             e.audio_devices.clear();
             if (audio_device_present(e, headset)) bad("present: an empty list");
+        }
+    }
+    // GitHub #443: Players 3 / 4 greyed where the game refuses them (Gears 1-3: two), a saved 4 played as 2 with a note;
+    // Judgment keeps 3 / 4 (not checked yet, "Untested")
+    {
+        auto bad = [&](const std::string& what) { std::cout << "FAIL #443 players: " << what << "\n"; ++fails; };
+        for (int g = 0; g < kGameCount; ++g) {
+            const Game game = static_cast<Game>(g);
+            const Option* o = find_option(game, "Players");
+            if (!o) { bad("no Players option in game " + std::to_string(g)); continue; }
+            const int max = game == Game::Judgment ? 4 : 2;
+            if (max_local_players(game) != max) bad("max for game " + std::to_string(g));
+            for (int i = 0; i < 4; ++i) {
+                const Availability ca = choice_available(*o, game, i);
+                if (ca.ok != (i < max) || (!ca.ok && ca.why.empty())) bad("choice " + std::to_string(i) + " game " + std::to_string(g));
+            }
+            Environment e; e.update_ready = true;
+            e.cap.exe_has = [](const std::string&) { return true; };
+            e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = [](const std::string&) { return false; };
+            e.gamertags[0] = "Two"; e.gamertags[1] = "Three"; e.gamertags[2] = "Four";
+            Store st; Settings s = st.view(game, e);
+            s.set("Players", 3);
+            std::vector<std::string> notes;
+            const auto args = build_args(game, effective_version(game, s, e), s, e, &notes);
+            auto has = [&](const std::string& x) { return std::find(args.begin(), args.end(), x) != args.end(); };
+            bool noted = false, tag3 = false;
+            for (const auto& n : notes) if (n.find("local players") != std::string::npos) noted = true;
+            for (const auto& x : args) if (x.rfind("--user_gamertag3=", 0) == 0) tag3 = true;
+            if (has("--local_players=4") != (max == 4) || has("--local_players=2") != (max == 2) || noted != (max == 2) || tag3 != (max == 4))
+                bad("saved 4 players, game " + std::to_string(g));
+            // the two-player split layout follows the count played (a saved 4 in Gears 3 is played as 2)
+            const Option* sl = find_option(game, "SplitLayout");
+            if (sl && game != Game::Judgment && can(game, sl->feature, effective_version(game, s, e), e).ok &&
+                !available(*sl, game, effective_version(game, s, e), s, e).ok) bad("split layout with a saved 4, game " + std::to_string(g));
+            s.set("Players", 1);
+            const auto two = build_args(game, effective_version(game, s, e), s, e);
+            if (std::find(two.begin(), two.end(), "--local_players=2") == two.end()) bad("2 players, game " + std::to_string(g));
+        }
+    }
+    // GitHub #443: the in-game menu's order= line - Render resolution and Window size by size, as the launcher lists them
+    {
+        auto bad = [&](const std::string& what) { std::cout << "FAIL #443 menu order: " << what << "\n"; ++fails; };
+        const Option* res = find_option(Game::Gears2, "Resolution");
+        const Option* win = find_option(Game::Gears2, "WindowSize");
+        const Option* fov = find_option(Game::Gears2, "PromptStyle");
+        if (!res || !win || !fov) bad("options missing");
+        else {
+            if (res->choices.size() != 8 || menu_order_line(*res, res->choices.size()) != "0|6|7|5|1|2|3") bad("Resolution: " + menu_order_line(*res, res->choices.size()));
+            if (win->choices.size() != 7 || menu_order_line(*win, win->choices.size()) != "0|1|6|2|3|4|5") bad("WindowSize: " + menu_order_line(*win, win->choices.size()));
+            if (!menu_order_line(*fov, fov->choices.size()).empty()) bad("PromptStyle has an order line");
+            if (choice_order(*res, res->choices.size()) != std::vector<int>({ 0, 6, 7, 5, 1, 2, 3 })) bad("page order");
+            // the order holds the indexes (the saved values): 720p, 768p, 900p, 1080p, 1440p, 4K, 5K
+            const std::vector<int> ord = choice_order(*res, res->choices.size());
+            if (res->choices[size_t(ord[3])].find("1080") == std::string::npos) bad("1080p not fourth: " + res->choices[size_t(ord[3])]);
+        }
+    }
+    // GitHub #443: "Ask before closing COGBox" - on unless [Launcher] AskBeforeClosing=0
+    {
+        Ini ini;
+        if (!ask_before_closing(ini)) { std::cout << "FAIL #443 ask before closing: default off\n"; ++fails; }
+        ini.seti("Launcher", "AskBeforeClosing", 0);
+        if (ask_before_closing(ini)) { std::cout << "FAIL #443 ask before closing: 0 still asks\n"; ++fails; }
+        ini.seti("Launcher", "AskBeforeClosing", 1);
+        if (!ask_before_closing(ini)) { std::cout << "FAIL #443 ask before closing: 1 doesn't ask\n"; ++fails; }
+    }
+    // GitHub #443: Button prompt style sent with a controller only (it was sent with Keyboard and mouse on only); with
+    // keyboard and mouse the Xbox style gets no key caps laid over the game's prompts
+    {
+        auto bad = [&](const std::string& what) { std::cout << "FAIL #443 prompt style: " << what << "\n"; ++fails; };
+        for (int g = 0; g < kGameCount; ++g) {
+            const Game game = static_cast<Game>(g);
+            Environment e; e.update_ready = true; e.prompt_dir = "C:\\p";
+            e.cap.exe_has = [](const std::string&) { return true; };
+            e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = [](const std::string&) { return false; };
+            static const char* const k[5] = { "", "original", "playstation", "switch", "steamdeck" };
+            for (int mnk = 0; mnk <= 1; ++mnk) for (int ps = 0; ps <= 4; ++ps) {
+                Store st; Settings s = st.view(game, e);
+                s.set("Mnk", mnk); s.set("PromptStyle", ps);
+                const auto args = build_args(game, effective_version(game, s, e), s, e);
+                int sent = 0; bool overlay = false;
+                for (const auto& x : args) {
+                    if (x.rfind("--gow_button_prompts=", 0) == 0) { ++sent; if (ps == 0 || x != std::string("--gow_button_prompts=") + k[ps]) bad("value " + x); }
+                    if (x.rfind("--gow2_texture_overlay_dir=", 0) == 0) overlay = true;
+                }
+                if (sent != (ps > 0 ? 1 : 0)) bad("sent " + std::to_string(sent) + " game " + std::to_string(g) + " mnk " + std::to_string(mnk) + " style " + std::to_string(ps));
+                if (overlay != (mnk && ps != 1 && game != Game::Gears1)) bad("key caps game " + std::to_string(g) + " mnk " + std::to_string(mnk) + " style " + std::to_string(ps));
+            }
+            // in-game menu from PlayStation: Xbox live with a controller only; with keyboard and mouse it drops the key
+            // caps, so it waits for the restart (Gears 1 has no launcher key caps: live there too)
+            for (int mnk = 0; mnk <= 1; ++mnk) {
+                Store st; Settings s = st.view(game, e);
+                s.set("Mnk", mnk); s.set("PromptStyle", 2);
+                const auto live = live_lines(game, effective_version(game, s, e), s, e);
+                bool xbox = false, deck = false;
+                if (live.count("PromptStyle")) for (const auto& l : live.at("PromptStyle")) { xbox |= l.rfind("1:", 0) == 0; deck |= l.rfind("4:", 0) == 0; }
+                if (!deck || xbox != (!mnk || game == Game::Gears1)) bad("live lines game " + std::to_string(g) + " mnk " + std::to_string(mnk));
+            }
         }
     }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");

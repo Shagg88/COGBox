@@ -96,6 +96,7 @@ void Legend(ImDrawList* dl, const Look& L, const std::vector<LegendItem>& items)
 struct Row {
   std::string id, label, kind, tip, why;   // kind: bool / choice / int / float
   const std::vector<std::string>* choices = nullptr;
+  const std::vector<int>* order = nullptr;  // GitHub #443: the indexes in list order (null / empty / bad: index order)
   double* value = nullptr;                  // edited in place
   double min = 0, max = 1, step = 1;
   int decimals = 0;

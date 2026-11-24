@@ -1270,7 +1270,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "Ssil" && s.i("AO") != 2 && s.i("AO") != 3) {                    // SSIL runs on XeGTAO's depth pyramid
         a.ok = false; a.why = "Needs Ambient occlusion: On."; return a;
     }
-    else if (o.id == "SplitLayout") on = s.i("Players") == 1;                       // GitHub #136: 2 players only
+    else if (o.id == "SplitLayout") on = std::min(s.i("Players"), max_local_players(g) - 1) == 1;   // GitHub #136: 2 players only (#443: as played)
     else if (o.id == "PeerIps") on = s.b("SystemLink");                              // GitHub #229
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
     else if (o.id == "AspectRatio") on = !s.b("Ultrawide");                          // 0.4.9: 4:3 not with ultrawide
@@ -1287,7 +1287,35 @@ Availability choice_available(const Option& o, Game g, int index) {
     if (o.id == "FpsMode" && index == 3 && (g == Game::Judgment || g == Game::Gears1)) { a.ok = false; a.why = not_yet(static_cast<int>(g), "game's own counter"); }   // PS1 267, 475
     if (o.id == "Lang" && g == Game::Gears1 && !gears1_lang(index)) { a.ok = false; a.why = "Not in Gears 1 - it would show English."; }
     if (o.id == "AAMode" && index == 5 && g != Game::Gears2 && g != Game::Gears3) { a.ok = false; a.why = "Gears 2 and Gears 3 for now."; }   // notes/80 s.7
+    if (o.id == "Players" && index + 1 > max_local_players(g)) { a.ok = false; a.why = "The game allows two local players only."; }   // GitHub #443
     return a;
+}
+
+int max_local_players(Game g) {
+    // GitHub #443 (Steam Deck tester): with 3 or 4 the games refuse at their menus - Gears 1 and 2 "Only two signed-in
+    // gamer profiles can play on one Xbox 360 console" (Coalesced TwoPlayersOnly_Message), Gears 3 "Only two active
+    // players can play on one Xbox 360 console". Judgment's limit is not checked yet: its 3 and 4 stay offered (Untested).
+    return g == Game::Judgment ? 4 : 2;
+}
+
+std::vector<int> choice_order(const Option& o, size_t count) {
+    std::vector<int> ord;
+    for (int i = 0; i < static_cast<int>(count); i++) ord.push_back(i);
+    // 0.2.1: Render resolution lists 1080p in size order; the saved value is still the original index
+    if (o.id == "Resolution" && count == 8) ord = { 0, 6, 7, 5, 1, 2, 3 };   // 0.6.6: Match my monitor (4) no longer offered; #436: 768p / 900p by size
+    if (o.id == "WindowSize" && count == 7) ord = { 0, 1, 6, 2, 3, 4, 5 };   // GitHub #436: 1366 x 768 by size
+    if (o.id == "AO" && count == 5) ord = { 0, 1, 2 };   // 0.6.7: Off / Default / On (GitHub #406; 0.6.6 had dropped Off)
+    if (o.id == "AAMode" && count == 6) ord = { 0, 1, 2, 3, 5 };       // 0.6.6: choice 4 dropped
+    return ord;
+}
+
+std::string menu_order_line(const Option& o, size_t count) {
+    const std::vector<int> ord = choice_order(o, count);
+    bool plain = ord.size() == count;
+    for (size_t i = 0; plain && i < ord.size(); i++) plain = ord[i] == static_cast<int>(i);
+    std::string line;
+    if (!plain) for (size_t i = 0; i < ord.size(); i++) line += (i ? "|" : "") + std::to_string(ord[i]);
+    return line;
 }
 
 std::string tooltip_for(const Option& o, Game g, const Availability& a, const Environment& env) {
@@ -1323,7 +1351,8 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         base += "\nYour graphics card: " + (gpu.empty() ? std::string("not detected") : gpu);
     }
     if (g == Game::Judgment && o.id == "FpsMode") return not_yet(2, "game's own counter") + " " + base;   // PS1 476
-    if (g == Game::Judgment && o.id == "Players") return "Untested in Judgment. " + base;
+    if (g == Game::Judgment && o.id == "Players")   // GitHub #443: Gears 1-3 refuse a third player; Judgment's limit not checked
+        return "Untested in Judgment - 3 and 4 players may be refused by the game, as in the other three games. " + base;
     if (o.id == "SystemLink" && g != Game::Gears2 && a.ok)   // Shagg 16:07: all four games' title updates; Gears 2 tested
         return std::string("Untested in ") + (g == Game::Gears3 ? "Gears 3" : g == Game::Judgment ? "Judgment" : "Gears 1") + " - please tell us in #72. " + base;                 // PS1 477
     if (g == Game::Gears1 && o.id == "FpsMode") return not_yet(3, "game's own counter") + " " + base;
@@ -2455,7 +2484,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
     }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
-    if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
+    // GitHub #443: a saved count above what the game allows (Gears 1-3: two) is played as that many, with a note
+    const int players = std::max(0, std::min(s.i("Players"), max_local_players(g) - 1));
+    if (avail("Players") && s.i("Players") > players)
+        notes.push_back("launcher: Players " + std::to_string(s.i("Players") + 1) + " - this game allows " +
+                        std::to_string(players + 1) + " local players - started with " + std::to_string(players + 1));
+    if (avail("Players") && players > 0) a.push_back("--local_players=" + std::to_string(players + 1));
     if (g == Game::Gears2 && avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #237: press Y in game
         a.push_back("--gow2_split_vertical=true");
     else if (g == Game::Gears3 && avail("SplitLayout") && s.i("SplitLayout") == 1 && cap_exe(env, "gow3_split_vertical"))
@@ -2513,8 +2547,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }   // 0.3.5: off = not sent (the runtime's default)
     // 0.4.9 split-screen: players 2-4's names ([Profile] Gamertag2..4), only for the players this play has and only with
     // a runtime that has SDK patch 71; empty = not sent (the runtime's "Player N")
-    if (avail("Players") && s.i("Players") > 0 && cap_rt(env, "user_gamertag2"))
-        for (int k = 0; k < s.i("Players") && k < 3; k++) {
+    if (avail("Players") && players > 0 && cap_rt(env, "user_gamertag2"))
+        for (int k = 0; k < players && k < 3; k++) {
             const std::string t = clean_tag(env.gamertags[k]);
             if (!t.empty()) a.push_back("--user_gamertag" + std::to_string(k + 2) + "=" + q(t));
         }
@@ -2547,6 +2581,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     case 2: a.push_back("--gow2_fps_bar=bottom"); break;
     case 3: if (!isGJ && !isG1) a.push_back(isG3 ? "--gow3_patch_show_fps=true" : "--gow2_patch_show_fps=true"); break;
     default: break;
+    }
+    // GitHub #249: manual prompt style (Automatic = the runtime's auto, nothing passed). GitHub #443: a controller-only
+    // player's choice too - it was sent with Keyboard and mouse on only, so without it every style showed Xbox's.
+    if (s.i("PromptStyle") > 0 && s.i("PromptStyle") <= 4 && cap_exe(env, "gow_button_prompts")) {
+        static const char* const k_prompt[5] = { "auto", "original", "playstation", "switch", "steamdeck" };
+        a.push_back(std::string("--gow_button_prompts=") + k_prompt[s.i("PromptStyle")]);
     }
     // PS1 930-937: keyboard and mouse with the Gears layout
     if (s.b("Mnk")) {
@@ -2595,14 +2635,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // switches them to PlayStation / Switch / Steam / key-cap art itself; the launcher's own 4x key caps (below) are
         // still Gears 2 / 3 / Judgment only (keycaps.cpp has no Gears 1 sheet).
         // GitHub #104 with PR #117's auto button prompts: keep the pad's prompts there too (no switch to key caps).
-        // GitHub #249: manual prompt style (Automatic = the runtime's auto, nothing passed)
-        if (s.i("PromptStyle") > 0 && s.i("PromptStyle") <= 4 && cap_exe(env, "gow_button_prompts")) {
-            static const char* const k_prompt[5] = { "auto", "original", "playstation", "switch", "steamdeck" };
-            a.push_back(std::string("--gow_button_prompts=") + k_prompt[s.i("PromptStyle")]);
-        }
+        // GitHub #249: manual prompt style - sent above, with or without keyboard and mouse (GitHub #443)
         if (s.b("PadPrompts") && cap_exe(env, "gow_button_prompts_keep_pad"))
             a.push_back("--gow_button_prompts_keep_pad=true");
-        if (!isG1 && !s.b("PadPrompts") && !env.prompt_dir.empty() && cap_exe(env, "gow2_texture_overlay_dir")) {
+        // GitHub #443: the Xbox style ("original": the game's own prompts, no prompt monitor) gets no key caps either -
+        // they were laid over the game's prompts from the start, so Xbox showed the keyboard's
+        const bool xboxStyle = s.i("PromptStyle") == 1 && cap_exe(env, "gow_button_prompts");
+        if (!isG1 && !s.b("PadPrompts") && !xboxStyle && !env.prompt_dir.empty() && cap_exe(env, "gow2_texture_overlay_dir")) {
             // Job 661 (Shagg 30 Oct: "make those prompts higher resolution"): the launcher draws the key caps itself, 4x the
             // sheet's size and for the player's own keys too (job 660); without it, the shipped default-key overlays.
             std::string dir;

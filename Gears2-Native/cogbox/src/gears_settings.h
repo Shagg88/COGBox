@@ -160,8 +160,16 @@ Availability can(Game g, const std::string& feature, Version ver, const Environm
 // resolution, at least 2 screens -> monitor).
 Availability available(const Option& o, Game g, Version ver, const Settings& s, const Environment& env);
 // A single choice greyed: the FPS counter's "Game's own (column)" in Judgment / Gears 1 (PS1 267, 475), and the game
-// languages Gears 1 has no text for.
+// languages Gears 1 has no text for; Players counts the game refuses (GitHub #443).
 Availability choice_available(const Option& o, Game g, int index);
+// GitHub #443: the most local (split-screen) players the game lets play - Gears 1, 2 and 3 refuse a third ("Only two
+// signed-in gamer profiles / active players can play on one Xbox 360 console"). Judgment: not known, the option's 4.
+int max_local_players(Game g);
+// The order a choice list is shown in, as indexes (the saved value stays the index): Render resolution and Window size
+// by size, and the choices no longer offered left out. Used by the settings page and the in-game menu (order= line).
+std::vector<int> choice_order(const Option& o, size_t count);
+// The in-game menu's order= line for it ("5|0|6|..."), "" when that is the index order (play.cpp's menu file).
+std::string menu_order_line(const Option& o, size_t count);
 // Frame generation choices (FrameGen): 2-5 (NVIDIA DLSS) are not listed at all without the exe's support and NVIDIA's
 // Streamline DLLs next to it; greyed without an RTX 40 (2x) / RTX 50 (3x, 4x, dynamic) card. 1 (AMD) greyed without its DLL.
 bool dlss_fg_present(const Environment& env);

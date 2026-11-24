@@ -41,6 +41,8 @@ struct Ini {
     void clear_section(const std::string &sec);
     void remove_section(const std::string &sec);   // 0.6.3: the [sec] line too, and everything under it
 };
+// GitHub #443: [Launcher] AskBeforeClosing (default 1) - EXIT, Esc and Start on the library ask "Close COGBox?" first
+inline bool ask_before_closing(const Ini &ini) { return ini.geti("Launcher", "AskBeforeClosing", 1) != 0; }
 
 // Review r369 F1: a file's or folder's real path (links followed; "" if it can't be opened), and whether child_path is
 // really inside real_parent (its real path is real_parent\\name) rather than a link to somewhere else - also a Wine Unix

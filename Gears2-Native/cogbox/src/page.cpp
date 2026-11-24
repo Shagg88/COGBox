@@ -1102,12 +1102,8 @@ static void option_row(App &a, int g, const gs::Option &o)
             preview += std::string(" ") + tr("(Proton runs Vulkan)");
         if (ImGui::BeginCombo("##v", preview.c_str())) {
             // 0.2.1: Render resolution lists 1080p in size order; the saved value is still the original index
-            std::vector<int> ord;
-            for (int i = 0; i < (int)items.size(); i++) ord.push_back(i);
-            if (o.id == "Resolution" && items.size() == 8) ord = { 0, 6, 7, 5, 1, 2, 3 };   // 0.6.6: Match my monitor (4) no longer offered; #436: 768p / 900p by size
-            if (o.id == "WindowSize" && items.size() == 7) ord = { 0, 1, 6, 2, 3, 4, 5 };   // GitHub #436: 1366 x 768 by size
-            if (o.id == "AO" && items.size() == 5) ord = { 0, 1, 2 };   // 0.6.7: Off / Default / On (GitHub #406; 0.6.6 had dropped Off)
-            if (o.id == "AAMode" && items.size() == 6) ord = { 0, 1, 2, 3, 5 };       // 0.6.6: choice 4 dropped
+            // (GitHub #443: the same order in the in-game menu - gs::choice_order)
+            const std::vector<int> ord = gs::choice_order(o, items.size());
             for (int i : ord) {
                 if (o.id == "FrameGen" && i != idx && gs::framegen_choice_hidden(i, a.env[g])) continue;   // NVIDIA DLSS FG: only with its DLLs
                 gs::Availability ca = gs::choice_available(o, G, i);
@@ -1887,6 +1883,10 @@ static void about_tab(App &a, int g)
     bool chk = a.ini.geti("Updates", "Check", 1) != 0;
     if (ImGui::Checkbox(tr("Check GitHub for a newer COGBox at start"), &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
     ui_tip("Only the release page's address is asked for; nothing about you or this PC is sent.");
+    bool askClose = ask_before_closing(a.ini);   // GitHub #443
+    if (ImGui::Checkbox(tr("Ask before closing COGBox"), &askClose)) { a.ini.seti("Launcher", "AskBeforeClosing", askClose ? 1 : 0); a.ini.save(); }
+    ui_tip("EXIT, Esc and Start on the library ask \"Close COGBox?\" first. Off: they close COGBox at once. While a game is running "
+           "COGBox can't be closed from there either way.");
 
     // ---- LICENCES (0.4.8): the third-party terms, and NVIDIA's attribution for DLSS / DLSS Frame Generation / Reflex
     // (NVIDIA RTX SDKs License 7.1(b): attribute the SDK in the application's about box)
