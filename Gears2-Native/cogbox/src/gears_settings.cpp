@@ -2522,6 +2522,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (l > 0) a.push_back("--left_stick_deadzone_percentage=" + fmt_double(l / 100.0));
         if (r > 0) a.push_back("--right_stick_deadzone_percentage=" + fmt_double(r / 100.0));
     }
+    if (!env.other_achievements.empty() && cap_rt(env, "xam_other_title_achievements"))   // GitHub #439 (patch 127)
+        a.push_back("--xam_other_title_achievements=" + env.other_achievements);
     if (!s.b("Vibration")) a.push_back("--vibration=false");
     if (on("AdaptiveTriggers")) a.push_back("--pad_adaptive_triggers=true");   // GitHub #245 (greyed: never sent)
     if (on("TriggerRumble")) a.push_back("--pad_trigger_rumble=true");         // 0.6.3, GitHub #245 (greyed: never sent)

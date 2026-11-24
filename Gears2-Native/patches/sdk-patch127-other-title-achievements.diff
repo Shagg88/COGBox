@@ -1,0 +1,88 @@
+diff --git a/src/kernel/xam/xam_user.cpp b/src/kernel/xam/xam_user.cpp
+index 215c56b..77d73b0 100644
+--- a/src/kernel/xam/xam_user.cpp
++++ b/src/kernel/xam/xam_user.cpp
+@@ -13,6 +13,7 @@
+ #pragma GCC diagnostic ignored "-Wunused-parameter"
+ 
+ #include <atomic>
++#include <cctype>
+ #include <cstdio>
+ #include <cstring>
+ #include <filesystem>
+@@ -34,8 +35,14 @@
+ #include <rex/system/xio.h>
+ #include <rex/system/xthread.h>
+ #include <rex/system/xtypes.h>
++#include <toml++/toml.hpp>  // COGBox SDK patch 127
+ 
+ REXCVAR_DEFINE_UINT32(user_language, 1, "Kernel", "User's language ID");
++// COGBox SDK patch 127 (GitHub #439): another game's unlocks, "TITLEID=path;TITLEID=path" (the launcher gives each
++// game the other COGBox games' achievements/<TITLEID>.toml). Gears 2 asks for Gears 1's (4D5307D5) to unlock Carmine,
++// RAAM and Kim; the enumerator below listed the running game's whatever title was asked for.
++REXCVAR_DEFINE_STRING(xam_other_title_achievements, "", "Kernel",
++                      "Other games' unlock files, TITLEID=path;... (COGBox patch 127, GitHub #439)");
+ // Gears2-Native SDK patch 25: local players 2-4. User 0 is the profile as before; users 1-3 (when --local_players
+ // asks for them) are signed-in offline profiles "Player 2".."Player 4" with their own XUIDs, so a second controller
+ // can drop into split-screen co-op. Their profile settings read as the defaults and writes are accepted but not kept.
+@@ -834,6 +841,60 @@ u32 XamUserCreateAchievementEnumerator_entry(u32 title_id, u32 user_index, u32 x
+ 
+   const auto* ks = REX_KERNEL_STATE();
+ 
++  // COGBox SDK patch 127 (GitHub #439): another title's achievements - its unlocked ones from its own unlock file.
++  if (title_id != 0 && title_id != ks->title_id()) {
++    const std::string spec = REXCVAR_GET(xam_other_title_achievements);
++    const std::string want = fmt::format("{:08X}=", title_id);
++    size_t at = 0;
++    std::string path;
++    while (at < spec.size()) {
++      size_t end = spec.find(';', at);
++      if (end == std::string::npos) end = spec.size();
++      const std::string part = spec.substr(at, end - at);
++      std::string head = part.substr(0, want.size());
++      for (char& c : head) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
++      if (part.size() > want.size() && head == want)
++        path = part.substr(want.size());
++      at = end + 1;
++    }
++    size_t n = 0;
++    if (!path.empty()) {
++      try {
++        const std::filesystem::path fp = std::filesystem::u8path(path);
++        if (std::filesystem::exists(fp)) {
++          auto table = toml::parse_file(fp.string());
++          if (const auto* unlocked = table["unlocked"].as_table()) {
++            for (const auto& [key, value] : *unlocked) {
++              const uint32_t id = static_cast<uint32_t>(std::stoul(std::string(key.str())));
++              uint64_t ft = 0;
++              if (const auto* entry = value.as_table())
++                ft = static_cast<uint64_t>((*entry)["filetime"].value_or<int64_t>(0));
++              auto item = XStaticAchievementEnumerator::AchievementDetails{
++                  id, u"", u"", u"", 0, 0, {static_cast<uint32_t>(ft & 0xFFFF'FFFF), static_cast<uint32_t>(ft >> 32)},
++                  kAchievedFlags};
++              e->AppendItem(item);
++              ++n;
++            }
++          } else if (const auto* list = table["unlocked"].as_array()) {   // the older list form
++            for (const auto& node : *list)
++              if (auto v = node.value<int64_t>(); v && *v) {
++                auto item = XStaticAchievementEnumerator::AchievementDetails{
++                    static_cast<uint32_t>(*v), u"", u"", u"", 0, 0, {0, 0}, kAchievedFlags};
++                e->AppendItem(item);
++                ++n;
++              }
++          }
++        }
++      } catch (const std::exception& error) {
++        REXKRNL_WARN("patch 127: can't read {}: {}", path, error.what());
++      }
++    }
++    REXKRNL_INFO("patch 127 (GitHub #439): title {:08X}'s achievements asked for - {} unlocked ({})", title_id, n,
++                 path.empty() ? std::string("no file given") : path);
++    *handle_ptr = e->handle();
++    return X_ERROR_SUCCESS;
++  }
++
+   // Prefer the runtime store (populated from TOML or XDBF at boot) so that
+   // dev-edited labels/descriptions are visible to the game's own queries.
+   const auto store = ks->loaded_achievements();

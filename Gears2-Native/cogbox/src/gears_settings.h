@@ -54,6 +54,7 @@ struct Environment {
     std::string game_data_root;     // --game_data_root (the game's extracted disc)
     std::string update_data_root;   // --update_data_root (the extracted title update package)
     std::string user_data_root;     // --user_data_root (saves)
+    std::string other_achievements; // GitHub #439: the other COGBox games' unlock files, TITLEID=path;... (patch 127)
     std::string identity_dir;       // --net_identity_dir (the profile's online account, shared by all games)
     std::string online_region;      // the region chosen in the SOCIAL tab ("" = Any region)
     std::string online_server;      // social step 3: the multiplayer server when enabled ("" = offline profiles)

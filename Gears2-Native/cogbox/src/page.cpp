@@ -200,6 +200,15 @@ void env_refresh(App &a, int g)
     e.game_data_root = safe(st.dataDir);
     e.update_data_root = safe(st.updateDir);
     e.user_data_root = game_user_dir(g);
+    {   // GitHub #439 (SDK patch 127): Gears 2 reads Gears 1's unlocks (Carmine, RAAM, Kim) - every other game's file
+        static const char *const k_tid[G_COUNT] = { "4D53082D", "4D53085B", "4D530A26", "4D5307D5" };   // G2, G3, J, G1
+        e.other_achievements.clear();
+        for (int o = 0; o < G_COUNT; o++) {
+            if (o == g) continue;
+            const std::string f = join(join(game_user_dir(o), "achievements"), std::string(k_tid[o]) + ".toml");
+            if (file_exists(f)) e.other_achievements += (e.other_achievements.empty() ? "" : ";") + std::string(k_tid[o]) + "=" + f;
+        }
+    }
     e.identity_dir = profile_dir(exe_dir(), std::to_string(current_profile()));
     // social step 3: online only when the player enabled the multiplayer server in the SOCIAL tab
     e.online_server = a.ini.get("Online", "Enabled") == "1" ? a.ini.get("Online", "Server", kCogboxServer) : std::string();

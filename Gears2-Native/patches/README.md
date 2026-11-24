@@ -140,6 +140,7 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
   (`git -C thirdparty/FFmpeg apply`; that file is CRLF in the Windows checkout) - and again after every submodule or
   SDK update. Needs patch 80.
 - `sdk-patch126-audio-output-options.diff` (GitHub #425 / PR #441, the launcher's AUDIO tab; was 117 in the PR - renumbered, 117-119 were taken before (now 122-124); REPLACES patch 125: both define `--audio_channels`, so a runtime takes 126 and NOT 125; NOT BUILT into a release
+- `sdk-patch127-other-title-achievements.diff` (GitHub #439): `--xam_other_title_achievements=TITLEID=path;...` - XamUserCreateAchievementEnumerator answers another title's id with that game's unlocked achievements (its COGBox achievements/<TITLEID>.toml) instead of the running game's. Gears 2 asks for Gears 1's (4D5307D5) to unlock Carmine, RAAM and Kim. Runtime 070 = 069 + 127.
   yet - needs a runtime build): three switches in `src/audio/sdl/sdl_audio_driver.cpp`, their defaults the behaviour
   before. `--audio_output_device=<name>`: the SDL playback device of that name (exact, else the first whose name
   contains it, any case), as the launcher lists them; not found = the default device and one log line with the names
