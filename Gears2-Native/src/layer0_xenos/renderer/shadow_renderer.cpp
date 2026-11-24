@@ -113,6 +113,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include <sstream>
 #include <fstream>
 #include <unordered_set>
+#include <condition_variable>
 #include <vector>
 #if defined(GN_PGO_GEN)
 // Patch 0159: the LLVM profile runtime (linked only into a GN_PGO=gen build) - writes the counters to LLVM_PROFILE_FILE.
@@ -680,6 +681,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
                   w.files, w.known, w.disk_hits, w.queued, w.failed, w.ms, w.list_ms, w.read_ms, w.translate_ms, w.make_ms, w.from_pack, w.packed_now);
     }
     StartPrebuild();  // patch 0068
+    StartPreTranslate();  // 23 Nov: patch 0066's translation on background threads
+    texture_preload_on_ = REXCVAR_GET(gow2_renderer_texture_preload);  // 23 Nov
     ::xenos::edram::SetExtended(REXCVAR_GET(gow2_renderer_edram_extended));   // before any target or transfer shader
     if (REXCVAR_GET(gow2_renderer_edram_extended))
       REXLOG_INFO("gow2_renderer: extended EDRAM - {} tiles (40 MiB), 13-bit surface bases", ::xenos::edram::Tiles());
@@ -1758,6 +1761,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (upscale_probe_ && frame_ % upscale_probe_ == 0) LogProbeFrame();
     FrameStep("upscaler end frame", [&] { UpscaleEndFrame(); });
     XENOS_SITE(1);
+    if (textures_ && texture_preload_on_) FrameStep("texture preload", [&] { DrainTexturePreload(); });  // 23 Nov
     if (textures_) FrameStep("texture end frame", [&] { textures_->EndFrame(frame_); });
     XENOS_SITE(1);
     FrameStep("destination eviction", [&] { EvictDestinations(); });  // patch 0032
@@ -1820,6 +1824,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // 0.6.3 (low-core CPUs): a frame of play (64+ draws, the line DecideChapterHold and the recipe pack draw between
     // play and a loading screen / video / 2D menu). Layer 2's package reader paces itself by it (XenosRendererInPlay),
     // and the pipeline workers keep part of themselves free of the start-up backlog for the next half second.
+    last_frame_draws_ = fl_draws;  // 23 Nov: guessed pipelines / texture pre-loads (a loading screen = under 64)
     if (fl_draws >= 64 && !prepare_all_) {
       g_play_frame_ms.store(PlayClockMs(), std::memory_order_relaxed);
       backend_->NotePlayFrame();
@@ -2207,6 +2212,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     CreatedShader c;
     c.is_vertex = is_vertex;
     c.bytes.assign(src, src + size);
+    if (pre_threads_on_) {  // 23 Nov: translated on the pre-translation threads first (StartPreTranslate)
+      {
+        std::lock_guard<std::mutex> lock(pre_mutex_);
+        if (pre_queue_.size() >= 20000) return;
+        pre_queue_.push_back(std::move(c));
+      }
+      pre_cv_.notify_one();
+      return;
+    }
     std::lock_guard<std::mutex> lock(created_mutex_);
     if (created_queue_.size() < 20000) created_queue_.push_back(std::move(c));
   }
@@ -2216,6 +2230,80 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     bool is_vertex = false;
     std::vector<uint8_t> bytes;  // the microcode as the game created it (big-endian dwords)
   };
+  // ---- 23 Nov (Shagg: "why aren't the shaders compiling behind the loading screens"; "we have 16 threads") ----
+  // Before: every shader the game created was translated on the render thread, at most
+  // --gow2_renderer_shader_precreate_ms (6) a frame - one thread at ~36 % of a 60 fps loading screen, so Gears 2's
+  // ~7,000 created shaders took longer than its loading screen and their guessed pipelines could not start before
+  // them. Now N background threads translate them (ShaderCache::PreTranslate: the exact translation Get makes, into
+  // the DXBC store) and only then hand them to the render thread, whose Get is a store read. Shaders a draw already
+  // made are translated again only if the store lacks them (a read otherwise).
+  void StartPreTranslate() {  // Init, after the shader cache and the DXBC store are set up
+    const int32_t want = REXCVAR_GET(gow2_renderer_shader_precreate_threads);
+    if (!want || !cache_ || !cache_->Dxbc() || !REXCVAR_GET(gow2_renderer_dxbc_store) ||
+        !REXCVAR_GET(gow2_renderer_shader_precreate))
+      return;
+    const uint32_t usable = XenosUsableProcessors();
+    const uint32_t n = want < 0 ? std::clamp(usable / 4, 2u, 8u) : std::clamp(uint32_t(want), 1u, std::max(1u, usable));
+    for (uint32_t i = 0; i < n; ++i)
+      std::thread([this] {  // lives as long as the renderer (never destroyed), as the prebuild thread
+#ifdef _WIN32
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+        PreTranslateThread();
+      }).detach();
+    pre_threads_on_ = true;
+    REXLOG_INFO("gow2_renderer: shaders the game creates are translated on {} background thread(s) ({} usable logical "
+                "processors), not on the render thread (gow2_renderer_shader_precreate_threads)", n, usable);
+  }
+  void PreTranslateThread() {
+    std::vector<uint32_t> dwords;
+    for (;;) {
+      CreatedShader c;
+      {
+        std::unique_lock<std::mutex> lock(pre_mutex_);
+        pre_cv_.wait(lock, [this] { return !pre_queue_.empty(); });
+        c = std::move(pre_queue_.front());
+        pre_queue_.pop_front();
+        ++pre_busy_;
+      }
+      const uint64_t h = XXH3_64bits(c.bytes.data(), c.bytes.size()) ^ (c.is_vertex ? 0x5653ull : 0ull);
+      bool fresh;
+      {
+        std::lock_guard<std::mutex> lock(pre_mutex_);
+        fresh = pre_seen_.insert(h).second;
+      }
+      if (fresh) {
+        dwords.resize(c.bytes.size() / 4);
+        for (size_t i = 0; i < dwords.size(); ++i) {
+          uint32_t v;
+          std::memcpy(&v, c.bytes.data() + i * 4, 4);
+          dwords[i] = std::byteswap(v);
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        if (cache_->PreTranslate(dwords.data(), dwords.size(), c.is_vertex)) pre_done_.fetch_add(1, std::memory_order_relaxed);
+        else pre_failed_.fetch_add(1, std::memory_order_relaxed);
+        pre_us_.fetch_add(uint64_t(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()),
+                          std::memory_order_relaxed);
+      }
+      {  // the render thread's queue (DrainCreatedShaders): a repeat still goes, Find answers it there at once
+        std::lock_guard<std::mutex> lock(created_mutex_);
+        if (created_queue_.size() < 20000) created_queue_.push_back(std::move(c));
+      }
+      std::lock_guard<std::mutex> lock(pre_mutex_);
+      --pre_busy_;
+    }
+  }
+  bool pre_threads_on_ = false;
+  std::mutex pre_mutex_;
+  std::condition_variable pre_cv_;
+  std::deque<CreatedShader> pre_queue_;
+  std::unordered_set<uint64_t> pre_seen_;
+  uint32_t pre_busy_ = 0;
+  std::atomic<uint64_t> pre_done_{0}, pre_failed_{0}, pre_us_{0};
+  size_t PreQueued() {
+    std::lock_guard<std::mutex> lock(pre_mutex_);
+    return pre_queue_.size() + pre_busy_;
+  }
   void DrainCreatedShaders() {
     {
       std::lock_guard<std::mutex> lock(created_mutex_);
@@ -2262,7 +2350,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (MsSince(t0) >= budget) break;
     }
     // One guessed pipeline per new shader, once a shader of the other stage exists to pair it with.
-    if (!guess_waiting_.empty() && guess_vs_ && guess_ps_) {
+    // 23 Nov: with --gow2_renderer_shader_precreate_guess_play false, not while the game is played (the last frame had
+    // 64+ draws): on D3D12 each is a whole driver compile on a pipeline worker, beside the draws' own pipelines.
+    const bool guess_now = REXCVAR_GET(gow2_renderer_shader_precreate_guess_play) || last_frame_draws_ < 64;
+    if (!guess_now && guess_waiting_.size() > 20000) guess_waiting_.clear();  // (bounded; a later draw builds its own)
+    if (guess_now && !guess_waiting_.empty() && guess_vs_ && guess_ps_) {
       backend_->SetPipelineBacklog(true);
       for (const auto& [is_vertex, handle] : guess_waiting_) {
         gpu::GraphicsPipelineDesc d;
@@ -2283,6 +2375,113 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       guess_waiting_.clear();
     }
   }
+  // ---- 23 Nov: texture pre-load (Shagg: "why aren't the textures loading behind the loading screens") ----
+  // UnleashedRecomp creates each host texture inside the game's own texture-creation call (its renderer replaces the
+  // game's D3D), so a texture is ready before its first draw. Our texture cache only meets a texture when a draw binds
+  // it (TextureCache::Lookup), so at the first frame of play hundreds arrive at once (job 2378e: 377 - 1,660 textures,
+  // 48.7 MB, 55 - 121 ms in one frame). Here a game hook (the XDK's XGOffsetBaseTextureAddress, where UE3 gives a
+  // texture its memory - layer 1 d3d_watch.cpp) reports the texture's header; a few frames later (its data is being
+  // streamed in meanwhile) the header's fetch constant goes through the same Lookup a draw would make, on loading-screen
+  // frames, within --gow2_renderer_texture_preload_ms. Correctness is the page watch's, as for any texture: a texture
+  // whose memory is written after the pre-load is re-checked and reloaded at its first bind.
+  // The header's fetch constant is found, not assumed: the XDK's D3DBaseTexture keeps it at +0x1C, and the first 64
+  // headers are checked at every offset 0x00 - 0x40 for a texture fetch (type 2) whose base is the hook's address;
+  // the offset most of them agree on is used, or pre-loading turns itself off with a log line.
+ public:
+  void OnGuestTextureAddressed(uint32_t header, uint32_t base, uint32_t mip) {  // the game's loading thread
+    (void)mip;
+    if (!texture_preload_on_ || tp_off_.load(std::memory_order_relaxed) || !header || !base) return;
+    std::lock_guard<std::mutex> lock(tp_mutex_);
+    if (tp_queue_.size() < 65536) tp_queue_.push_back({header, base, XenosSwapCount()});
+    ++tp_seen_;
+  }
+
+ private:
+  struct TexturePreloadItem {
+    uint32_t header = 0, base = 0;
+    uint64_t swap = 0;
+  };
+  static constexpr uint32_t kTpOffsets = 17;  // 0x00 - 0x40, step 4
+  bool TpRead(uint32_t header, uint32_t offset, uint32_t tf[6]) const {
+    const uint8_t* p = memory_->TranslateVirtual<const uint8_t*>(header + offset);
+    if (!p) return false;
+    for (int i = 0; i < 6; ++i) {
+      uint32_t v;
+      std::memcpy(&v, p + 4 * i, 4);
+      tf[i] = std::byteswap(v);
+    }
+    return true;
+  }
+  static bool TpMatches(const uint32_t tf[6], uint32_t base) {  // a texture fetch at the hook's address
+    return (tf[0] & 3u) == 2u && (tf[1] >> 12) == ((base & 0x1FFFFFFFu) >> 12);
+  }
+  void DrainTexturePreload() {  // recording thread, once a frame, before the texture cache's EndFrame
+    const bool loading = last_frame_draws_ < 64;
+    const double budget = loading ? REXCVAR_GET(gow2_renderer_texture_preload_ms) : REXCVAR_GET(gow2_renderer_texture_preload_play_ms);
+    if (budget <= 0.0 || tp_offset_ == kTpOff) return;
+    const uint64_t swap = XenosSwapCount();
+    std::deque<TexturePreloadItem> items;
+    {
+      std::lock_guard<std::mutex> lock(tp_mutex_);
+      // At least 2 swaps old: UE3 fills the memory after it is given it (the pages it writes later still reload).
+      while (!tp_queue_.empty() && tp_queue_.front().swap + 2 <= swap) {
+        items.push_back(tp_queue_.front());
+        tp_queue_.pop_front();
+      }
+    }
+    if (items.empty()) return;
+    const auto t0 = std::chrono::steady_clock::now();
+    size_t used = 0;
+    uint32_t tf[6];
+    for (const TexturePreloadItem& it : items) {
+      if (MsSince(t0) >= budget) break;
+      ++used;
+      if (tp_offset_ == kTpLearning) {  // the once-only layout check
+        for (uint32_t k = 0; k < kTpOffsets; ++k)
+          if (TpRead(it.header, k * 4, tf) && TpMatches(tf, it.base)) ++tp_votes_[k];
+        if (++tp_checked_ >= 64) {
+          const uint32_t best = uint32_t(std::max_element(tp_votes_.begin(), tp_votes_.end()) - tp_votes_.begin());
+          const bool ok = tp_votes_[best] * 4 >= tp_checked_ * 3;
+          tp_offset_ = ok ? best * 4 : kTpOff;
+          REXLOG_INFO("gow2_renderer: texture pre-load: fetch constant at header +0x{:02X} in {} of {} headers (expected "
+                      "+0x1C){}", best * 4, tp_votes_[best], tp_checked_, ok ? "" : " - too few agree, pre-load OFF");
+          if (!ok) {
+            tp_off_.store(true);
+            std::lock_guard<std::mutex> lock(tp_mutex_);
+            tp_queue_.clear();
+            return;
+          }
+        }
+        continue;  // the learning headers are not pre-loaded (their draws load them as before)
+      }
+      if (!TpRead(it.header, tp_offset_, tf)) continue;
+      if (!TpMatches(tf, it.base)) {  // header reused / freed / moved since the hook
+        ++tp_stale_;
+        continue;
+      }
+      if (textures_->Preload(tf, frame_)) ++tp_loaded_;
+      else ++tp_known_;
+    }
+    textures_->FinishPreloads();
+    tp_ms_total_ += MsSince(t0);
+    if (used < items.size()) {  // the rest next frame, oldest first
+      std::lock_guard<std::mutex> lock(tp_mutex_);
+      for (size_t i = items.size(); i-- > used;) tp_queue_.push_front(items[i]);
+    }
+  }
+  static constexpr uint32_t kTpLearning = ~0u, kTpOff = ~0u - 1;
+  bool texture_preload_on_ = false;
+  std::atomic<bool> tp_off_{false};
+  uint32_t last_frame_draws_ = 0;
+  std::mutex tp_mutex_;
+  std::deque<TexturePreloadItem> tp_queue_;
+  uint64_t tp_seen_ = 0;  // under tp_mutex_
+  uint32_t tp_offset_ = kTpLearning, tp_checked_ = 0;
+  std::array<uint32_t, kTpOffsets> tp_votes_{};
+  uint64_t tp_loaded_ = 0, tp_known_ = 0, tp_stale_ = 0;
+  double tp_ms_total_ = 0.0;
+  uint64_t tp_logged_loaded_ = ~0ull;
+
   std::mutex created_mutex_;
   std::deque<CreatedShader> created_queue_;                  // filled by the game's loading thread
   std::vector<std::pair<bool, gpu::ShaderHandle>> guess_waiting_;
@@ -14498,6 +14697,27 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     stats_.new_vs_from_load, stats_.new_ps_from_load);
         created_logged_ = stats_;
       }
+      if (pre_threads_on_ && (pre_done_.load() + pre_failed_.load()) != pre_logged_) {  // 23 Nov
+        pre_logged_ = pre_done_.load() + pre_failed_.load();
+        REXLOG_INFO("gow2_renderer: frames {}-{}: created shaders translated off the render thread: {} ({} not "
+                    "translatable to DXBC), {:.0f} ms of their threads' time, {} waiting (totals so far)",
+                    frame_ - uint64_t(log_every_) + 1, frame_, pre_done_.load(), pre_failed_.load(),
+                    double(pre_us_.load()) / 1000.0, PreQueued());
+      }
+      if (texture_preload_on_ && tp_loaded_ + tp_known_ + tp_stale_ != tp_logged_loaded_) {  // 23 Nov
+        tp_logged_loaded_ = tp_loaded_ + tp_known_ + tp_stale_;
+        uint64_t seen, queued;
+        {
+          std::lock_guard<std::mutex> lock(tp_mutex_);
+          seen = tp_seen_;
+          queued = tp_queue_.size();
+        }
+        REXLOG_INFO("gow2_renderer: frames {}-{}: texture pre-load: {} reported by the game, {} pre-loaded, {} already "
+                    "known, {} header changed, {} waiting, {:.0f} ms | first binds that found a pre-loaded texture {} "
+                    "(totals so far)",
+                    frame_ - uint64_t(log_every_) + 1, frame_, seen, tp_loaded_, tp_known_, tp_stale_, queued,
+                    tp_ms_total_, textures_ ? textures_->PreloadHits() : 0);
+      }
       detail_base_ = bs;
       drawn_base_ = stats_.drawn;
     }
@@ -14870,6 +15090,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     std::lock_guard<std::mutex> lock(prebuild_mutex_);
     return prebuild_queue_.size();
   }
+  uint64_t pre_logged_ = 0;
   size_t CreatedQueued() {
     std::lock_guard<std::mutex> lock(created_mutex_);
     return created_queue_.size();
@@ -15141,6 +15362,9 @@ uint64_t XenosPrebuildVariantHits(uint32_t variant) {                           
 void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t size_bytes) {  // patch 0066
   if (g_release_target && REXCVAR_GET(gow2_renderer_shader_precreate))
     g_release_target->OnGuestShaderCreated(is_vertex, guest_address, size_bytes);
+}
+void XenosGuestTextureAddressed(uint32_t header, uint32_t base_address, uint32_t mip_address) {  // 23 Nov
+  if (g_release_target) g_release_target->OnGuestTextureAddressed(header, base_address, mip_address);
 }
 
 bool XenosRendererPresents() { return g_renderer_presents; }

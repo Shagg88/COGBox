@@ -987,7 +987,8 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   }
   if (it == entries_.end()) {
     const uint64_t epoch_before = watch_.Epoch();  // a write during the load must trigger the next re-check
-    if (const double budget = REXCVAR_GET(gow2_renderer_texture_load_budget_ms); budget > 0.0 && frame_load_ms_ >= budget) {
+    if (const double budget = REXCVAR_GET(gow2_renderer_texture_load_budget_ms);
+        !preloading_ && budget > 0.0 && frame_load_ms_ >= budget) {
       auto d = std::make_unique<Entry>();  // 23 Nov: held back - loaded on a later frame (see the cvar)
       d->deferred = true;
       d->deferred_frame = frame;
@@ -1013,13 +1014,17 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
     return done(*it->second, "new");
   }
   Entry& e = *it->second;
+  if (e.preloaded && !preloading_) {  // 23 Nov: a draw's first bind of a pre-loaded texture
+    e.preloaded = false;
+    ++preload_hits_;
+  }
   if (e.deferred) {  // 23 Nov: a new texture held back on an earlier frame - load it now unless this frame is full too
     const double budget = REXCVAR_GET(gow2_renderer_texture_load_budget_ms);
     // Review 23 Nov: past 8 frames a held texture still waits while this frame has loaded 2x the budget (so a big burst
     // doesn't all land on frame N+8), but never longer than 60 frames.
     const bool overdue = frame >= e.deferred_frame + 8;
-    if (frame == e.deferred_frame ||
-        (budget > 0.0 && frame < e.deferred_frame + 60 && frame_load_ms_ >= (overdue ? 2.0 * budget : budget))) {
+    if (!preloading_ && (frame == e.deferred_frame ||
+        (budget > 0.0 && frame < e.deferred_frame + 60 && frame_load_ms_ >= (overdue ? 2.0 * budget : budget)))) {
       ++deferred_this_frame_;
       return done(e, "deferred: this frame's texture-load budget is used");
     }
@@ -1172,6 +1177,22 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   else ++stats_.reload_cpu;
   stats_.reload_bytes += uint64_t(e.base_length) + e.mip_length;
   return done(e, why);
+}
+
+bool TextureCache::Preload(const uint32_t* tf, uint64_t frame) {  // 23 Nov (texture pre-load)
+  if (Bits(tf[0], 0, 2) != 2) return false;
+  const uint32_t dim = Bits(tf[5], 9, 2);  // 0 1D, 1 2D / stacked, 2 3D, 3 cube
+  const uint32_t host_kind = dim == 3 ? 1u : dim == 2 ? 2u : 0u;
+  const uint64_t textures_before = stats_.textures;
+  preloading_ = true;
+  Entry& e = Lookup(tf, host_kind, frame);
+  preloading_ = false;
+  const bool loaded = stats_.textures != textures_before;
+  if (loaded) {
+    e.preloaded = true;
+    e.last_used = std::max(e.last_used, frame);  // not the first evicted by the host-memory cap before its draw
+  }
+  return loaded;
 }
 
 bool TextureCache::Probed(const uint32_t* tf, uint64_t frame) const {  // frame ~0: any frame
