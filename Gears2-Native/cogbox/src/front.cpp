@@ -803,13 +803,21 @@ void front_draw(App &a, ImVec2 size)
         const bool up = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp, false);
         const bool down = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown, false);
         const bool musicItem = music_any_source(a) && !library_games(a).empty();
+        // #445 (0.6.9): the red UPDATE TO button in the top row is frontSel 14, between PLAYER and MUSIC (its place on screen)
+        const bool updateItem = (!update_newer().empty() || getenv("COGBOX_SHOW_UPDATE")) && a.st[a.front].ready != R_NO_PORT;
         auto topStep = [&](int dir) {
-            int v = a.frontSel + dir;
-            if (v == 11 && !musicItem) v += dir;
-            a.frontSel = std::max(10, std::min(13, v));
+            std::vector<int> row{ 10 };
+            if (updateItem) row.push_back(14);
+            if (musicItem) row.push_back(11);
+            row.push_back(12); row.push_back(13);
+            size_t i = 0; while (i < row.size() && row[i] != a.frontSel) ++i;
+            if (i == row.size()) i = 0;
+            const int j = std::max(0, std::min(int(row.size()) - 1, int(i) + dir));
+            a.frontSel = row[j];
         };
         if (a.frontSel >= 10) {
             if (!musicItem && a.frontSel == 11) a.frontSel = 12;
+            if (!updateItem && a.frontSel == 14) a.frontSel = 10;
             if (left || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) topStep(-1);
             if (right || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) topStep(1);
             if (down) a.frontSel = 0;
@@ -1106,7 +1114,9 @@ void front_draw(App &a, ImVec2 size)
             ImVec2 us(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, lbl.c_str()).x + S(36), T(28));
             ImGui::SetCursorScreenPos(ImVec2(size.x - artW - S(24) - S(12) - us.x, S(22)));
             const bool idle = us_state != 1 && us_state != 2 && us_state != 3;
-            if (th_button_red(lbl.c_str(), us, idle, F_BOLD) && idle) {
+            const bool usel = a.padConnected && a.frontSel == 14;   // #445: reachable with the controller (top row)
+            const bool padPress = usel && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && !a.modal.open;
+            if ((th_button_red(lbl.c_str(), us, idle, F_BOLD, usel) || padPress) && idle) {
                 if (a.run.proc) set_message(a, "Close the game first, then update.", true);
                 else { update_install_start(newer); set_message(a, "Updating COGBox - it restarts by itself when done.", false); }
             }
