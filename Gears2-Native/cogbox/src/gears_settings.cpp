@@ -509,6 +509,16 @@ std::vector<Option> make_options(Game g) {
                "Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts "
                "keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list "
                "below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=).", 0), "padlayout");
+    // Shagg 24 Nov: Judgment moved its buttons (Coalesced_INT.bin, job 1921: LB grenades, Y switch weapon, D-pad up point
+    // of interest, D-pad down tactical display) and has no option to bring the old ones back (Epic, Engadget 12 Dec 2012).
+    // This moves them back with pad_remap (src=dst: the controller's button -> the game's): D-pad up throws a grenade,
+    // LB opens the tactical display, Y looks at the point of interest, D-pad down switches weapon (Judgment carries two
+    // weapons, no pistol slot). Only with Controller layout = Game's own (one remap at a time).
+    add(make("ClassicButtons", "Original Gears buttons", Tab::Controls, Kind::Bool, PG, 0,
+             "Judgment's controller buttons laid out as in Gears of War 1, 2 and 3: D-pad up throws a grenade, LB opens the "
+             "tactical display, Y looks at the point of interest and D-pad down switches weapon (Judgment has no pistol "
+             "slot). The game's own button prompts still show Judgment's buttons. Needs Controller layout: Game's own.", 0),
+        "classicbuttons");
     add(make("Vibration", "Controller vibration", Tab::Controls, Kind::Bool, SH, 1, "The controller's rumble.", 383));   // no PS1 tooltip
     // GitHub #245 (SDK patch 98, --pad_adaptive_triggers): the game sets the DualSense's trigger feel per weapon. All
     // four games, each when its exe has the weapon table; per game, off by default.
@@ -1055,6 +1065,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_rt(env, "Xbox impulse triggers: games that support it") || !cap_exe(env, k_pulses[gi]))
             return no(not_yet(gi, "needs its next build"));
         if (env.wine) return no("Not under Proton / Wine.");
+    } else if (f == "classicbuttons") {   // Shagg 24 Nov: Judgment only, through pad_remap (SDK patch 55)
+        if (g != Game::Judgment) return no("Judgment only - the other games already use this layout.");
+        if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
     } else if (f == "padlayout") {   // GitHub #95 / #97: SDK patch 55
         if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
     } else if (f == "gpucard") {   // 0.6.2 (GitHub #304): every game's renderer reads --gow2_graphics_card (layer 0)
@@ -2517,6 +2530,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         const int l = std::max(0, std::min(4, s.i("PadLayout")));
         const std::string clean = pad_remap_clean(l < 4 ? std::string(pad_layout_preset(l)) : env.pad_remap);   // 0.6.3: shared
         if (!clean.empty()) a.push_back("--pad_remap=" + clean);
+        else if (g == Game::Judgment && on("ClassicButtons"))   // Original Gears buttons (above)
+            a.push_back("--pad_remap=up=lb,lb=down,y=up,down=y");
     }
     // PS1 911-925 (patches 0133 / 0135 / 0136 / 0152): lower input lag; Reflex / Anti-Lag 2 by the main card's maker
     if (avail("LowLag")) {
