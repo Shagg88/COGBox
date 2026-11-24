@@ -448,9 +448,17 @@ void ui_section(const char *title_en)   // (also achievements_tab.cpp)
 // 0.6.5 (Shagg: the bigger window): a tab's sections in two columns side by side when the page is wide enough, else in
 // one. body(0) draws the left column's sections, body(1) the right's; body(-1) all of them (the one-column case). Each
 // column is its own child window, so a row's label / SameLine(g_labelW) / control works in it as in the page.
+// GitHub #443: the room a vertical scrollbar takes when the rows window has none now - kept free all the same, so the
+// columns and right-hand buttons stay put between a tab that scrolls and one that doesn't (they moved by ~12 px)
+static float scrollbar_room()
+{
+    const ImGuiWindow *w = ImGui::GetCurrentWindow();
+    return w->ScrollbarY || (w->Flags & ImGuiWindowFlags_NoScrollbar) ? 0.0f : ImGui::GetStyle().ScrollbarSize;
+}
+
 void ui_columns(const std::function<void(int)> &body)   // (also achievements_tab.cpp, social_tab.cpp)
 {
-    const float avail = ImGui::GetContentRegionAvail().x - S(16), gap = S(40);
+    const float avail = ImGui::GetContentRegionAvail().x - scrollbar_room() - S(16), gap = S(40);
     if (avail < S(1060)) { body(-1); return; }
     const float colW = std::floor((avail - gap) * 0.5f);
     const float keepLabel = g_labelW, keepX1 = g_rowX1;
@@ -486,8 +494,8 @@ float ui_row_x1() { return g_rowX1; }
 void ui_rows_begin()
 {
     g_ctrlW = T(270);   // 0.6.5 (Shagg): 10% narrower than the first two-column build
-    g_labelW = std::min(S(500), ImGui::GetContentRegionAvail().x - g_ctrlW - S(40));
-    g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
+    g_labelW = std::min(S(500), ImGui::GetContentRegionAvail().x - scrollbar_room() - g_ctrlW - S(40));
+    g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - scrollbar_room() - S(16);   // GitHub #443
     g_sections = 0;
 }
 
@@ -1170,12 +1178,8 @@ static void option_row(App &a, int g, const gs::Option &o)
             preview += std::string(" ") + tr("(Proton runs Vulkan)");
         if (ImGui::BeginCombo("##v", preview.c_str())) {
             // 0.2.1: Render resolution lists 1080p in size order; the saved value is still the original index
-            std::vector<int> ord;
-            for (int i = 0; i < (int)items.size(); i++) ord.push_back(i);
-            if (o.id == "Resolution" && items.size() == 8) ord = { 0, 6, 7, 5, 1, 2, 3 };   // 0.6.6: Match my monitor (4) no longer offered; #436: 768p / 900p by size
-            if (o.id == "WindowSize" && items.size() == 7) ord = { 0, 1, 6, 2, 3, 4, 5 };   // GitHub #436: 1366 x 768 by size
-            if (o.id == "AO" && items.size() == 5) ord = { 0, 1, 2 };   // 0.6.7: Off / Default / On (GitHub #406; 0.6.6 had dropped Off)
-            if (o.id == "AAMode" && items.size() == 6) ord = { 0, 1, 2, 3, 5 };       // 0.6.6: choice 4 dropped
+            // (GitHub #443: the same order in the in-game menu - gs::choice_order)
+            const std::vector<int> ord = gs::choice_order(o, items.size());
             for (int i : ord) {
                 if (o.id == "FrameGen" && i != idx && gs::framegen_choice_hidden(i, a.env[g])) continue;   // NVIDIA DLSS FG: only with its DLLs
                 gs::Availability ca = gs::choice_available(o, G, i);
@@ -1390,8 +1394,9 @@ static void lamp_line(int state, const std::string &text_en, const std::string &
     const std::string text = tr(text_en);   // 0.2.0
     ImVec2 p = ImGui::GetCursorScreenPos();
     float h = ImGui::GetTextLineHeight();
-    th_lamp(ImGui::GetWindowDrawList(), ImVec2(p.x + S(6), p.y + h * 0.55f), S(4.5f), state);
-    ImGui::SetCursorScreenPos(ImVec2(p.x + S(20), p.y));
+    // GitHub #443: the lamp's glow (twice its radius) was cut off on the left at +6 - in by 4, the text with it
+    th_lamp(ImGui::GetWindowDrawList(), ImVec2(p.x + S(10), p.y + h * 0.55f), S(4.5f), state);
+    ImGui::SetCursorScreenPos(ImVec2(p.x + S(24), p.y));
     ImGui::PushTextWrapPos(row_wrap_x());   // GitHub #123
     ImGui::TextUnformatted(text.c_str());
     ImGui::PopTextWrapPos();
@@ -1835,8 +1840,8 @@ static void about_tab(App &a, int g)
         const float bw = std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, remove).x + S(28)), bh = T(26);
         const ImVec2 p0 = ImGui::GetCursorScreenPos();
         const float lineH = ImGui::GetTextLineHeight();
-        th_lamp(ImGui::GetWindowDrawList(), ImVec2(p0.x + S(6), p0.y + lineH * 0.55f), S(4.5f), dup ? 2 : 1);
-        ImGui::SetCursorScreenPos(ImVec2(p0.x + S(20), p0.y));
+        th_lamp(ImGui::GetWindowDrawList(), ImVec2(p0.x + S(10), p0.y + lineH * 0.55f), S(4.5f), dup ? 2 : 1);   // GitHub #443: as lamp_line
+        ImGui::SetCursorScreenPos(ImVec2(p0.x + S(24), p0.y));
         ImGui::BeginGroup();
         ImGui::PushTextWrapPos(row_wrap_x() - bw - S(12));
         ImGui::TextUnformatted(tr(dl[i].title + (dup ? "  -  duplicate of \"" + dl[i].dupOf + "\" - can be removed" : "")).c_str());
@@ -1875,7 +1880,7 @@ static void about_tab(App &a, int g)
     ui_tip("To add downloadable content, drag and drop the package onto this window.");
     {   // proton049 / 0.6.1: for everyone - where dragging doesn't work, pick or paste instead
         ImGui::Dummy(ImVec2(0, S(2)));
-        linux_copy_buttons(a);
+        linux_copy_buttons(a, g_rowX1);   // GitHub #443: wrapped in the column
     }
 
     }
@@ -1984,9 +1989,10 @@ static void about_tab(App &a, int g)
     bool chk = a.ini.geti("Updates", "Check", 1) != 0;
     if (ImGui::Checkbox(tr("Check GitHub for a newer COGBox at start"), &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
     ui_tip("Only the release page's address is asked for; nothing about you or this PC is sent.");
-    bool askq = a.ini.geti("Launcher", "AskQuit", 1) != 0;   // GitHub #443
+    bool askq = ask_before_closing(a.ini);   // GitHub #443 ([Launcher] AskQuit; PR #444's text)
     if (ImGui::Checkbox(tr("Ask before closing COGBox"), &askq)) { a.ini.seti("Launcher", "AskQuit", askq ? 1 : 0); a.ini.save(); }
-    ui_tip("Off: Esc, Start or the Exit button on the library screen closes COGBox at once.");
+    ui_tip("EXIT, Esc and Start on the library ask \"Close COGBox?\" first. Off: they close COGBox at once. While a game is running "
+           "COGBox can't be closed from there either way.");
 
     // ---- LICENCES (0.4.8): the third-party terms, and NVIDIA's attribution for DLSS / DLSS Frame Generation / Reflex
     // (NVIDIA RTX SDKs License 7.1(b): attribute the SDK in the application's about box)
@@ -2154,7 +2160,7 @@ void page_draw(App &a, ImVec2 size)
     ImGui::PushFont(F_BODY, FS(F_BODY) * k_rowText);
     g_ctrlW = T(270);   // 0.6.5 (Shagg): 10% narrower than the first two-column build
     g_labelW = std::min(S(500), (c1.x - c0.x) - g_ctrlW - S(40));
-    g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
+    g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - scrollbar_room() - S(16);   // GitHub #443: the same with or without a scrollbar
     g_sections = 0;
     if (a.tab < k_tabSocial) {
         gs::Tab want = (gs::Tab)a.tab;
@@ -2258,7 +2264,9 @@ void page_draw(App &a, ImVec2 size)
         std::string why = a.run.proc ? "The game is already running." : a.job.state.load() == 1 ? "Wait until the copy is finished." :
                           a.st[g].ready == R_NEED_UPDATE ? std::string("Needs ") + gd.updateName + " - add it from your console or its package file" :
                           a.st[g].ready == R_COPY_MISSING ? "Your copy isn't where it was - is its drive connected?" :
-                          a.st[g].ready == R_NO_PORT ? "Not in this release of COGBox yet" : "Add your copy of the game first (Add your copy... above).";
+                          a.st[g].ready == R_NO_PORT ? std::string(gd.exeName) + " is missing from this game's port folder - an antivirus may have "
+                                                       "removed it (check its quarantine / protection history), or the unzip stopped early. Unzip "
+                                                       "this COGBox release again over the folder (your settings and saves stay)." : "Add your copy of the game first (Add your copy... above).";
         ImGui::SetTooltip("%s", tr(why).c_str());
     }
     ImGui::PopItemFlag();

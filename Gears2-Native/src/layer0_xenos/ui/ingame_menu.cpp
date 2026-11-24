@@ -219,6 +219,7 @@ void StopPadPump() {
 struct MenuOption {
   std::string id, tab, label, kind, why, tip;
   std::vector<std::string> choices;
+  std::vector<int> order;   // GitHub #443: COGBox's order= line - the choices' indexes in the order to list them
   double value = 0, start = 0, min = 0, max = 1, step = 1;
   double applied = 0;   // achievements part 4: the value last set live (options LiveCvarFor knows)
   int decimals = 0;
@@ -308,6 +309,18 @@ MenuFile LoadMenuFile(const std::string& path) {
       for (;;) {
         const size_t b = v.find('|', a);
         o.choices.push_back(v.substr(a, b == std::string::npos ? std::string::npos : b - a));
+        if (b == std::string::npos) break;
+        a = b + 1;
+      }
+    }
+    else if (k == "order") {   // GitHub #443 (Render resolution by size); an older COGBox sends none: index order
+      size_t a = 0;
+      for (;;) {
+        const size_t b = v.find('|', a);
+        const std::string n = v.substr(a, b == std::string::npos ? std::string::npos : b - a);
+        char* end = nullptr;
+        const long i = n.empty() ? -1 : std::strtol(n.c_str(), &end, 10);
+        if (!n.empty() && end && *end == 0 && i >= 0 && i < 1000) o.order.push_back(int(i));   // empty / junk: skipped
         if (b == std::string::npos) break;
         a = b + 1;
       }
@@ -943,7 +956,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
         if (o.tab != g_file.tabs[size_t(tab_)]) continue;
         m::Row r;
         r.id = o.id; r.label = o.label; r.kind = o.kind; r.tip = o.tip; r.why = o.why;
-        r.choices = &o.choices; r.value = &o.value; r.min = o.min; r.max = o.max; r.step = o.step; r.decimals = o.decimals;
+        r.choices = &o.choices; r.order = &o.order; r.value = &o.value; r.min = o.min; r.max = o.max; r.step = o.step; r.decimals = o.decimals;
         r.enabled = o.enabled;
         r.restart = NeedsRestart(o);
         r.live = LiveFor(o, o.value).has_value();

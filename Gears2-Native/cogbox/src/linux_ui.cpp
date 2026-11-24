@@ -163,19 +163,17 @@ float linux_copy_buttons_width(const App &a)   // for centring them
     return w + ImGui::GetStyle().ItemSpacing.x * float(n - 1);
 }
 
-void linux_copy_buttons(App &a)
+void linux_copy_buttons(App &a, float wrap_x1)
 {
     const bool busy = a.job.state.load() == 1 || a.run.proc != nullptr;
-    auto button = [&](const char *en) {
-        const char *l = tr(en);
-        const float w = std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, l).x + S(28));
-        return th_button(l, ImVec2(w, T(26)), !busy, F_BODY);
-    };
-    // GitHub #443: on a narrow window (Steam Deck, About tab) the last button was cut off - wrap it to the next row instead
-    auto next = [&](const char *en) {
-        const float w = std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, tr(en)).x + S(28));
+    auto width = [&](const char *en) { return std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, tr(en)).x + S(28)); };
+    auto button = [&](const char *en) { return th_button(tr(en), ImVec2(width(en), T(26)), !busy, F_BODY); };
+    // GitHub #443: the next button beside the last one, or on the next line when it would run past wrap_x1 (the About
+    // tab's column: "Look for my games" was cut off on the right)
+    auto next = [&](const char *en, const char *en2 = nullptr) {   // en2: the label it can change to (the wider counts)
         ImGui::SameLine();
-        if (ImGui::GetContentRegionAvail().x < w) ImGui::NewLine();
+        const float w = std::max(width(en), en2 ? width(en2) : 0.0f);
+        if (wrap_x1 > 0 && ImGui::GetCursorScreenPos().x + w > wrap_x1) ImGui::NewLine();
     };
     if (button("Choose a file...")) {
         // (title updates and DLC packages have no file extension: "All files" first)
@@ -222,7 +220,7 @@ void linux_copy_buttons(App &a)
     }
     ui_tip(a.mac ? "Copy a path such as /Users/you/Games/Gears of War 2 or ~/Games/gears2.iso (in Finder: right-click with Option held > Copy as Pathname), then press this."
                  : "Copy a path such as /home/deck/Games/Gears of War 2 or ~/Games/gears2.iso (from Dolphin: right-click > Copy Location), then press this.");
-    next(g_scan == 1 ? "Looking..." : "Look for my games");
+    next("Look for my games", "Looking...");   // the row doesn't jump while it looks
     if (button(g_scan == 1 ? "Looking..." : "Look for my games") && g_scan != 1) scan_start(a);
     ui_tip(a.mac ? "Searches ~/Games, ~/Downloads, ~/Desktop, ~/Documents and external drives (/Volumes) for game copies, disc images and title updates."
                  : "Searches ~/Games, ~/Downloads, ~/Desktop, your Steam library folders, SD cards and USB drives (/run/media) and ~/.local/share for game copies, disc images and title updates.");

@@ -196,7 +196,7 @@ void legal_notice_ask(App &a)
 // GitHub #443: "Close COGBox?" can be switched off (its own "Don't ask again", or About > Ask before closing COGBox)
 void ask_quit(App &a)
 {
-    if (a.ini.geti("Launcher", "AskQuit", 1) == 0) { a.quit = true; return; }
+    if (!ask_before_closing(a.ini)) { a.quit = true; return; }
     ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
     a.modal.check = "Don't ask again";
     a.modal.checked = false;
