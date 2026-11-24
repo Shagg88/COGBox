@@ -545,14 +545,16 @@ std::vector<Option> make_options(Game g) {
                "TU4, Gears 1: TU5). Disc-only versions are no longer supported.", 324), "version");
     // cg050: no "Faster game code" option. 0.6.3 (Shagg 11-15): the faster build is the only one shipped - no -normal
     // exe, no crash fallback (CogBox.ini [FastCode] of 0.5.0-0.6.2 is ignored; upgrade_cleanup.cpp drops it)
-    add(choice("Players", "Players", Tab::Gameplay, PG, { "1", "2 (split-screen)", "3 (split-screen)", "4 (split-screen)" }, 0,
+    // GitHub #443 / #403 (Shagg 24 Nov): the games allow two local players - with 3 or 4 they stop at "Only one / two
+    // signed-in gamer profiles" (co-optimus: Gears 3 and Judgment local split-screen = 2). 3 / 4 are no longer offered.
+    add(choice("Players", "Players", Tab::Gameplay, PG, { "1", "2 (split-screen)" }, 0,
                "Local split-screen co-op, one controller each. In the game, choose Campaign > Play Split-Screen; player 2 is "
                "signed in automatically. If a controller shows up twice, turn off Steam Input or DS4Windows.", 325), "players");
     // GitHub #136 (ebercr): two-player split side by side. The engine's own viewport setting, sent as a console command
     // once player 1 exists (Gears 3's --ue3_exec); the reporter's Back-button binding showed the game honours it.
     add(choice("SplitLayout", "Two-player split", Tab::Gameplay, PG, { "Top and bottom (game's)", "Side by side" }, 0,
-               "Experimental - how the screen is split for 2 players. Side by side suits ultrawide monitors. 3 and 4 players keep "
-               "the game's own split. Gears 2: side by side from the start.", 325), "splitlayout");
+               "Experimental - how the screen is split for 2 players. Side by side suits ultrawide monitors. "
+               "Gears 2: side by side from the start.", 325), "splitlayout");
     // 0.3.5 (GitHub #72, SDK patch 49b): System Link over a LAN or a LAN VPN (Radmin VPN, ZeroTier, Hamachi). Off = the
     // runtime behaves exactly as before ("No Network Connection").
     add(make("SystemLink", "System Link - LAN play", Tab::Gameplay, Kind::Bool, PG, 0,
@@ -1654,6 +1656,8 @@ Settings Store::view(Game g, const Environment& env) const {
     // game fell back to when Intel's could not run).
     if (s.i("AAMode") == 4) s.set("AAMode", 1);
     if (s.i("FrameGen") == k_fgDropped) s.set("FrameGen", 1);
+    // GitHub #443 / #403: 3 or 4 players (2 / 3) are no longer offered - the games stop at their two-profile limit
+    if (s.i("Players") > 1) s.set("Players", 1);
     // 0.6.6: Ambient occlusion was Default / On. 0.6.7 (GitHub #406, Shagg 21 Nov): Off (0) is offered again, so a
     // saved Off stays Off; a saved Ultra or CACAO still becomes On
     if (s.i("AO") >= 3) s.set("AO", 2);
