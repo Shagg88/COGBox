@@ -2754,7 +2754,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // GitHub #104 with PR #117's auto button prompts: keep the pad's prompts there too (no switch to key caps).
         // GitHub #249: manual prompt style (Automatic = the runtime's auto, nothing passed)
         if (s.i("PromptStyle") > 0 && s.i("PromptStyle") <= 4 && cap_exe(env, "gow_button_prompts")) {
-            static const char* const k_prompt[5] = { "auto", "original", "playstation", "switch", "steamdeck" };
+            // GitHub #443: Xbox sends "xbox" (drawn Xbox glyphs, like the other styles), not "original" - "original" never starts
+            // the prompt monitor (no live change until a restart) and leaves the launcher key caps as they were (Xbox after
+            // another style showed the keyboard layout). The game's own 360 prompts stay as Automatic with an Xbox pad.
+            static const char* const k_prompt[5] = { "auto", "xbox", "playstation", "switch", "steamdeck" };
             a.push_back(std::string("--gow_button_prompts=") + k_prompt[s.i("PromptStyle")]);
         }
         if (s.b("PadPrompts") && cap_exe(env, "gow_button_prompts_keep_pad"))
