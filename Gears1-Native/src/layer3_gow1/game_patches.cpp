@@ -6,6 +6,7 @@
 #include <cmath>   // 0.6.7 true 1080p menus: std::round, std::fabs
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <format>
 #include <set>
 #include <string>
@@ -57,6 +58,14 @@ REXCVAR_DEFINE_BOOL(gow1_ini_edits, true, "Gears 1",
                     "Marker for the launcher: this build edits Gears 1's Coalesced.ini (--ue3_ini_edits)");
 REXCVAR_DECLARE(std::string, ue3_ini_edits);
 REXCVAR_DECLARE(std::string, ue3_ini_bundle_dir);
+REXCVAR_DECLARE(int32_t, gow1_native_lines);
+// GitHub #446 (0.6.9): character / object shadows looked blocky at true 1080p. Gears 1 sizes each dynamic shadow by how
+// big it is on screen, but never above Xe-WarEngine.ini [Engine.Engine] MaxShadowResolution=432 (the console's 720
+// lines). With --gow1_native_lines the limit grows with the lines (432 x lines / 720, a multiple of 16: 1080 -> 656,
+// 1440 -> 864), so a shadow has the same detail per screen pixel as on the console; 0 = the game's own 432.
+REXCVAR_DEFINE_INT32(gow1_shadow_max_res, -1, "Gears 1",
+                     "GitHub #446: the largest dynamic shadow (the game's MaxShadowResolution, 432). -1 = automatic "
+                     "(grows with --gow1_native_lines above 720), 0 = the game's own, 432-2048 = this size");
 
 REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
                     "TEST ONLY (scripted test runs): no full-screen movies - the start-up film player passes "
@@ -82,9 +91,19 @@ void Gow1AddBuiltInIniEdits() {
   if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xe-WarEngine.ini|FullScreenMovie|bForceNoMovies=True;";
   if (const int32_t mb = REXCVAR_GET(gow1_texture_pool_mb); mb > 0 && mb <= 400)
     add += std::format("Xe-WarEngine.ini|TextureStreaming|PoolSize={};", mb);
+  {   // #446: shadow detail that keeps up with true 1080p / 1440p
+    int32_t sr = REXCVAR_GET(gow1_shadow_max_res);
+    if (sr < 0) {
+      const int32_t lines = REXCVAR_GET(gow1_native_lines);
+      sr = lines > 720 ? ((432 * lines / 720 + 15) / 16) * 16 : 0;
+    }
+    if (sr > 0) add += std::format("Xe-WarEngine.ini|Engine.Engine|MaxShadowResolution={};", std::clamp(sr, 432, 2048));
+  }
   if (!add.empty()) rex::cvar::SetFlagByName("ue3_ini_edits", add + REXCVAR_GET(ue3_ini_edits));   // the player's last
-  REXLOG_INFO("gow1: options - aniso16 {}, trilinear {}, pool {} MB, skip logos {}", REXCVAR_GET(gow1_aniso16),
-              REXCVAR_GET(gow1_trilinear), REXCVAR_GET(gow1_texture_pool_mb), REXCVAR_GET(gow1_skip_logos));
+  REXLOG_INFO("gow1: options - aniso16 {}, trilinear {}, pool {} MB, skip logos {}, shadow max {} (switch {})",
+              REXCVAR_GET(gow1_aniso16), REXCVAR_GET(gow1_trilinear), REXCVAR_GET(gow1_texture_pool_mb),
+              REXCVAR_GET(gow1_skip_logos), add.find("MaxShadowResolution") != std::string::npos ? "raised" : "432 (game's)",
+              REXCVAR_GET(gow1_shadow_max_res));
 }
 
 // The start-up check of Coalesced.ini (gow1_manifest.toml): skipped only when the config edits gave the game an edited
