@@ -212,27 +212,26 @@ void library_row(App &a, int g, const FabLibRow &r, size_t i, size_t n)
     const ImVec2 r0 = ImGui::GetCursorScreenPos();
     const float rw = ui_row_x1() - r0.x;
     // the lines under the name: what the game makes of it (mods.cpp apply_mod_rules), what mod.ini has it doesn't know
-    struct Line { std::string text; ImVec4 c; std::vector<std::string> tip; };
+    // (a conflict line keeps its pairs - in cs, alive for the whole row - and builds its tip only when hovered)
+    using Pair = std::pair<const ModConflictPair *, int>;   // (the pair, mod_conflict_text's kind)
+    struct Line { std::string text; ImVec4 c; std::vector<Pair> pairs; };
     std::vector<Line> lines;
     if (m.enabled && !m.problem.empty()) lines.push_back({ trf("Left out by the game: {1}", { m.problem }), col::bad, {} });
     for (const std::string &x : m.notes) lines.push_back({ "mod.ini: " + x, col::amber, {} });
     // KiltedKernel: the files and textures it shares with other enabled mods (mod_conflicts.h), and which one wins
-    if (m.enabled) {
-        const std::shared_ptr<const ModConflictSet> cs = mod_conflicts_get(g);
-        if (const ModConflicts *c = cs ? cs->find(m.folder) : nullptr) {
-            std::vector<Line> cl;
-            for (const ModConflictPair &p : c->replaced_by) cl.push_back({ mod_conflict_text(p, 0), col::amber, mod_conflict_tip(p, 0) });
-            for (const ModConflictPair &p : c->tex_loses) cl.push_back({ mod_conflict_text(p, 2), col::amber, mod_conflict_tip(p, 2) });
-            for (const ModConflictPair &p : c->replaces) cl.push_back({ mod_conflict_text(p, 1), col::amber, mod_conflict_tip(p, 1) });
-            for (const ModConflictPair &p : c->tex_wins) cl.push_back({ mod_conflict_text(p, 3), col::amber, mod_conflict_tip(p, 3) });
-            if (cl.size() > 4) {   // a long list: the first three, then one line for the rest (its tip lists them)
-                Line more{ trf("And {1} more overlaps with other mods", { std::to_string(cl.size() - 3) }), col::amber, {} };
-                for (size_t k = 3; k < cl.size(); k++) more.tip.push_back(cl[k].text);
-                cl.resize(3);
-                cl.push_back(std::move(more));
-            }
-            lines.insert(lines.end(), cl.begin(), cl.end());
-        }
+    const std::shared_ptr<const ModConflictSet> cs = m.enabled ? mod_conflicts_get(g) : nullptr;
+    if (const ModConflicts *c = cs ? cs->find(m.folder) : nullptr) {
+        std::vector<Pair> ps;
+        for (const ModConflictPair &p : c->replaced_by) ps.push_back({ &p, 0 });
+        for (const ModConflictPair &p : c->tex_loses) ps.push_back({ &p, 2 });
+        for (const ModConflictPair &p : c->replaces) ps.push_back({ &p, 1 });
+        for (const ModConflictPair &p : c->tex_wins) ps.push_back({ &p, 3 });
+        // a long list: the first three, then one line for the rest (its tip lists them)
+        const size_t shown = ps.size() > 4 ? 3 : ps.size();
+        for (size_t k = 0; k < shown; k++) lines.push_back({ mod_conflict_text(*ps[k].first, ps[k].second), col::amber, { ps[k] } });
+        if (shown < ps.size())
+            lines.push_back({ trf("And {1} more overlaps with other mods", { std::to_string(ps.size() - shown) }), col::amber,
+                              std::vector<Pair>(ps.begin() + (long)shown, ps.end()) });
     }
     const float lineH = FS(F_SMALL) * kRowText + S(3);
     const float top = T(54), rh = top + (lines.empty() ? 0 : lines.size() * lineH + S(6));
@@ -319,11 +318,17 @@ void library_row(App &a, int g, const FabLibRow &r, size_t i, size_t n)
     for (const Line &l : lines) {
         const std::string f = fit(F_SMALL, FS(F_SMALL) * kRowText, l.text, rw - S(20) - (tx - r0.x));
         dl->AddText(F_SMALL, FS(F_SMALL) * kRowText, ImVec2(tx, ly), U(l.c), f.c_str());
-        if (!l.tip.empty() && ImGui::IsMouseHoveringRect(ImVec2(tx, ly), ImVec2(r1.x, ly + lineH))) {
+        if (!l.pairs.empty() && ImGui::IsMouseHoveringRect(ImVec2(tx, ly), ImVec2(r1.x, ly + lineH))) {
             // file names come from the mods' folders: drawn as they are, never as a format
             ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(S(640), FLT_MAX));
             ImGui::BeginTooltip();
-            for (const std::string &t : l.tip) ImGui::TextUnformatted(t.c_str());
+            for (size_t k = 0; k < l.pairs.size(); k++) {
+                if (l.pairs.size() > 1) {   // the "more" line: each pair's own line, then its paths
+                    if (k) ImGui::Dummy(ImVec2(0, S(4)));
+                    ImGui::TextUnformatted(mod_conflict_text(*l.pairs[k].first, l.pairs[k].second).c_str());
+                }
+                for (const std::string &t : mod_conflict_tip(*l.pairs[k].first, l.pairs[k].second)) ImGui::TextUnformatted(t.c_str());
+            }
             ImGui::EndTooltip();
         }
         ly += lineH;
@@ -337,6 +342,12 @@ void library_row(App &a, int g, const FabLibRow &r, size_t i, size_t n)
 void library_tab(App &a)
 {
     const int g = fab_library_game(a);
+    {   // review: opened (or turned to another game) - its mods' folders listed again for the conflicts
+        static int s_frame = -10, s_game = -1;
+        if (ImGui::GetFrameCount() - s_frame > 1 || g != s_game) mod_conflicts_refresh(g);
+        s_frame = ImGui::GetFrameCount();
+        s_game = g;
+    }
     // the game filter, and Add a mod
     {
         int sel = 0;

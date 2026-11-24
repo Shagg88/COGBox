@@ -61,12 +61,15 @@ static std::string ini_value(const std::string &text, const std::string &key)
 
 // KiltedKernel (mod API 1): Gears 3's mods through the game's own rules (modcore, MIT: Gears3-Native's
 // src/layer2_ue3/modcore, compiled into CogBox by build.sh), so the list says what the game will do: a mod left out
-// and why (another game's, a required mod missing or off), the act and chapters the campaign registry gives a
-// campaign, and the mod.ini keys the game does not understand. Worked out again only when the mods, their order or
-// their files change (the list is read every 2 s).
+// and why (another game's, a required mod missing or off, enabled = false in its mod.ini), the act and chapters the
+// campaign registry gives a campaign, and the mod.ini keys the game does not understand. Gears 2 runs the same mod.ini
+// rules (Gears2-Native mod_extras.cpp: FromFolders(dirs, "gears2")) without the campaign registry. Worked out again
+// only when the mods, their order or their files change (the list is read every 2 s).
 static void apply_mod_rules(int g, std::vector<ModItem> &out)
 {
-    if (std::string(game_def(g).key) != "gears3") return;
+    const std::string key = game_def(g).key;
+    if (key != "gears3" && key != "gears2") return;
+    const bool campaigns = key == "gears3";   // (Gears 2 has no mod chapters yet)
     namespace fs = std::filesystem;
     std::error_code ec;
     std::string sig = i18n_current() + ";";   // review r1940: its lines are translated here, so a language switch rebuilds them
@@ -77,31 +80,42 @@ static void apply_mod_rules(int g, std::vector<ModItem> &out)
             auto t = fs::last_write_time(f, ec);
             sig += ec ? "|" : "|" + std::to_string((long long)t.time_since_epoch().count());
         }
+        // (and mod.ini's size: two saves within one tick of the file clock keep one time - an "enabled = false" line taken out)
+        const auto n = fs::file_size(dir / L"mod.ini", ec);
+        sig += ec ? ":" : ":" + std::to_string((unsigned long long)n);
     }
     struct Result { std::string problem, campaign; std::vector<std::string> notes; };
-    static std::string s_sig;
-    static std::vector<Result> s_res;
-    if (sig != s_sig || s_res.size() != out.size()) {
-        s_sig = sig;
-        s_res.assign(out.size(), Result{});
+    static std::string s_sig[G_COUNT];   // (per game: the LIBRARY and the Mods tab can show two games in turn)
+    static std::vector<Result> s_res[G_COUNT];
+    std::vector<Result> &res = s_res[g];
+    if (sig != s_sig[g] || res.size() != out.size()) {
+        s_sig[g] = sig;
+        res.assign(out.size(), Result{});
         std::vector<fs::path> enabled;
         for (const ModItem &m : out) if (m.enabled) enabled.push_back(fs::path(widen(m.path)));
-        const std::vector<modcore::Manifest> on = modcore::FromFolders(enabled, "gears3");
+        const std::vector<modcore::Manifest> on = modcore::FromFolders(enabled, key);
         // the slots: after the acts and chapters the game's config has once the mods' own fragments are in
         std::string base;
-        read_file(join(game_root(g), "game\\extracted\\GearGame\\CookedXbox360\\Coalesced_INT.bin"), base, 64 << 20);
+        if (campaigns) read_file(join(game_root(g), "game\\extracted\\GearGame\\CookedXbox360\\Coalesced_INT.bin"), base, 64 << 20);
         std::vector<std::pair<std::string, fs::path>> fragments;
         for (const modcore::Manifest &m : on)
             if (m.Active()) for (const fs::path &f : modcore::Fragments(m)) fragments.emplace_back(m.name, f);
         const std::vector<uint8_t> merged = modcore::MergeConfig(std::vector<uint8_t>(base.begin(), base.end()), fragments);
-        const modcore::Allocation alloc = merged.empty() ? modcore::Allocation{} : modcore::AllocateCampaigns(on, modcore::UsedCampaignSlots(merged));
+        const modcore::Allocation alloc = !campaigns || merged.empty() ? modcore::Allocation{} : modcore::AllocateCampaigns(on, modcore::UsedCampaignSlots(merged));
         size_t k = 0;
         for (size_t i = 0; i < out.size(); i++) {
-            Result &r = s_res[i];
-            const modcore::Manifest m = out[i].enabled ? on[k++] : modcore::Read(fs::path(widen(out[i].path)));
+            Result &r = res[i];
+            const modcore::Manifest m = out[i].enabled ? on[k++] : modcore::Read(fs::path(widen(out[i].path)), key);
             r.notes = m.warnings;
             if (!out[i].enabled) continue;
             r.problem = m.problem;
+            // review: modcore's Active() is enabled && no problem - a mod off in its own mod.ini is left out too (and its
+            // files are not counted by mod_conflicts)
+            if (r.problem.empty() && !m.enabled) r.problem = tr(std::string("enabled = false in its mod.ini"));
+            if (!campaigns) {
+                if (m.Active() && !m.chapters.empty()) r.notes.push_back(tr(std::string("Gears 2 does not load mod chapters yet")));
+                continue;
+            }
             if (m.api > modcore::kModApiLevel)
                 r.notes.push_back(trf("made for a newer COGBox (mod API {1}; this one has {2})",
                                       { std::to_string(m.api), std::to_string(modcore::kModApiLevel) }));
@@ -124,9 +138,9 @@ static void apply_mod_rules(int g, std::vector<ModItem> &out)
         }
     }
     for (size_t i = 0; i < out.size(); i++) {
-        out[i].problem = s_res[i].problem;
-        out[i].campaign = s_res[i].campaign;
-        out[i].notes = s_res[i].notes;
+        out[i].problem = res[i].problem;
+        out[i].campaign = res[i].campaign;
+        out[i].notes = res[i].notes;
     }
 }
 

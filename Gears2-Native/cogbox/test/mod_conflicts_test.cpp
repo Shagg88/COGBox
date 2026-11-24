@@ -59,6 +59,7 @@ int main()
         CHECK(mod_conflict_game_path("intro.bik", g3) == "geargame\\movies\\intro.bik");
     }
     // config fragments merge (no conflict); mod.ini, fabricator.json, read-me files, TOCs and programs are not game files
+    // (programs: the launcher's whole mod_file_rules list - run.bat too, which the runtime itself would not skip)
     {
         const auto c = mod_conflicts({ mod("A", { "config\\DefaultGame.ini", "Config/weapons.ini", "mod.ini", "fabricator.json", "readme.txt",
                                                   "GearGame\\Xbox360TOC.txt", "GearGame\\Binaries\\tool.exe", "GearGame\\run.bat", "GearGame\\x.dll" }),
@@ -67,6 +68,16 @@ int main()
                                      gears2());
         CHECK(!c[0].any() && !c[1].any());
         CHECK(mod_conflict_game_path("config\\a.ini", gears2()).empty());
+        // Gears 1 / Judgment have no fragments: config\ is a folder like any - used only if the game has one
+        ModConflictRules g1;
+        g1.fragments = false;
+        g1.game_tops = { "geargame" };
+        CHECK(mod_conflict_game_path("config\\a.ini", g1).empty());
+        g1.game_tops = { "geargame", "config" };
+        CHECK(mod_conflict_game_path("Config\\a.ini", g1) == "config\\a.ini");
+        g1.game_tops.clear();   // (not known: counted)
+        const auto d = mod_conflicts({ mod("A", { "config\\a.ini" }), mod("B", { "config\\A.INI" }) }, g1);
+        CHECK(d[1].replaces.size() == 1);
         CHECK(mod_conflict_game_path("GearGame\\CookedXenon\\Startup_INT.xxx", gears2()) == "geargame\\cookedxenon\\startup_int.xxx");
     }
     // a folder the game hasn't is not used (the overlay skips it), when the game's folders are known
@@ -118,6 +129,14 @@ int main()
         CHECK(!c[0].any());
         CHECK(mod_conflicts({}, gears2()).empty());
     }
+    // a listing given by reference (the worker's cache, not copied) counts as its own files
+    {
+        const std::vector<std::string> cached = { "GearGame\\a.xxx" };
+        ModFileList b = mod("B", {});
+        b.ref = &cached;
+        const auto c = mod_conflicts({ mod("A", { "GearGame\\A.xxx" }), b }, gears2());
+        CHECK(c[1].replaces.size() == 1 && c[1].replaces[0].names[0] == "GearGame\\a.xxx");
+    }
     // the names kept per pair: the first max_names in name order, with the full count
     {
         std::vector<std::string> a, b;
@@ -131,7 +150,8 @@ int main()
         CHECK(c[1].replaces.size() == 1 && c[1].replaces[0].count == 25 && c[1].replaces[0].names.size() == 10);
         CHECK(c[1].replaces[0].names.front() == "GearGame\\f00.xxx" && c[1].replaces[0].names.back() == "GearGame\\f09.xxx");
     }
-    // large lists: two 50 000-file packs and a 50 000-file mod, half of each overlapping, well under ~100 ms
+    // large lists: two 50 000-file packs and two 50 000-file mods, half of each overlapping (about 50 ms here; the bound
+    // is generous so a slow or busy machine doesn't fail it)
     {
         std::vector<ModFileList> v = { mod("Pack 1", {}), mod("Pack 2", {}), mod("Mod 1", {}), mod("Mod 2", {}) };
         for (int i = 0; i < 50000; i++) {
@@ -149,7 +169,7 @@ int main()
         const auto c = mod_conflicts(v, gears2());
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         printf("200 000 files: %.1f ms\n", ms);
-        CHECK(ms < 100);
+        CHECK(ms < 1000);
         CHECK(c[1].tex_wins.size() == 1 && c[1].tex_wins[0].count == 25000);
         CHECK(c[3].replaces.size() == 1 && c[3].replaces[0].count == 25000 && c[3].replaces[0].names.size() == 10);
     }

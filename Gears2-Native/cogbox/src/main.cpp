@@ -8,6 +8,7 @@
 #include "app.h"
 #include "social_client.h"
 #include "fabricator_state.h"   // the FABRICATOR screen's worker and jobs
+#include "mod_conflicts.h"   // its worker stopped at exit
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
 #include "update.h"
@@ -1083,6 +1084,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     while (g_backupState.load() == 1) SDL_Delay(50);   // 0.6.6 (review #21): a save backup still zipping finishes first
     if (a.job.th.joinable()) a.job.th.join();
     music_stop();
+    mod_conflicts_shutdown();   // the conflicts' worker stops between two mods
     fab_state_shutdown();   // the FABRICATOR: packs cancelled, unfinished installs' .partial folders removed
     for (auto &c : a.cover) if (c.tex) SDL_DestroyTexture(c.tex);
     ImGui_ImplSDLRenderer3_Shutdown();

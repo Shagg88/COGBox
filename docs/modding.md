@@ -23,7 +23,8 @@ Windows runs, and archives inside the mod are left out when it is added. Folders
 
 **Load order:** the Mods tab's order, top to bottom. Where two mods have the same file, the lower one wins.
 COGBox shows it under both mods (the Mods tab and the FABRICATOR's LIBRARY): which files, and which mod's copy the game
-uses. Config fragments (`config\*.ini`) are merged, not replaced, so they never clash.
+uses. Config fragments (`config\*.ini`) are not shown as clashes: they are merged in load order, not replaced, and
+where two mods set the same key the lower mod's value is used.
 
 ## mod.ini
 

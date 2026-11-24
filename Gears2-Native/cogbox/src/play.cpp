@@ -8,6 +8,7 @@
 #include "x360fs.h"
 #include "crash_dump.h"
 #include "social_model.h"   // kPreferLobbyPrefix (0.6.4)
+#include "mod_conflicts.h"   // the mods' folders listed again when a game closes
 
 #include <windows.h>
 #include <cstdio>
@@ -640,6 +641,7 @@ void play_poll(App &a)
     a.run.proc = nullptr;
     achievements_tab_reload();   // achievements part 4: its new unlocks
     int g = a.run.game;
+    mod_conflicts_refresh(g);   // (the mods' folders listed again: a game run can be when files changed)
     const GameDef &d = game_def(g);
     int64_t secs = std::max<int64_t>(0, unix_now() - a.run.started);
     if (a.run.prepare) {   // job 641: no play time, no window juggling - say how it went

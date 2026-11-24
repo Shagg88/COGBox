@@ -1469,6 +1469,12 @@ static void mods_tab(App &a, int g)
         if (ml[g].empty()) { lamp_line(0, "No mods yet"); ui_tip(k_noModsTip); }
         bool changed = false;
         const float bw = T(90);   // Up / Down: one column at the right, the same size
+        {   // review: the tab opened (or another game's) - the mods' folders listed again for the conflicts
+            static int s_frame = -10, s_game = -1;
+            if (ImGui::GetFrameCount() - s_frame > 1 || g != s_game) mod_conflicts_refresh(g);
+            s_frame = ImGui::GetFrameCount();
+            s_game = g;
+        }
         const std::shared_ptr<const ModConflictSet> conflicts = mod_conflicts_get(g);
         for (size_t i = 0; i < ml[g].size(); i++) {
             const ModItem &m = ml[g][i];
@@ -1511,10 +1517,15 @@ static void mods_tab(App &a, int g)
                     if (ImGui::IsItemHovered()) {   // file names: TextUnformatted only
                         ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(S(640), FLT_MAX));
                         ImGui::BeginTooltip();
-                        for (size_t k = 0; k < v.size(); k++) {
+                        const size_t kMax = 6;   // (then "and N more": the LIBRARY has a line each)
+                        for (size_t k = 0; k < v.size() && k < kMax; k++) {
                             if (k) ImGui::Dummy(ImVec2(0, S(4)));
                             ImGui::TextUnformatted(mod_conflict_text(*v[k].first, v[k].second).c_str());
                             for (const std::string &x : mod_conflict_tip(*v[k].first, v[k].second)) ImGui::TextUnformatted(x.c_str());
+                        }
+                        if (v.size() > kMax) {
+                            ImGui::Dummy(ImVec2(0, S(4)));
+                            ImGui::TextUnformatted(trf("and {1} more - see the FABRICATOR's LIBRARY", { std::to_string(v.size() - kMax) }).c_str());
                         }
                         ImGui::EndTooltip();
                     }

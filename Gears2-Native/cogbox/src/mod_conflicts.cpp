@@ -70,8 +70,9 @@ void tally(const std::unordered_map<Key, std::vector<Owner>> &owners, std::map<s
 std::string mod_conflict_game_path(const std::string &rel, const ModConflictRules &r)
 {
     std::string k = key_of(rel);
-    if (k.empty() || k == "config" || k.rfind("config\\", 0) == 0) return {};   // fragments: merged, not replaced
-    if (is_program(k)) return {};
+    if (k.empty()) return {};
+    if (r.fragments && (k == "config" || k.rfind("config\\", 0) == 0)) return {};   // fragments: merged, not replaced
+    if (is_program(k)) return {};   // (the launcher's list, wider than the runtime's .xex .xexp .dll .exe: see the .h)
     if (k.find('\\') == std::string::npos) {
         // a file at the mod's top: its own (mod.ini, read-me, fabricator.json), or a bare Xbox 360 file (modcore GamePath)
         if (r.cooked.empty()) return {};
@@ -124,10 +125,10 @@ std::vector<ModConflicts> mod_conflicts(const std::vector<ModFileList> &mods, co
     std::unordered_map<std::string, std::vector<Owner>> files;
     std::unordered_map<uint64_t, std::vector<Owner>> textures;
     size_t total = 0;
-    for (const ModFileList &m : mods) total += m.files.size();
+    for (const ModFileList &m : mods) total += m.list().size();
     files.reserve(total);
     for (size_t i = 0; i < mods.size(); i++) {
-        for (const std::string &rel : mods[i].files) {
+        for (const std::string &rel : mods[i].list()) {
             uint64_t h = 0;
             if (mod_conflict_texture_hash(rel, h)) {   // a pack texture (even in a mod the game leaves out)
                 std::vector<Owner> &o = textures[h];
