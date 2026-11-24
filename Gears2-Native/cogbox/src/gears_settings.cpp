@@ -2875,10 +2875,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             // 0.3.0 (Shagg 14:09, Gears 1 on Vulkan ran past its cap): the SDK's Vulkan presenter picks IMMEDIATE (no vsync)
             // whenever the driver offers it, and MAILBOX next - only FIFO waits for the screen. With vsync on, those two are
             // switched off so Vulkan gets FIFO like DirectX 12's vsync. (Runtime cvars; DirectX 12 ignores them.)
-            if (cap_rt(env, "vulkan_allow_present_mode_immediate")) {
+            // 0.6.8 (Shagg 24 Nov, job 2380d: a 179 Hz screen ran Vulkan at 150 / 75 fps with vsync, 0.6.7 the same): FIFO
+            // halves the rate whenever a frame misses the refresh. MAILBOX doesn't tear either and never waits a whole
+            // refresh - with the frame-rate cap at the refresh rate (above) it is vsync without the drop. Only IMMEDIATE
+            // (tearing) is switched off now; a driver without MAILBOX still gets FIFO.
+            if (cap_rt(env, "vulkan_allow_present_mode_immediate"))
                 a.push_back("--vulkan_allow_present_mode_immediate=false");
-                a.push_back("--vulkan_allow_present_mode_mailbox=false");
-            }
         }
         if (g == Game::Gears2 && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gow2_max_fps=" + std::to_string(cap)); }
         if (isG3 && fps > 0) {
