@@ -267,7 +267,9 @@ void linux_start(App &a, bool hadSettings);   // first start under Proton: the r
 void linux_poll(App &a);                      // "Look for my games" finished: the list to choose from
 void linux_answer(App &a, const Modal &m);    // the "protonrec" / "protonfound" questions
 float linux_copy_buttons_width(const App &a);
-void linux_copy_buttons(App &a);              // Choose a file... / Choose a folder... / Paste a path (Linux: + Look for my games)
+// Choose a file... / Choose a folder... / Paste a path (Linux: + Look for my games); wrap_x1 > 0: a button that would
+// pass that screen x goes on the next line (GitHub #443: the About tab's column)
+void linux_copy_buttons(App &a, float wrap_x1 = 0);
 void linux_recommended_ask(App &a, int g);    // "Use recommended Steam Deck / Proton settings"
 std::string shown_path(const App &a, const std::string &p);   // under Wine Z:\home\... shown as /home/...
 // 0.6.2 review R7: shell_open(dir), and under Wine also "Folder: /home/..." as the message (Game Mode has no file

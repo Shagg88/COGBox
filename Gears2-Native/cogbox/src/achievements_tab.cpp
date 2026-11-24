@@ -191,8 +191,8 @@ void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
         ImDrawList *dl = ImGui::GetWindowDrawList();
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const float h = ImGui::GetTextLineHeight();
-        th_lamp(dl, ImVec2(p.x + S(6), p.y + h * 0.55f), S(4.5f), sel.totals.unlocked > 0 ? 1 : 0);
-        ImGui::SetCursorScreenPos(ImVec2(p.x + S(18), p.y));
+        th_lamp(dl, ImVec2(p.x + S(10), p.y + h * 0.55f), S(4.5f), sel.totals.unlocked > 0 ? 1 : 0);   // GitHub #443: the glow was cut off at +6
+        ImGui::SetCursorScreenPos(ImVec2(p.x + S(22), p.y));
         ImGui::TextUnformatted(sel.loaded ? cogbox::status_line(sel.totals, tr("achievements")).c_str() : tr("Not played yet"));
     }
 

@@ -547,6 +547,9 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
     ImGui::PopItemFlag();
     const bool psel = slot == 1 && a.padConnected && a.frontSel == 10;   // 0.4.6: chosen with the D-pad (top row)
     th_plate(dl, o, ImVec2(o.x + w, o.y + h), S(6), hov || psel);
+    // GitHub #443 (Steam Deck tester: "no highlighting when hovered"): the lit plate only changed its edge and a shade -
+    // lifted under the mouse as a button is (a lighter body; the edge and rivets stay)
+    if (hov) th_plate_fill(dl, ImVec2(o.x + S(1.5f), o.y + S(1.5f)), ImVec2(o.x + w - S(1.5f), o.y + h - S(1.5f)), S(5), IM_COL32(255, 255, 255, 18));
     // the badge: a dark disc, a crimson ring, the first letter (or a head-and-shoulders mark when no name is set)
     const ImVec2 c(o.x + S(10) + r, o.y + h * 0.5f);
     dl->AddCircleFilled(c, r, U(ImVec4(0.05f, 0.05f, 0.06f, 1)), 32);

@@ -163,13 +163,16 @@ float linux_copy_buttons_width(const App &a)   // for centring them
     return w + ImGui::GetStyle().ItemSpacing.x * float(n - 1);
 }
 
-void linux_copy_buttons(App &a)
+void linux_copy_buttons(App &a, float wrap_x1)
 {
     const bool busy = a.job.state.load() == 1 || a.run.proc != nullptr;
-    auto button = [&](const char *en) {
-        const char *l = tr(en);
-        const float w = std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, l).x + S(28));
-        return th_button(l, ImVec2(w, T(26)), !busy, F_BODY);
+    auto width = [&](const char *en) { return std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, tr(en)).x + S(28)); };
+    auto button = [&](const char *en) { return th_button(tr(en), ImVec2(width(en), T(26)), !busy, F_BODY); };
+    // GitHub #443: the next button beside the last one, or on the next line when it would run past wrap_x1 (the About
+    // tab's column: "Look for my games" was cut off on the right)
+    auto next = [&](const char *en) {
+        ImGui::SameLine();
+        if (wrap_x1 > 0 && ImGui::GetCursorScreenPos().x + width(en) > wrap_x1) ImGui::NewLine();
     };
     if (button("Choose a file...")) {
         // (title updates and DLC packages have no file extension: "All files" first)
@@ -179,12 +182,12 @@ void linux_copy_buttons(App &a)
     ui_tip(a.mac ? "A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Mac folders are under Z: (Z:\\Users\\... is /Users/...)."
        : a.wine ? "A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
                   : "A disc image (.iso), a Games on Demand file, a title update or a DLC package (those two have no file extension).");
-    ImGui::SameLine();
+    next("Choose a folder...");
     if (button("Choose a folder...")) add_path(a, pick_folder(L"Choose the folder of your game copy, title update or DLC"));
     ui_tip(a.mac ? "A folder with your game (default.xex), a title update or DLC. Your Mac folders are under Z: (Z:\\Users\\... is /Users/...)."
        : a.wine ? "A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
                   : "A folder with your game (default.xex), a title update or DLC.");
-    ImGui::SameLine();
+    next(a.wine ? (a.mac ? "Paste a Mac path" : "Paste a Linux path") : "Paste a path");
     if (!a.wine) {
         if (button("Paste a path")) {
             char *c = SDL_GetClipboardText();
@@ -216,7 +219,7 @@ void linux_copy_buttons(App &a)
     }
     ui_tip(a.mac ? "Copy a path such as /Users/you/Games/Gears of War 2 or ~/Games/gears2.iso (in Finder: right-click with Option held > Copy as Pathname), then press this."
                  : "Copy a path such as /home/deck/Games/Gears of War 2 or ~/Games/gears2.iso (from Dolphin: right-click > Copy Location), then press this.");
-    ImGui::SameLine();
+    next(g_scan == 1 ? "Looking..." : "Look for my games");
     if (button(g_scan == 1 ? "Looking..." : "Look for my games") && g_scan != 1) scan_start(a);
     ui_tip(a.mac ? "Searches ~/Games, ~/Downloads, ~/Desktop, ~/Documents and external drives (/Volumes) for game copies, disc images and title updates."
                  : "Searches ~/Games, ~/Downloads, ~/Desktop, your Steam library folders, SD cards and USB drives (/run/media) and ~/.local/share for game copies, disc images and title updates.");

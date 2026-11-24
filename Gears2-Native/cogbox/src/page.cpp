@@ -439,9 +439,17 @@ void ui_section(const char *title_en)   // (also achievements_tab.cpp)
 // 0.6.5 (Shagg: the bigger window): a tab's sections in two columns side by side when the page is wide enough, else in
 // one. body(0) draws the left column's sections, body(1) the right's; body(-1) all of them (the one-column case). Each
 // column is its own child window, so a row's label / SameLine(g_labelW) / control works in it as in the page.
+// GitHub #443: the room a vertical scrollbar takes when the rows window has none now - kept free all the same, so the
+// columns and right-hand buttons stay put between a tab that scrolls and one that doesn't (they moved by ~12 px)
+static float scrollbar_room()
+{
+    const ImGuiWindow *w = ImGui::GetCurrentWindow();
+    return w->ScrollbarY || (w->Flags & ImGuiWindowFlags_NoScrollbar) ? 0.0f : ImGui::GetStyle().ScrollbarSize;
+}
+
 void ui_columns(const std::function<void(int)> &body)   // (also achievements_tab.cpp, social_tab.cpp)
 {
-    const float avail = ImGui::GetContentRegionAvail().x - S(16), gap = S(40);
+    const float avail = ImGui::GetContentRegionAvail().x - scrollbar_room() - S(16), gap = S(40);
     if (avail < S(1060)) { body(-1); return; }
     const float colW = std::floor((avail - gap) * 0.5f);
     const float keepLabel = g_labelW, keepX1 = g_rowX1;
@@ -477,8 +485,8 @@ float ui_row_x1() { return g_rowX1; }
 void ui_rows_begin()
 {
     g_ctrlW = T(270);   // 0.6.5 (Shagg): 10% narrower than the first two-column build
-    g_labelW = std::min(S(500), ImGui::GetContentRegionAvail().x - g_ctrlW - S(40));
-    g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
+    g_labelW = std::min(S(500), ImGui::GetContentRegionAvail().x - scrollbar_room() - g_ctrlW - S(40));
+    g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - scrollbar_room() - S(16);   // GitHub #443
     g_sections = 0;
 }
 
@@ -1317,8 +1325,9 @@ static void lamp_line(int state, const std::string &text_en, const std::string &
     const std::string text = tr(text_en);   // 0.2.0
     ImVec2 p = ImGui::GetCursorScreenPos();
     float h = ImGui::GetTextLineHeight();
-    th_lamp(ImGui::GetWindowDrawList(), ImVec2(p.x + S(6), p.y + h * 0.55f), S(4.5f), state);
-    ImGui::SetCursorScreenPos(ImVec2(p.x + S(20), p.y));
+    // GitHub #443: the lamp's glow (twice its radius) was cut off on the left at +6 - in by 4, the text with it
+    th_lamp(ImGui::GetWindowDrawList(), ImVec2(p.x + S(10), p.y + h * 0.55f), S(4.5f), state);
+    ImGui::SetCursorScreenPos(ImVec2(p.x + S(24), p.y));
     ImGui::PushTextWrapPos(row_wrap_x());   // GitHub #123
     ImGui::TextUnformatted(text.c_str());
     ImGui::PopTextWrapPos();
@@ -1734,8 +1743,8 @@ static void about_tab(App &a, int g)
         const float bw = std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, remove).x + S(28)), bh = T(26);
         const ImVec2 p0 = ImGui::GetCursorScreenPos();
         const float lineH = ImGui::GetTextLineHeight();
-        th_lamp(ImGui::GetWindowDrawList(), ImVec2(p0.x + S(6), p0.y + lineH * 0.55f), S(4.5f), dup ? 2 : 1);
-        ImGui::SetCursorScreenPos(ImVec2(p0.x + S(20), p0.y));
+        th_lamp(ImGui::GetWindowDrawList(), ImVec2(p0.x + S(10), p0.y + lineH * 0.55f), S(4.5f), dup ? 2 : 1);   // GitHub #443: as lamp_line
+        ImGui::SetCursorScreenPos(ImVec2(p0.x + S(24), p0.y));
         ImGui::BeginGroup();
         ImGui::PushTextWrapPos(row_wrap_x() - bw - S(12));
         ImGui::TextUnformatted(tr(dl[i].title + (dup ? "  -  duplicate of \"" + dl[i].dupOf + "\" - can be removed" : "")).c_str());
@@ -1774,7 +1783,7 @@ static void about_tab(App &a, int g)
     ui_tip("To add downloadable content, drag and drop the package onto this window.");
     {   // proton049 / 0.6.1: for everyone - where dragging doesn't work, pick or paste instead
         ImGui::Dummy(ImVec2(0, S(2)));
-        linux_copy_buttons(a);
+        linux_copy_buttons(a, g_rowX1);   // GitHub #443: wrapped in the column
     }
 
     }
@@ -2054,7 +2063,7 @@ void page_draw(App &a, ImVec2 size)
     ImGui::PushFont(F_BODY, FS(F_BODY) * k_rowText);
     g_ctrlW = T(270);   // 0.6.5 (Shagg): 10% narrower than the first two-column build
     g_labelW = std::min(S(500), (c1.x - c0.x) - g_ctrlW - S(40));
-    g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
+    g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - scrollbar_room() - S(16);   // GitHub #443: the same with or without a scrollbar
     g_sections = 0;
     if (a.tab < k_tabSocial) {
         gs::Tab want = (gs::Tab)a.tab;
