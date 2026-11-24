@@ -2,7 +2,7 @@ COGBox - Gears of War native PC ports
 =====================================
 
 COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
-Judgment. This README is for COGBox 0.6.8.
+Judgment. This README is for COGBox 0.6.9.
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project. COGBox isn't affiliated with Microsoft, Epic Games or The
 Coalition.

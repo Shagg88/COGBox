@@ -1,5 +1,21 @@
 # COGBox changes
 
+## 0.6.9
+
+A quick update for the crash at the end of a round, match, co-op session or level in 0.6.8.
+
+- **Stats crash fixed** (#447, #451, #453, #454, ticket-0017): all four games could crash when they sent their stats -
+  dying between Horde rounds, leaving a match, a co-op host closing the session, ending a level or pressing Continue.
+  The game handed the stats code a bad pointer (0x00000001). SDK patch 128 (runtime 072) checks every stats pointer
+  against readable game memory first and skips a bad one, and no longer reads XSessionFlushStats as views. Tested:
+  Gears 2 online Horde, die between rounds - 0.6.8 crashed, 0.6.9 did not.
+- **Gears 1 shadows at 1080p / 1440p** (#446): the game's own shadow limit (MaxShadowResolution 432, for 720 lines)
+  grows with the native lines (656 at 1080p, 864 at 1440p). `--gow1_shadow_max_res`: -1 automatic, 0 the game's own.
+- **Update button with a controller** (#445): the D-pad reaches UPDATE TO in the launcher's top row (Steam Deck).
+- **DLSS model**: the tooltip says which model to pick for which card, and that each card behaves differently; it is
+  translated again in all 11 languages (the old translations had been stale since 0.6.6).
+- Chat: logging when the chat box does not open, and when "in a match" changes (#452, for the next fix).
+
 ## 0.6.8
 
 Smoother frame times without the freezes, and the reports against 0.6.7.
