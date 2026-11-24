@@ -1295,8 +1295,11 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
         const bool trueLines = cap_exe(env, k_nl[static_cast<int>(g)]) && cap_exe(env, "gow2_renderer_edram_extended") &&
                                cap_exe(env, "_native_lines: UI scene viewport") &&
                                (!s.b("Ultrawide") || cap_exe(env, "the wide picture is scaled the same way"));
-        on = s.i("Resolution") == 5 && !trueLines;
-        if (s.i("Resolution") == 5 && trueLines) { a.ok = false; a.why = "Not needed: 1080p is drawn by the game itself."; return a; }
+        // PR #440 review: 768p / 900p (6 / 7) take the same upscaled fallback, which sends this sharpening too
+        const int r = s.i("Resolution");
+        const bool linesChoice = r == 5 || r == 6 || r == 7;
+        on = linesChoice && !trueLines;
+        if (linesChoice && trueLines) { a.ok = false; a.why = "Not needed: this resolution is drawn by the game itself."; return a; }
     }
     else if (o.id == "Ssil" && s.i("AO") != 2 && s.i("AO") != 3) {                    // SSIL runs on XeGTAO's depth pyramid
         a.ok = false; a.why = "Needs Ambient occlusion: On."; return a;
@@ -1977,7 +1980,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // GitHub #105: the depth-of-field chain's half-size targets (pitch 640) follow the scale despite the threshold
         if (scale > 1 && avail("DofScale") && on("DofScale")) a.push_back("--gow2_renderer_resolution_scale_pitches=640");
         a.push_back("--gow2_renderer_memexport=true");
-        if (s.i("Resolution") >= 4 && s.i("Resolution") <= 5 && !s.b("Ultrawide") && !true1080) {   // (not with true 1080p: --gow3_native_lines excludes it)
+        if (s.i("Resolution") >= 4 && !s.b("Ultrawide") && !true1080) {   // PR #440 review: 768p / 900p upscaled too, as 1080p   // (not with true 1080p: --gow3_native_lines excludes it)
             if (cap_exe(env, "gow3_aspect")) a.push_back("--gow3_aspect=auto");
             else notes.push_back("launcher: this Gears 3 build has no --gow3_aspect yet - the picture stays 16:9");
         }
