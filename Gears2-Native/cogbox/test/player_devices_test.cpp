@@ -38,7 +38,7 @@ int main() {
     CHECK(PlayerDevicesArg({ "x", "" }) == "--player_devices=x;auto");
     CHECK(PlayerDevicesArg({ "sdl:g|p", "x", "" }) == "--player_devices=sdl:g|p;x;auto");
 
-    // Auto's order (SDK patch 128): keyboard and mouse first, then the pads in order
+    // Auto's order (SDK patch 129): keyboard and mouse first, then the pads in order
     const std::vector<DetectedDevice> two = { { "sdl:a|1", "Pad A", "" }, { "sdl:b|2", "Pad B", "" } };
     CHECK(EffectiveDevices({ "", "" }, two, true) == (V{ "kbm", "sdl:a|1" }));              // all Auto: KBM player 1, pad player 2
     CHECK(EffectiveDevices({ "sdl:b|2", "" }, two, true) == (V{ "sdl:b|2", "kbm" }));       // P1 on a pad: P2 Auto gets KBM

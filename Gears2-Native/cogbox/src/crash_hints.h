@@ -27,12 +27,18 @@ inline int log_out_of_memory(const std::string &log)
     return 0;
 }
 
-inline const char *out_of_memory_text()
+// What to do about it (also said on its own when the exit code already named out of memory, so it isn't said twice)
+inline const char *out_of_memory_advice()
 {
-    return "Windows ran out of memory for it (its log says memory or a thread it asked for couldn't be made) - close other "
-           "programs while you play, and let Windows manage the page file size (Settings > System > About > Advanced "
-           "system settings > Performance Settings > Advanced > Virtual memory: \"Automatically manage paging file size\"), "
-           "or make the page file bigger";
+    return "close other programs while you play, and let Windows manage the page file size (Settings > System > About > "
+           "Advanced system settings > Performance Settings > Advanced > Virtual memory: \"Automatically manage paging file "
+           "size\"), or make the page file bigger";
+}
+
+inline std::string out_of_memory_text()
+{
+    return std::string("Windows ran out of memory for it (its log says memory or a thread it asked for couldn't be made) - ") +
+           out_of_memory_advice();
 }
 
 }   // namespace crash_hints

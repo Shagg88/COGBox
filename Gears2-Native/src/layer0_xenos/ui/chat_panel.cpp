@@ -104,7 +104,18 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
     }
     const auto key_of = [](const char* bind) { return rex::ui::ParseVirtualKey(rex::cvar::GetFlagByName(bind)); };
     const bool all = vk == key_of("bind_cogbox_chat_all"), team = !all && vk == key_of("bind_cogbox_chat_team");
-    if ((!all && !team) || !CanOpen()) return false;
+    if (!all && !team) return false;
+    if (!CanOpen()) {
+      // #452 (0.6.9): say why the box did not open (chat off / a COGBox screen / no match running), at most 40 times
+      static std::atomic<int> said{0};
+      if (said.fetch_add(1) < 40) {
+        auto* running = g_match_running.load();
+        REXLOG_INFO("chat: {} pressed, box not opened - {}", all ? "chat key (all)" : "chat key (team)",
+                    !REXCVAR_GET(cogbox_match_chat) ? "chat is off" : XenosInGameMenuIsOpen() ? "a COGBox screen is open"
+                    : (running && running()) ? "?" : "no match running (see the last 'chat: match' line)");
+      }
+      return false;
+    }
     Open(team);
     return true;
   }

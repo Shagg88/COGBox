@@ -1,7 +1,7 @@
 // COGBox - which keyboard-and-mouse or controller drives each split-screen player (SDK patches 117 + 128, --player_devices).
 // The keys are the runtime's rex::input::DeviceKey: "kbm" for the keyboard and mouse, "sdl:<guid>|<path>" for a pad
 // (path = SDL_GetGamepadPath, else "#<SDL instance id>"). Auto players take the devices nobody chose, keyboard and mouse
-// first, then the pads in order (SDK patch 128): all Auto = keyboard and mouse player 1, the first pad player 2. The
+// first, then the pads in order (SDK patch 129): all Auto = keyboard and mouse player 1, the first pad player 2. The
 // functions here that need no SDL are pure (tested in test/player_devices_test.cpp); the pad enumeration is in
 // input_devices_sdl.cpp.
 #pragma once
@@ -31,7 +31,7 @@ std::vector<std::string> ResolvePlayerDevices(const std::vector<std::string>& ch
 // and mouse first); "" for one player (the game switches by itself).
 std::string PlayerDevicesArg(const std::vector<std::string>& resolved);
 
-// What each player will get, as the runtime does it (SDK patch 128): a chosen device that is plugged in is that
+// What each player will get, as the runtime does it (SDK patch 129): a chosen device that is plugged in is that
 // player's; the Auto players (and those whose chosen pad is not plugged in), lowest first, take the devices nobody
 // chose - keyboard and mouse first (when `kbm_on`), then the detected pads in order. "" = nothing left for that player.
 std::vector<std::string> EffectiveDevices(const std::vector<std::string>& resolved, const std::vector<DetectedDevice>& detected,

@@ -1245,7 +1245,7 @@ static void option_row(App &a, int g, const gs::Option &o)
             cogbox::UnpackPlayerDevice(a.cur[g].str(o.id), key, name);
             const auto detected = cogbox::DetectControllers();
             const auto items = cogbox::PlayerDeviceChoices(detected, key, name);
-            // GitHub #420: Auto says what it will give this player (SDK patch 128's order: keyboard and mouse first, then pads)
+            // GitHub #420: Auto says what it will give this player (SDK patch 129's order: keyboard and mouse first, then pads)
             std::string auto_label = tr("Auto");
             {
                 const int players = gs::played_players((gs::Game)g, a.cur[g]) + 1;   // as played (a saved 4 in Gears 3: 2)

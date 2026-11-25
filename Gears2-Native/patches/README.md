@@ -146,7 +146,7 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
   (`git -C thirdparty/FFmpeg apply`; that file is CRLF in the Windows checkout) - and again after every submodule or
   SDK update. Needs patch 80.
 - `sdk-patch126-audio-output-options.diff` (GitHub #425 / PR #441, the launcher's AUDIO tab; was 117 in the PR - renumbered, 117-119 were taken before (now 122-124); REPLACES patch 125: both define `--audio_channels`, so a runtime takes 126 and NOT 125; NOT BUILT into a release
-- `sdk-patch128-kbm-any-player.diff` (GitHub #420, 0.6.8 split screen; after 127, on top of 117; REPLACES patch 122: it
+- `sdk-patch129-kbm-any-player.diff` (GitHub #420, 0.6.8 split screen; after 128 (0.6.9 stats pointer check), on top of 117; was numbered 128 in PR #461; REPLACES patch 122: it
   defines `--mnk_own_player` itself, so a runtime takes 128 and NOT 122): the keyboard/mouse can be any player's.
   `ExplicitAssignment` (`--player_devices`) takes `kbm` as a key like a pad's, and Auto players take the unchosen devices
   keyboard/mouse first, then pads by ordinal: all Auto = keyboard/mouse player 1, the first pad player 2; player 1 on a
