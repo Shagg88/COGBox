@@ -9,6 +9,7 @@
 #include "crash_dump.h"
 #include "social_model.h"   // kPreferLobbyPrefix (0.6.4)
 #include "mod_conflicts.h"   // the mods' folders listed again when a game closes
+#include "crash_hints.h"   // GitHub #456: out of memory read from the log
 
 #include <windows.h>
 #include <cstdio>
@@ -27,6 +28,8 @@ static const char *exit_meaning(DWORD code)
     case 0xC0000135: return "a file it needs next to it is missing (0xC0000135) - unzip the COGBox release again, keeping every file";
     case 0xC0000139: return "the game's exe and a DLL next to it are from different COGBox versions (0xC0000139) - unzip the COGBox release again over the old files, keeping every file";   // GitHub #382
     case 0xC0000142: return "a DLL it needs failed to start (0xC0000142)";
+    case 0xC0000017: return "Windows ran out of memory for it (0xC0000017)";   // GitHub #456: STATUS_NO_MEMORY
+    case 0xC000012D: return "Windows ran out of memory for it - the page file is full or too small (0xC000012D)";   // STATUS_COMMITMENT_LIMIT
     case 0x887A0005: return "the graphics card stopped responding or its driver was reset (0x887A0005)";
     case 0x887A0006: return "the graphics card stopped responding (0x887A0006)";
     case 0x887A0007: return "the graphics driver was reset (0x887A0007)";
@@ -800,7 +803,12 @@ void play_poll(App &a)
     // 0.4.6 (GitHub #183): a crash early on, right after the runtime warned that the title update is for another
     // version of the game (its base signature doesn't match the game's default.xex), most likely comes from that
     // update - say so plainly. (The warning alone is harmless on some known-good copies, so only with a crash.)
-    if (code != 0 && secs <= 90 && log.find("XEX patch signature hash doesn't match") != std::string::npos)
+    // GitHub #456: out of memory, read from the log - said first, and then the title update line below is left out
+    // (the signature warning is harmless on reported-working updates, and blaming it sent the player the wrong way)
+    const int oomLog = code != 0 ? crash_hints::log_out_of_memory(log) : 0;
+    const bool oom = oomLog == 2 || (oomLog == 1 && (code == 0xC0000409 || code == 0xC0000017 || code == 0xC000012D));
+    if (oom) what += std::string(". ") + crash_hints::out_of_memory_text();
+    if (!oom && code != 0 && secs <= 90 && log.find("XEX patch signature hash doesn't match") != std::string::npos)
         what += ". Its log says the title update doesn't match this copy of the game (it was made for another version of "
                 "the game) - add the title update that belongs to your copy (same console and disc) by dropping it onto this window";
     if (!crash.empty()) what += "; it wrote a crash report";
