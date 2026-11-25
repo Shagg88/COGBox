@@ -41,6 +41,8 @@
 #include <ue3/aspect.h>  // the ultrawide shape maths (shared)
 #include <ue3/menu_fps.h>  // GitHub #101 front-end cap (layer 2, shared with Judgment)
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
+#include <ue3/split_layout.h>  // GitHub #420
+#include <ue3/canvas_tile_clip.h>  // GitHub #420: the Longshot overlay side by side
 #include <ue3/objects.h>  // GitHub #313 pace check: ue3::obj::Read32 (safe guest reads; no table lookup)
 #include "mouse_look.h"  // GitHub #52: CogMouseLookNoteFov
 
@@ -341,11 +343,144 @@ std::atomic<uint32_t> g_gow2_tick_caller{0};
 // GitHub #313 pace check (xenos::PaceCheck; game thread only): the engine loop's limiter wait in this frame (ms), < 0
 // until the hook below runs in it - set back to -1 after each engine-loop call.
 static double g_gow2_frame_wait_ms = -1.0;
+// GitHub #237 / #420: two-player split side by side (--gow2_split_vertical, layer 2 config_install.cpp). The split is
+// decided in UnrealScript (GameViewportClient.UpdateActiveSplitscreenType / LayoutPlayers - no native function to hook).
+// Task 6b: values written from outside were undone at every profile save (GearPC.UpdateLocalCacheOfProfileSettings sets
+// the profile's horizontal split again), so the game now makes the choice itself - --gow2_split_vertical adds an
+// Engine.xxx package patch (ue3/gow2_split_package_patch.h) and every relayout runs the game's own code with
+// eSST_2P_VERTICAL. This tick only reads and logs: Default2PSplitType once (2 = the patched package is the one loaded),
+// then the types the game set, capped and only on change.
+REXCVAR_DECLARE(bool, gow2_split_vertical);  // layer 2 config_install.cpp
+// True while two players are side by side (set below each frame; read by the canvas hook).
+static std::atomic<bool> g_gow2_side_by_side{false};
+void Gow2SplitLayoutTick() {
+  if (!REXCVAR_GET(gow2_split_vertical)) return;   // reads only
+  namespace obj = ue3::obj;
+  // Offsets are class layout: found once (a failed class lookup scans every object: at most every 5 s). Objects are read
+  // from GEngine every frame, so a level change never leaves a stale pointer.
+  static int vp_off = -1, players_off = -1, desired_off = -1, active_off = -1, default_off = -1;
+  static bool gave_up = false;
+  if (desired_off < 0 || active_off < 0) {
+    if (gave_up) return;
+    using Clock = std::chrono::steady_clock;
+    static Clock::time_point next_lookup{};
+    const Clock::time_point now = Clock::now();
+    if (now < next_lookup) return;
+    next_lookup = now + std::chrono::seconds(5);
+    if (!obj::Ready() && !obj::Init(gow2::addr::kGNamesVar, gow2::addr::kGObjectsVar)) return;
+    const uint32_t engine_cls = obj::FindClass("Engine"), game_engine_cls = obj::FindClass("GameEngine");
+    const uint32_t vpc_cls = obj::FindClass("GameViewportClient");
+    if (!engine_cls || !game_engine_cls || !vpc_cls) return;
+    vp_off = obj::PropertyOffset(game_engine_cls, "GameViewport");
+    players_off = obj::PropertyOffset(engine_cls, "GamePlayers");
+    default_off = obj::PropertyOffset(vpc_cls, "Default2PSplitType");
+    const int desired = obj::PropertyOffset(vpc_cls, "DesiredSplitscreenType");
+    const int active = obj::PropertyOffset(vpc_cls, "ActiveSplitscreenType");
+    if (vp_off < 0 || players_off < 0 || desired < 0 || active < 0) {
+      REXLOG_WARN("gow2_split_vertical: viewport properties not found - the split is not logged");
+      gave_up = true;
+      return;
+    }
+    desired_off = desired;
+    active_off = active;
+  }
+  const uint32_t engine = obj::Read32(gow2::addr::kGEngine);
+  const uint32_t viewport = engine ? obj::Read32(engine + uint32_t(vp_off)) : 0;
+  if (!viewport) {
+    g_gow2_side_by_side.store(false, std::memory_order_relaxed);
+    return;
+  }
+  auto read8 = [](uint32_t a) { return uint8_t(obj::Read32(a & ~3u) >> (8 * (3 - (a & 3u)))); };
+  static bool default_logged = false;
+  if (!default_logged && default_off >= 0) {
+    default_logged = true;
+    const uint8_t d = read8(viewport + uint32_t(default_off));
+    REXLOG_INFO("gow2_split_vertical: the game's Default2PSplitType is {}{}", d,
+                d == ue3::kSplitVertical ? " (side by side: the patched Engine.xxx is loaded)" : " - not the patched value");
+  }
+  const int players = int(obj::Read32(engine + uint32_t(players_off) + 4));  // TArray: data, count, max
+  if (players != 2) {
+    g_gow2_side_by_side.store(false, std::memory_order_relaxed);
+    return;
+  }
+  const uint8_t desired = read8(viewport + uint32_t(desired_off)), active = read8(viewport + uint32_t(active_off));
+  g_gow2_side_by_side.store(active == ue3::kSplitVertical, std::memory_order_relaxed);
+  // The split is the game's own choice (the Engine.xxx patch); logged capped and only on change.
+  static uint8_t seen_desired = 0xFF, seen_active = 0xFF;
+  static int lines = 0;
+  if ((desired != seen_desired || active != seen_active) && ++lines <= 50)
+    REXLOG_INFO("gow2_split_vertical: the game set split type desired {} active {}{}", desired, active,
+                active == ue3::kSplitVertical ? " (side by side)" : active == 0 ? " (full screen)" : "");
+  seen_desired = desired;
+  seen_active = active;
+}
+
+// GitHub #420, the Longshot's zoom overlay side by side (ue3/canvas_tile_clip.h FitFullViewTile16x9, as Judgment's):
+// GearHUD_Base.DrawWeaponCrosshair draws SniperOverlayMaterialConstant with DrawMaterialTile(ClipX, ClipY), its art made
+// for a 16:9 view; on a 640x720 view the rings were half as wide and too tall. At UCanvas::DrawMaterialTile's entry
+// (sub_8263ECF8, from execDrawMaterialTile 0x8263FAF0; gow2_manifest_tu6.toml), only while two players are side by side,
+// a material tile covering the whole view samples a centred part of its texture (U 0.5, V 2 at 640x720). One atomic
+// load per material tile otherwise. Capped log.
+void Gow2CanvasMaterialTileFit(PPCRegister& f1, PPCRegister& f3, PPCRegister& f4, PPCRegister& f5, PPCRegister& f6,
+                               PPCRegister& f7, PPCRegister& f8, PPCRegister& r3) {
+  if (!g_gow2_side_by_side.load(std::memory_order_relaxed)) return;
+  auto rf = [](uint32_t a) {
+    const uint32_t v = ue3::obj::Read32(a);
+    float f;
+    std::memcpy(&f, &v, 4);
+    return f;
+  };
+  const float org_x = rf(r3.u32 + 64), clip_x = rf(r3.u32 + 72), clip_y = rf(r3.u32 + 76);
+  const float u = float(f5.f64), ul = float(f7.f64), v = float(f6.f64), vl = float(f8.f64);
+  const ue3::TileUV t =
+      ue3::FitFullViewTile16x9(float(f1.f64), float(f3.f64), float(f4.f64), u, ul, v, vl, org_x, clip_x, clip_y, 2.0f);
+  if (t.u == u && t.ul == ul && t.v == v && t.vl == vl) return;
+  static std::atomic<int> n{0};
+  if (n++ < 16)
+    REXLOG_INFO("gow2_split_vertical: full-view material tile on {}x{}: u {} +{} v {} +{} -> u {} +{} v {} +{}", clip_x,
+                clip_y, u, ul, v, vl, t.u, t.ul, t.v, t.vl);
+  f5.f64 = double(t.u);
+  f7.f64 = double(t.ul);
+  f6.f64 = double(t.v);
+  f8.f64 = double(t.vl);
+}
+
+// GitHub #420 (task 13): --gow2_pause_fullscreen patches GearGame.xxx (layer 2, ue3/gow2_pause_package_patch.h). Reads
+// once, after the objects are up: Default__GearUIScenePause_Base's SceneRenderMode (0 = SPLITRENDER_Fullscreen: the
+// patched GearGame.xxx is the one loaded). Read-only; a failed lookup is tried again at most every 5 s.
+REXCVAR_DECLARE(bool, gow2_pause_fullscreen);  // layer 2 config_install.cpp
+void Gow2PauseFullscreenLogOnce() {
+  static bool done = false;
+  if (done || !REXCVAR_GET(gow2_pause_fullscreen)) return;
+  namespace obj = ue3::obj;
+  using Clock = std::chrono::steady_clock;
+  static Clock::time_point next_lookup{};
+  const Clock::time_point now = Clock::now();
+  if (now < next_lookup) return;
+  next_lookup = now + std::chrono::seconds(5);
+  if (!obj::Ready() && !obj::Init(gow2::addr::kGNamesVar, gow2::addr::kGObjectsVar)) return;
+  const uint32_t scene_cls = obj::FindClass("UIScene");
+  const uint32_t pause = obj::FindObject("Default__GearUIScenePause_Base");
+  if (!scene_cls || !pause) return;
+  done = true;
+  const int off = obj::PropertyOffset(scene_cls, "SceneRenderMode");
+  if (off < 0) {
+    REXLOG_WARN("gow2_pause_fullscreen: UIScene.SceneRenderMode not found - not logged");
+    return;
+  }
+  const uint32_t a = pause + uint32_t(off);
+  const uint8_t mode = uint8_t(obj::Read32(a & ~3u) >> (8 * (3 - (a & 3u))));
+  REXLOG_INFO("gow2_pause_fullscreen: the game's pause scene SceneRenderMode is {}{}", mode,
+              mode == 0 ? " (full window: the patched GearGame.xxx is loaded)" : " - not the patched value");
+}
+
 void Gow2NoteTickCall(uint32_t caller) {  // after the original returned; read-only (frame_limiter.h)
   static xenos::TickCallSites sites;
   const bool main = caller != gow2::addr::kServerTickClientsTickRateRet;
   sites.Note("gow2_max_fps", caller, main);
   if (!main) return;
+  Gow2SplitLayoutTick();  // GitHub #237 / #420: once per engine frame (game thread)
+  Gow2PauseFullscreenLogOnce();   // GitHub #420 (task 13): one read-only log line
   // GitHub #313 (a 120 limit "stops working" in split screen): engine frames / frames shown / limiter waits, every 10 s
   // while 2+ local players are in. Local players: UGameEngine::GamePlayers count (GEngine + 816, the console target's).
   static xenos::PaceCheck pace;

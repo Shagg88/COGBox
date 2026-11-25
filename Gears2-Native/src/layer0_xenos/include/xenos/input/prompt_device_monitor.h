@@ -22,6 +22,7 @@
 #include <thread>
 
 #include <rex/cvar.h>
+#include <rex/input/device.h>
 #include <xenos/renderer/prompt_overlay_compositor.h>
 
 REXCVAR_DECLARE(std::string, gow_button_prompts);
@@ -107,6 +108,17 @@ class PromptDeviceMonitor {
   // Re-reads the cvars, then EvaluateActiveStyle (rebuilding the key caps if the keybind cvars changed).
   DeviceStyle Poll(uint64_t now_ms = 0, bool force = false);
 
+  // Task 14 (#420): in split screen (local players >= 2) only player 1's input changes the prompts. The pad
+  // assignment (ingame_menu.cpp) reports player 1's devices here on every change of the device set.
+  // ClassifyPlayerOnePads: the style of player 1's (first) real pad, from its name and the VID / PID in its SDL GUID;
+  // nullopt = keyboard / mouse only.
+  std::optional<DeviceStyle> ClassifyPlayerOnePads(const std::vector<rex::input::DeviceInfo>& p1_devices) const;
+  void SetPlayerOneDevices(const std::vector<rex::input::DeviceInfo>& p1_devices);
+  // Pad input from guest user `user`: the style it switches to, or nullopt when it must not change the prompts.
+  // 1 player: any pad, with the scanned style (as before). 2+ players: user 0 only, with player 1's pad style.
+  static std::optional<DeviceStyle> PadActivityStyle(uint32_t local_players, uint32_t user,
+                                                     std::optional<DeviceStyle> p1_style, DeviceStyle scanned);
+
   // The style last applied to the compositor. Render thread safe: one relaxed atomic load, nothing else.
   DeviceStyle PublishedStyle() const noexcept { return published_style_.load(std::memory_order_relaxed); }
   // Kept for TextureCache::Bind's call: the same single atomic load (no polling, no locks).
@@ -169,6 +181,7 @@ class PromptDeviceMonitor {
   bool has_applied_style_ = false;
   std::string last_keybind_sig_;
   std::atomic<DeviceStyle> published_style_{DeviceStyle::kOriginal};
+  std::optional<DeviceStyle> p1_pad_style_;  // Task 14; guarded by mutex_
 
   // Game wiring.
   rex::ui::Window* attached_window_ = nullptr;  // under mutex_

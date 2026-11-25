@@ -1,5 +1,6 @@
 // COGBox - the Gears of War settings. See gears_settings.h; "PS1 nnn" = a line of Gears2-Native's tools\launcher.ps1.
 #include "gears_settings.h"
+#include "input_devices.h"
 
 #include <algorithm>
 #include <cctype>
@@ -561,11 +562,24 @@ std::vector<Option> make_options(Game g) {
     add(choice("Players", "Players", Tab::Gameplay, PG, { "1", "2 (split-screen)" }, 0,
                "Local split-screen co-op, one controller each. In the game, choose Campaign > Play Split-Screen; player 2 is "
                "signed in automatically. If a controller shows up twice, turn off Steam Input or DS4Windows.", 325), "players");
-    // GitHub #136 (ebercr): two-player split side by side. The engine's own viewport setting, sent as a console command
-    // once player 1 exists (Gears 3's --ue3_exec); the reporter's Back-button binding showed the game honours it.
+    // GitHub #136 (ebercr): two-player split side by side, a --<game>_split_vertical cvar in all four games.
     add(choice("SplitLayout", "Two-player split", Tab::Gameplay, PG, { "Top and bottom (game's)", "Side by side" }, 0,
-               "Experimental - how the screen is split for 2 players. Side by side suits ultrawide monitors. "
-               "Gears 2: side by side from the start.", 325), "splitlayout");
+               "How the screen is split for 2 players. Side by side suits ultrawide monitors and stays for the whole session. "
+               "3 and 4 players keep the game's own split.", 325), "splitlayout");
+    // SDK patches 117 + 128 (GitHub #420): which controller or keyboard and mouse each split-screen player uses. One
+    // dropdown per player, shown only with 2 or more players (page.cpp); each keeps "<device key> ## <name last seen>"
+    // (input_devices.h). Empty = Auto: the devices nobody chose, keyboard and mouse first, then controllers in order.
+    for (int k = 1; k <= 4; k++) {
+        const std::string id = "PlayerDevice" + std::to_string(k), label = "Player " + std::to_string(k) + " input";
+        Option o = make(id.c_str(), label.c_str(), Tab::Gameplay, Kind::Text, SH, 0,
+                        "What this player uses in split-screen: a controller, or the keyboard and mouse. Auto takes what "
+                        "nobody chose - keyboard and mouse first, then controllers in order - and shows what it will be "
+                        "(Player 1 on Auto gets the keyboard and mouse; pick a controller for Player 1 and the next Auto "
+                        "player gets them). A device can drive one player: choosing it again takes it from the earlier "
+                        "player. Your choice is kept if a controller is unplugged; plug it in again and it is used.", 325);
+        o.max_len = 400;
+        add(std::move(o), "playerdevice");
+    }
     // 0.3.5 (GitHub #72, SDK patch 49b): System Link over a LAN or a LAN VPN (Radmin VPN, ZeroTier, Hamachi). Off = the
     // runtime behaves exactly as before ("No Network Connection").
     add(make("SystemLink", "System Link - LAN play", Tab::Gameplay, Kind::Bool, PG, 0,
@@ -973,13 +987,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g != Game::Gears3) return no(not_yet(gi));
         if (ver == Version::TitleUpdate && env.update_ready)
             return no("Gears 3: not with Title Update 6 yet (it shows a dirty-disc error with it).");
-    } else if (f == "splitlayout") {   // GitHub #136: needs the port's --ue3_exec (Gears 3); #237: Gears 2 binds it to Y
-        if (g == Game::Gears2) {
-            if (!cap_exe(env, "gow2_split_vertical")) return no(not_yet(gi, "needs its next build"));
-        } else {
-            if (g != Game::Gears3) return no(not_yet(gi, "needs its console-command support"));
-            if (!cap_exe(env, "ue3_exec")) return no(not_yet(gi, "needs its next build"));
-        }
+    } else if (f == "splitlayout") {   // GitHub #136: every game has its own cvar (load-time script patch)
+        if (!cap_exe(env, std::string(k_procNames[gi]) + "_split_vertical")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "levelsel") {
         if (g != Game::Judgment) return no(not_yet(gi));
     } else if (f == "bloom") {   // Canary: Gears 2 / 3 / Judgment; Gears 1's bloom shares its blur (DoF option there)
@@ -1345,6 +1354,8 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "Ssil" && s.i("AO") != 2 && s.i("AO") != 3) {                    // SSIL runs on XeGTAO's depth pyramid
         a.ok = false; a.why = "Needs Ambient occlusion: On."; return a;
     }
+    else if (o.id.compare(0, 12, "PlayerDevice") == 0 && o.id.size() == 13)       // per-player devices, from 2 players (as played)
+        on = played_players(g, s) >= 1 && o.id[12] - '0' <= played_players(g, s) + 1;
     else if (o.id == "SplitLayout") on = played_players(g, s) == 1;   // GitHub #136: 2 players only (#443: as played)
     else if (o.id == "PeerIps") on = s.b("SystemLink");                              // GitHub #229
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
@@ -1577,14 +1588,15 @@ static bool parse_ipv4(const std::string& t, unsigned char out[4]) {
 
 bool text_char_ok(const Option& o, unsigned c) {
     if (o.id == "PeerIps") return (c >= '0' && c <= '9') || c == '.' || c == ',' || c == ' ';
-    if (o.id == "GraphicsCard" || o.id == "AudioDevice") return c >= 0x20 && c != 0x7f && c != '"';
+    if (o.id == "GraphicsCard" || o.id == "AudioDevice" || o.id.compare(0, 12, "PlayerDevice") == 0) return c >= 0x20 && c != 0x7f && c != '"';
     return false;   // no other text option: nothing typed is accepted
 }
 
 std::string sanitize_text(const Option& o, const std::string& in, int* dropped) {
     if (dropped) *dropped = 0;
-    // 0.6.2 (GitHub #304): an adapter's name, kept as the game reads it; GitHub #425: a sound device's name, the same way
-    if (o.kind == Kind::Text && (o.id == "GraphicsCard" || o.id == "AudioDevice")) {
+    // 0.6.2 (GitHub #304): an adapter's name, kept as the game reads it; GitHub #425: a sound device's name, the same way;
+    // GitHub #420: a controller's name
+    if (o.kind == Kind::Text && (o.id == "GraphicsCard" || o.id == "AudioDevice" || o.id.compare(0, 12, "PlayerDevice") == 0)) {
         std::string out;
         for (unsigned char ch : in) if (ch >= 0x20 && ch != 0x7f && ch != '"') out += static_cast<char>(ch);
         out = trim(out);
@@ -2670,17 +2682,29 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         notes.push_back("launcher: Players " + std::to_string(s.i("Players") + 1) + " - this game allows " +
                         std::to_string(players + 1) + " local players - started with " + std::to_string(players + 1));
     if (avail("Players") && players > 0) a.push_back("--local_players=" + std::to_string(players + 1));
-    if (g == Game::Gears2 && avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #237: press Y in game
-        a.push_back("--gow2_split_vertical=true");
-    else if (g == Game::Gears3 && avail("SplitLayout") && s.i("SplitLayout") == 1 && cap_exe(env, "gow3_split_vertical"))
-        a.push_back("--gow3_split_vertical=true");   // GitHub #269: set again whenever the game resets it (level start)
+    if (avail("Players") && players > 0) {   // GitHub #420: the device of each player (the later pick of a device wins)
+        const int count = players + 1;
+        std::vector<std::string> chosen;
+        for (int k = 1; k <= count && k <= 4; k++) {
+            std::string key, name;
+            const Option* po = find_option(g, "PlayerDevice" + std::to_string(k));
+            cogbox::UnpackPlayerDevice(po ? sanitize_text(*po, s.str(po->id)) : std::string(), key, name);
+            chosen.push_back(key);
+        }
+        const std::string arg = cogbox::PlayerDevicesArg(cogbox::ResolvePlayerDevices(chosen, count));
+        if (!arg.empty()) a.push_back(arg.substr(0, arg.find('=') + 1) + q(arg.substr(arg.find('=') + 1)));
+    }
+    // Side by side for 2 players, all four games: a load-time script patch in each exe, so the layout stays for the whole session
+    // (GitHub #136, #237, #269, #420). avail() holds the cap_exe check; no console command is needed any more.
+    if (avail("SplitLayout") && s.i("SplitLayout") == 1)
+        a.push_back(std::string("--") + k_procNames[gi] + "_split_vertical=true");
+    // Pause over the whole window: always with 2 or more players, in every layout (Gears 1 needs nothing)
+    if (!isG1 && players >= 1) {
+        const std::string pf = std::string(k_procNames[gi]) + "_pause_fullscreen";
+        if (cap_exe(env, pf)) a.push_back("--" + pf + "=true");
+    }
     // One --ue3_exec(_each_level) for every console command (a second flag of the same name would replace the first).
     std::vector<std::string> exec;
-    if (!(g == Game::Gears2 && avail("SplitLayout") && s.i("SplitLayout") == 1) &&
-        !(g == Game::Gears3 && avail("SplitLayout") && s.i("SplitLayout") == 1 && cap_exe(env, "gow3_split_vertical")) &&
-        avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #136 (avail: Gears 3, 2 players)
-        // GitHub #208: one run at the front end was undone when a level started - again at every level where the exe can
-        exec.push_back("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL");
     {   // GitHub #306: the corpse timers, as class defaults (Gears 3 / Judgment; Gears 1 only has the not-seen timer)
         const int db = std::max(0, std::min(2, s.i("DeadBodies")));
         if (avail("DeadBodies") && db > 0 && (isG3 || isGJ || isG1) && cap_exe(env, "ue3_exec")) {

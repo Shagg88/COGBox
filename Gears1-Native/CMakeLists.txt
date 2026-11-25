@@ -78,6 +78,7 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 add_library(gn_layer2_ue3 STATIC ${GN_LAYER0_HOME}/src/layer2_ue3/launch_command_line.cpp  # shared (--ue3_launch)
             ${GN_LAYER0_HOME}/src/layer2_ue3/config_bundle.cpp  # shared
             src/layer2_ue3/config_install.cpp
+            src/layer2_ue3/package_patch.cpp   # GitHub #420: Gears 1's own LZO package patch
             ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp  # shared ue3::obj (Gears 2 / Judgment / Gears 1)
             src/layer2_ue3/script_input.cpp)   # developer mode's scripted controller
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
@@ -350,8 +351,9 @@ if(GN_BUILD_TESTS)
         ${GN_LAYER0_TESTS}/layer0_pm4_test.cpp
         ${GN_LAYER0_DIR}/pm4.cpp
         ${GN_LAYER0_TESTS}/layer0_display_gamma_test.cpp
-        ${GN_LAYER0_DIR}/display_gamma.cpp)
-    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS})
+        ${GN_LAYER0_DIR}/display_gamma.cpp
+        tests/layer2_split_package_patch_test.cpp src/layer2_ue3/package_patch.cpp)   # GitHub #420: Gears 1's own package patch
+    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS} src/layer2_ue3/include)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(gn_tests PRIVATE -ffp-contract=off)
     elseif(MSVC)

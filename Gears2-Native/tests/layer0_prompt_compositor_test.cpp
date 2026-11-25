@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -428,6 +429,42 @@ TEST_CASE("GitHub #223: with the game set, a style builds only that game's atlas
   CHECK_FALSE(compositor.GetOverlay(kJDpad, DeviceStyle::kPlayStation).empty());
   compositor.SetGameTitle(0);  // unknown: every atlas again
   CHECK_FALSE(compositor.GetOverlay(kG2Saw, DeviceStyle::kPlayStation).empty());
+}
+
+// Task 12 step 0 (Gears 3 split test, 2026-11-22): a glyph set without playstation\rs_up.png. The PlayStation style
+// failed to build and was retried every 2 s (a warning each time), and while the pad was "active" the launcher's key
+// caps stayed on screen. Now: one failed attempt, no retries, and the pad gets the game's own prompts.
+TEST_CASE("A controller style with a missing glyph fails once and falls back to the game's own prompts",
+          "[layer0][prompt][compositor]") {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / "cogbox_glyphs_missing_rs_up";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  fs::copy("assets/glyphs", dir, fs::copy_options::recursive, ec);
+  REQUIRE_FALSE(ec);
+  REQUIRE(fs::remove(dir / "playstation" / "rs_up.png"));
+
+  ClearDynamicOverlays();
+  PromptOverlayCompositor compositor;
+  REQUIRE(compositor.Initialize(dir));
+  CHECK_FALSE(compositor.PrepareStyle(DeviceStyle::kPlayStation));
+  CHECK(compositor.IsStyleUnavailable(DeviceStyle::kPlayStation));
+  CHECK_FALSE(compositor.IsStyleUnavailable(DeviceStyle::kKeyboard));
+  // Known missing: not tried again (even if the file came back, until the next Initialize).
+  fs::copy_file("assets/glyphs/playstation/rs_up.png", dir / "playstation" / "rs_up.png", ec);
+  CHECK_FALSE(compositor.PrepareStyle(DeviceStyle::kPlayStation));
+
+  // Keyboard first (key caps shown), then the pad: the key caps must go, the game's own prompts come back.
+  compositor.SetActiveStyle(DeviceStyle::kKeyboard);
+  CHECK_FALSE(DiskPromptOverlaysSuppressed());
+  compositor.SetActiveStyle(DeviceStyle::kPlayStation);
+  CHECK(DiskPromptOverlaysSuppressed());
+
+  REQUIRE(compositor.Initialize(dir));  // a new start retries
+  CHECK_FALSE(compositor.IsStyleUnavailable(DeviceStyle::kPlayStation));
+  CHECK(compositor.PrepareStyle(DeviceStyle::kPlayStation));
+  ClearDynamicOverlays();
+  fs::remove_all(dir, ec);
 }
 
 TEST_CASE("A prompt sheet moved by a GPU copy keeps its overlay; uncompressed GPU-written reloads skip the hash",

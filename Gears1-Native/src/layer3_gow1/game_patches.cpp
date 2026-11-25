@@ -6,6 +6,7 @@
 #include <cmath>   // 0.6.7 true 1080p menus: std::round, std::fabs
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 #include <format>
 #include <set>
 #include <string>
@@ -187,6 +188,10 @@ void Gow1NativeDeviceHeight(PPCRegister& r11) {  // after `li r11,720` at 0x824B
   if (const uint32_t rows = Gow1WideRows()) { r11.u64 = rows; return; }   // --gow1_ultrawide
   if (Gow1NativeLines()) r11.u64 = Gow1NativeLines();
 }
+
+// Side by side now (GitHub #420): set by Gow1SplitLogTick, read by Gow1CanvasMaterialTileFit.
+static std::atomic<bool> g_gow1_side_by_side{false};
+
 // 0.6.6 (job 2189: at true 1080p the pause menu sat in the top-left 1280x720 of the 1920x1080 picture): the game's
 // FViewport still reports the console's 1280x720 to the UI (ue3/native_viewport.h: why, the checks, and the Gears 2 / 3
 // code it was read from: the UI scene client's GetViewportSize asks RenderViewport->GetSizeX / GetSizeY, virtual calls).
@@ -232,6 +237,157 @@ void Gow1NativeUiViewportTick(bool (*open_objects)()) {
   } else if (++fails > 20) {
     REXLOG_WARN("gow1_native_lines: the menus stay laid out in 1280x720 - {}", r.why);
   }
+}
+
+// GitHub #420 (task 8b): --gow1_split_vertical makes the game's own script pick side by side (an Engine.xxx package
+// patch, layer 2 ue3/gow1_split_package_patch.h). This logs Default2PSplitType once (2 = the patched package is the
+// one loaded), then the SplitscreenType the game set with two players, capped and only on change; side by side it also
+// keeps player 2's view from being made size 0 by a cinematic (below).
+// Called from cheats.cpp's FEngineLoop::Tick override; offsets from the script classes, looked up at most every 5 s.
+REXCVAR_DECLARE(bool, gow1_split_vertical);  // layer 2 config_install.cpp
+void Gow1SplitLogTick(bool (*open_objects)()) {
+  namespace obj = ue3::obj;
+  if (!REXCVAR_GET(gow1_split_vertical)) return;
+  static uint32_t ticks = 0;
+  static int vp_off = -1, players_off = -1, type_off = -1, default_off = -1;
+  static bool gave_up = false;
+  ++ticks;
+  if (type_off < 0) {
+    if (gave_up || ticks % 300 || !open_objects || !(obj::Ready() || open_objects())) return;
+    const uint32_t eng = obj::FindClass("Engine"), ge = obj::FindClass("GameEngine"), gvc = obj::FindClass("GameViewportClient");
+    if (!eng || !ge || !gvc) return;
+    vp_off = obj::PropertyOffset(ge, "GameViewport");
+    players_off = obj::PropertyOffset(eng, "GamePlayers");
+    default_off = obj::PropertyOffset(gvc, "Default2PSplitType");
+    const int type = obj::PropertyOffset(gvc, "SplitscreenType");
+    if (vp_off < 0 || players_off < 0 || type < 0) {
+      REXLOG_WARN("gow1_split_vertical: viewport properties not found - the split is not logged");
+      gave_up = true;
+      return;
+    }
+    type_off = type;
+  }
+  // GEngine 0x82FCDD50: cheats.cpp's kGEngine (sub_82229970 loads it, `lwz r3,-0x22B0(r27)`, then Cast<UGameEngine>).
+  const uint32_t engine = obj::Read32(0x82FCDD50u);
+  const uint32_t viewport = engine ? obj::Read32(engine + uint32_t(vp_off)) : 0;
+  if (!viewport) {
+    g_gow1_side_by_side.store(false, std::memory_order_relaxed);
+    return;
+  }
+  // a byte of the big-endian guest word holding it: byte 0 is the word's top 8 bits
+  auto read8 = [](uint32_t a) { return uint8_t(obj::Read32(a & ~3u) >> (8 * (3 - (a & 3u)))); };
+  static bool default_logged = false;
+  if (!default_logged && default_off >= 0) {
+    default_logged = true;
+    const uint8_t d = read8(viewport + uint32_t(default_off));
+    REXLOG_INFO("gow1_split_vertical: the game's Default2PSplitType is {}{}", d,
+                d == 2 ? " (side by side: the patched Engine.xxx is loaded)" : " - not the patched value");
+  }
+  const int players = int(obj::Read32(engine + uint32_t(players_off) + 4));  // TArray: data, count, max
+  if (players != 2) {
+    g_gow1_side_by_side.store(false, std::memory_order_relaxed);
+    return;
+  }
+  const uint8_t type = read8(viewport + uint32_t(type_off));
+  g_gow1_side_by_side.store(type == 2, std::memory_order_relaxed);
+  static uint8_t seen = 0xFF;
+  static int lines = 0;
+  if (type != seen && ++lines <= 50)
+    REXLOG_INFO("gow1_split_vertical: the game set split type {}{}", type,
+                type == 2 ? " (side by side)" : type == 0 ? " (full screen)" : type == 1 ? " (one above the other)" : "");
+  seen = type;
+  // GitHub #420: player 2's view kept non-zero side by side. For a cinematic (cutscenes, the path choice)
+  // WarGameViewportClient.SetSplitscreenConfiguration gives player 1 the whole window and every other player size 0;
+  // the split comes back afterwards. Side by side, after the path choice player 2's view stayed black for good: drawn
+  // (RenderDoc: thousands of draws in its half) but its part of the scene image black. Keeping player 2's size
+  // non-zero while the game would make it 0 avoids it (live test 2026-11-24, Flippage): player 1 keeps the whole window
+  // as the game set it, so the cinematic and the path choice prompt look as before (the game draws player 1 alone in a
+  // cinematic), and player 2 keeps its half. Checked once per engine frame, two players side by side only (type 2);
+  // top / bottom (which recovers by itself) and one player are left alone.
+  static int origin_off = -2, size_off = -2;
+  if (origin_off == -2) {
+    const uint32_t lp = obj::FindClass("LocalPlayer");
+    origin_off = lp ? obj::PropertyOffset(lp, "Origin") : -1;
+    size_off = lp ? obj::PropertyOffset(lp, "Size") : -1;
+    if (origin_off < 0 || size_off < 0) REXLOG_WARN("gow1_split_vertical: LocalPlayer.Origin / Size not found");
+  }
+  if (type != 2 || origin_off < 0 || size_off < 0) return;
+  const uint32_t arr = obj::Read32(engine + uint32_t(players_off));
+  const uint32_t p2 = arr ? obj::Read32(arr + 4) : 0;
+  if (!p2) return;
+  const uint32_t w2 = obj::Read32(p2 + uint32_t(size_off));
+  float p2w;
+  std::memcpy(&p2w, &w2, 4);
+  static bool kept = false;
+  if (p2w != 0.0f) {
+    kept = false;
+    return;
+  }
+  auto wf = [](uint32_t a, float f) {
+    uint32_t u;
+    std::memcpy(&u, &f, 4);
+    obj::Write32(a, u);
+  };
+  wf(p2 + uint32_t(origin_off), 0.5f);
+  wf(p2 + uint32_t(origin_off) + 4, 0.0f);
+  wf(p2 + uint32_t(size_off), 0.5f);
+  wf(p2 + uint32_t(size_off) + 4, 1.0f);
+  static int kept_lines = 0;
+  if (!kept && ++kept_lines <= 20) REXLOG_INFO("gow1_split_vertical: cinematic layout - player 2's view keeps its half (not 0)");
+  kept = true;
+}
+
+// GitHub #420: Gears 1's Longshot zoom overlay side by side. WarHUD.DrawWeaponCrosshair draws
+// SniperOverlayMaterialConstant with Canvas.DrawMaterialTile(ClipX, ClipY) over the whole view (no aspect parameter,
+// unlike Gears 2's SetSniperAspectRatio), so on a 640x720 view its frame was squeezed tall. At UCanvas::DrawMaterialTile's
+// entry (sub_8233B400, from execDrawMaterialTile 0x8233BBF0; gow1_manifest.toml): r3 canvas, f1 X, f2 Y, f3 XL, f4 YL,
+// f5 U, f6 V, f7 UL, f8 VL. Only while two players are side by side on a 16:9 picture, a tile covering the whole view
+// samples a centred U span of 0.7 and V span of 1.1 of its texture - the values that matched the one-player look in a
+// live test (2026-11-25, Flippage). A 4:3 / 16:10 picture keeps the game's values until tuned. Canvas offsets by name
+// (this 2006 Canvas is laid out differently from the later games').
+REXCVAR_DECLARE(int32_t, video_mode_width);   // the SDK's (rex/ui/flags.h)
+REXCVAR_DECLARE(int32_t, video_mode_height);
+void Gow1CanvasMaterialTileFit(PPCRegister& f1, PPCRegister& f3, PPCRegister& f4, PPCRegister& f5, PPCRegister& f6,
+                               PPCRegister& f7, PPCRegister& f8, PPCRegister& r3) {
+  if (!g_gow1_side_by_side.load(std::memory_order_relaxed)) return;
+  namespace obj = ue3::obj;
+  static int org_x_off = -2, clip_x_off = -1, clip_y_off = -1;
+  if (org_x_off == -2) {
+    const uint32_t c = obj::FindClass("Canvas");
+    org_x_off = c ? obj::PropertyOffset(c, "OrgX") : -1;
+    clip_x_off = c ? obj::PropertyOffset(c, "ClipX") : -1;
+    clip_y_off = c ? obj::PropertyOffset(c, "ClipY") : -1;
+    REXLOG_INFO("gow1_split_vertical: Canvas OrgX +{} ClipX +{} ClipY +{}", org_x_off, clip_x_off, clip_y_off);
+  }
+  if (org_x_off < 0 || clip_x_off < 0 || clip_y_off < 0) return;
+  auto rf = [](uint32_t a) {
+    const uint32_t v = obj::Read32(a);
+    float f;
+    std::memcpy(&f, &v, 4);
+    return f;
+  };
+  const float org_x = rf(r3.u32 + uint32_t(org_x_off)), clip_x = rf(r3.u32 + uint32_t(clip_x_off)),
+              clip_y = rf(r3.u32 + uint32_t(clip_y_off));
+  const float x = float(f1.f64), xl = float(f3.f64), yl = float(f4.f64);
+  const bool full = x > org_x - 0.5f && x < org_x + 0.5f && xl > clip_x - 0.5f && xl < clip_x + 0.5f &&
+                    yl > clip_y - 0.5f && yl < clip_y + 0.5f;
+  static std::atomic<int> seen{0};
+  if (seen++ < 6)
+    REXLOG_INFO("gow1_split_vertical: material tile x {} +{} y-size {} on canvas org {} clip {}x{}{}", x, xl, yl, org_x,
+                clip_x, clip_y, full ? " (whole view)" : "");
+  // Only a half-width view (side by side: about 0.89 wide per 1 tall); a whole-window view (a cinematic) keeps its tile.
+  if (!full || clip_x >= clip_y * 1.2f) return;
+  static const bool picture_16x9 = [] {
+    const int32_t w = REXCVAR_GET(video_mode_width), h = REXCVAR_GET(video_mode_height);
+    return !REXCVAR_GET(gow1_ultrawide) && (w <= 0 || h <= 0 || std::fabs(double(w) / double(h) - 16.0 / 9.0) < 0.01);
+  }();
+  if (!picture_16x9) return;
+  constexpr float tune_u = 0.7f, tune_v = 1.1f;
+  const float u = float(f5.f64), v = float(f6.f64), ul = float(f7.f64), vl = float(f8.f64);
+  f5.f64 = double(u + ul * (1.0f - tune_u) * 0.5f);
+  f7.f64 = double(ul * tune_u);
+  f6.f64 = double(v + vl * (1.0f - tune_v) * 0.5f);
+  f8.f64 = double(vl * tune_v);
 }
 
 // 0.6.7 (GitHub #408, Gears 1 part): true 1080p menus, as Gears 2's 1ba61f7 / 27cffac. Gears 1's FViewport is already

@@ -245,10 +245,9 @@ bool ReadFileCi(const std::filesystem::path& dir, const std::string& name, std::
   namespace fs = std::filesystem;
   std::error_code ec;
   std::string real;
-  if (fs::is_regular_file(dir / name, ec)) real = name;
-  else
-    for (const auto& e : fs::directory_iterator(dir, ec))
-      if (e.is_regular_file() && AsciiLower(e.path().filename().string()) == AsciiLower(name)) real = e.path().filename().string();
+  // #420: the name as the folder spells it (Windows finds "engine.xxx" too, but the overlay's lookup is by exact name).
+  for (const auto& e : fs::directory_iterator(dir, ec))
+    if (e.is_regular_file() && AsciiLower(e.path().filename().string()) == AsciiLower(name)) real = e.path().filename().string();
   if (real.empty()) return false;
   std::ifstream in(dir / real, std::ios::binary);
   out->assign(std::istreambuf_iterator<char>(in), {});
@@ -927,6 +926,7 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
     // If the start-up hash table lists this package too (job 124b: TU6 showed the dirty-disc error with it patched),
     // give it the patched copy's hash, as for the config bundles.
     const int table = UpdateHashTable(runtime, real, toc.old_sha1, toc.new_sha1);
+    ue3::RememberPatchedPackageHash(toc.new_sha1.data());   // #420: a game-side whole-file check may accept it
     REXLOG_INFO("ue3_package_patches: {}: {} start-up hash table entr{} updated", real, table, table == 1 ? "y" : "ies");
     if (table > 0) ++hashed;
     names.push_back(real);

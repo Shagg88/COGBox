@@ -9,6 +9,7 @@
 #include <string>
 
 #include <rex/cvar.h>
+#include <rex/input/device.h>
 #include <xenos/input/prompt_device_monitor.h>
 #include <xenos/renderer/prompt_overlay_compositor.h>
 #include <xenos/renderer/texture_cache.h>
@@ -292,4 +293,65 @@ TEST_CASE("RawInput: virtual XInput pads don't hide a real PlayStation pad", "[d
   CHECK(PromptDeviceMonitor::ClassifyRawInputPadNames(V{vigem360}) == DeviceStyle::kXbox);
   CHECK(PromptDeviceMonitor::ClassifyRawInputPadNames(V{ds4}) == DeviceStyle::kPlayStation);
   CHECK_FALSE(PromptDeviceMonitor::ClassifyRawInputPadNames(V{}).has_value());
+}
+
+namespace {
+rex::input::DeviceInfo FakePad(uint32_t ordinal, const char* name, const char* guid) {
+  rex::input::DeviceInfo d;
+  d.id = static_cast<rex::input::DeviceId>(ordinal + 1);
+  d.ordinal = ordinal;
+  d.name = name;
+  d.guid = guid;
+  return d;
+}
+rex::input::DeviceInfo FakeKbm() {
+  rex::input::DeviceInfo d;
+  d.id = static_cast<rex::input::DeviceId>(100);
+  d.name = "Keyboard and Mouse";
+  d.synthetic = true;
+  return d;
+}
+constexpr const char* kDualSenseGuid = "030057564c050000e60c000000016800";
+constexpr const char* kXboxGuid = "030000005e0400000b0b000000007200";
+}  // namespace
+
+TEST_CASE("Task 14 (#420): player 1's pads are classified from the device list", "[layer0][input][device_monitor]") {
+  PromptDeviceMonitor monitor;
+  // kbm only on P1: no pad style.
+  CHECK_FALSE(monitor.ClassifyPlayerOnePads({FakeKbm()}).has_value());
+  CHECK(monitor.ClassifyPlayerOnePads({FakeKbm(), FakePad(0, "DualSense Wireless Controller", kDualSenseGuid)}) ==
+        DeviceStyle::kPlayStation);
+  // Name says nothing: the VID / PID in the SDL GUID does.
+  CHECK(monitor.ClassifyPlayerOnePads({FakePad(0, "Controller", kDualSenseGuid)}) == DeviceStyle::kPlayStation);
+  CHECK(monitor.ClassifyPlayerOnePads({FakePad(0, "Xbox Series X Controller", kXboxGuid)}) == DeviceStyle::kXbox);
+}
+
+TEST_CASE("Task 14 (#420): in split screen only player 1's input changes the prompt style",
+          "[layer0][input][device_monitor]") {
+  // P1 keyboard / mouse + P2 PlayStation pad: P2's input is ignored, P1's key input switches.
+  CHECK_FALSE(PromptDeviceMonitor::PadActivityStyle(2, 1, std::nullopt, DeviceStyle::kPlayStation).has_value());
+  // ... and user 0's input with no pad of P1's (the keyboard's emulated pad) never takes P2's scanned pad type.
+  CHECK_FALSE(PromptDeviceMonitor::PadActivityStyle(2, 0, std::nullopt, DeviceStyle::kPlayStation).has_value());
+  // P1 Xbox + P2 PlayStation: P2 ignored; P1's input gives P1's style, not the scanned (Sony-first) one.
+  CHECK_FALSE(PromptDeviceMonitor::PadActivityStyle(2, 1, DeviceStyle::kXbox, DeviceStyle::kPlayStation).has_value());
+  CHECK(PromptDeviceMonitor::PadActivityStyle(2, 0, DeviceStyle::kXbox, DeviceStyle::kPlayStation) == DeviceStyle::kXbox);
+  // 1 player: any pad switches, with the scanned style (as before).
+  CHECK(PromptDeviceMonitor::PadActivityStyle(1, 3, DeviceStyle::kXbox, DeviceStyle::kSwitch) == DeviceStyle::kSwitch);
+  CHECK(PromptDeviceMonitor::PadActivityStyle(1, 0, std::nullopt, DeviceStyle::kPlayStation) == DeviceStyle::kPlayStation);
+
+  // Through the monitor: P1 on keyboard, P2's pad presses, P1's keys.
+  ScopedPromptCvarReset guard;
+  PromptDeviceMonitor monitor;
+  monitor.Reset();
+  monitor.NotifyKeyboardMouseActivity(1000);
+  CHECK(monitor.EvaluateActiveStyle(1000) == DeviceStyle::kKeyboard);
+  if (auto s = PromptDeviceMonitor::PadActivityStyle(2, 1, std::nullopt, DeviceStyle::kPlayStation))
+    monitor.NotifyGamepadActivity(*s, 2000);
+  CHECK(monitor.EvaluateActiveStyle(2000) == DeviceStyle::kKeyboard);
+  // P1 on a pad: P1's pad style.
+  if (auto s = PromptDeviceMonitor::PadActivityStyle(2, 0, DeviceStyle::kPlayStation, DeviceStyle::kSwitch))
+    monitor.NotifyGamepadActivity(*s, 3000);
+  CHECK(monitor.EvaluateActiveStyle(3000) == DeviceStyle::kPlayStation);
+  monitor.NotifyKeyDown(0x41, 4000);
+  CHECK(monitor.EvaluateActiveStyle(4000) == DeviceStyle::kKeyboard);
 }

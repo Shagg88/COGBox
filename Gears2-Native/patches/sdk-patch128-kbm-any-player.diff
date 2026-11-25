@@ -1,0 +1,212 @@
+diff --git a/include/rex/input/device_assignment.h b/include/rex/input/device_assignment.h
+index 948c484..3f50501 100644
+--- a/include/rex/input/device_assignment.h
++++ b/include/rex/input/device_assignment.h
+@@ -49,10 +49,12 @@ std::string DeviceKey(const DeviceInfo& device);
+ /// "auto" or empty meaning Auto (returned as "").
+ std::vector<std::string> ParsePlayerDevices(const std::string& text);
+ 
+-/// Player N gets the device named by keys_by_player[N] (empty = Auto). Players
+-/// whose device is absent, and Auto players, take unchosen devices lowest
+-/// player first, pads in ordinal order before keyboard/mouse. The NOP stand-in
+-/// feeds user 0 only when user 0 has nothing else. Players = number of keys.
++/// Player N gets the device named by keys_by_player[N] (empty = Auto; "kbm" =
++/// the keyboard/mouse). Players whose device is absent, and Auto players, take
++/// unchosen devices lowest player first: the keyboard/mouse first, then pads in
++/// ordinal order (all Auto: keyboard/mouse player 1, the first pad player 2).
++/// The NOP stand-in feeds user 0 only when user 0 has nothing else. Players =
++/// number of keys.
+ class ExplicitAssignment final : public DeviceAssignment {
+  public:
+   explicit ExplicitAssignment(std::vector<std::string> keys_by_player);
+@@ -65,6 +67,12 @@ class ExplicitAssignment final : public DeviceAssignment {
+   std::string last_log_;
+ };
+ 
++/// The guest user the keyboard/mouse feeds under the current assignment, -1
++/// when none does (no keyboard/mouse device). Any thread; updated whenever the
++/// devices or the assignment change. COGBox GitHub #420: the game-side mouse look
++/// and button prompts follow it.
++int KeyboardMouseUser();
++
+ /// Every device feeds guest user 0. Users 1 and up report not connected. For
+ /// single-player titles that only ever poll user 0.
+ class SharedAssignment final : public DeviceAssignment {
+diff --git a/src/input/device_assignment.cpp b/src/input/device_assignment.cpp
+index dfe9efd..35fa293 100644
+--- a/src/input/device_assignment.cpp
++++ b/src/input/device_assignment.cpp
+@@ -12,12 +12,25 @@
+ #include <rex/input/device_assignment.h>
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <cctype>
+ 
++#include <rex/cvar.h>
+ #include <rex/logging.h>
+ 
++// SDK patch 122 (Shagg, COGBox GitHub #420), folded into patch 117: without --player_devices the keyboard/mouse and the
++// first pad both drove player 1; with --mnk_own_player the keyboard/mouse keeps player 1 and every pad moves one slot on.
++REXCVAR_DEFINE_BOOL(mnk_own_player, false, "Input",
++                    "Keyboard / mouse is player 1 on its own; pads are players 2, 3, 4 (split screen with keyboard + pad)");
++
+ namespace rex::input {
+ 
++namespace {
++std::atomic<int> g_kbm_user{-1};
++}  // namespace
++
++int KeyboardMouseUser() { return g_kbm_user.load(std::memory_order_relaxed); }
++
+ void SlotAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices) {
+   for (auto& user : users_) {
+     user.clear();
+@@ -25,13 +38,17 @@ void SlotAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices) {
+ 
+   // Key off the ordinal rather than list position, so unplugging pad one does
+   // not promote pad two to player one.
++  bool kbm = false;
++  for (const auto& device : devices) kbm = kbm || (device.synthetic && !device.nop);
++  const uint32_t shift = (kbm && REXCVAR_GET(mnk_own_player)) ? 1u : 0u;
+   for (const auto& device : devices) {
+     if (device.synthetic) {
+       users_[0].push_back(device.id);
+-    } else if (device.ordinal < kMaxGuestUsers) {
+-      users_[device.ordinal].push_back(device.id);
++    } else if (device.ordinal + shift < kMaxGuestUsers) {
++      users_[device.ordinal + shift].push_back(device.id);
+     }
+   }
++  g_kbm_user.store(kbm ? 0 : -1, std::memory_order_relaxed);
+ }
+ 
+ void SlotAssignment::DevicesForUser(uint32_t user_index, std::vector<DeviceId>& out) const {
+@@ -85,12 +102,6 @@ ExplicitAssignment::ExplicitAssignment(std::vector<std::string> keys_by_player)
+   if (keys_.size() > kMaxGuestUsers) {
+     keys_.resize(kMaxGuestUsers);
+   }
+-  // Keyboard and mouse always drive player 1; a "kbm" key from an older setting is just Auto.
+-  for (auto& key : keys_) {
+-    if (key == "kbm") {
+-      key.clear();
+-    }
+-  }
+   users_.resize(keys_.size());
+ }
+ 
+@@ -116,19 +127,21 @@ void ExplicitAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices
+     }
+   }
+ 
+-  // Unchosen pads by ordinal. A device some player names stays reserved for it
+-  // even while that player is unmatched. Keyboard/mouse is never pooled: it
+-  // always drives user 0 (below).
++  // Unchosen devices: the keyboard/mouse first, then pads by ordinal (COGBox GitHub #420: all Auto = keyboard/mouse
++  // player 1, the first pad player 2; player 1 on a named pad leaves the keyboard/mouse to the next Auto player). A
++  // device some player names stays reserved for it even while that player is unmatched.
+   std::vector<size_t> pool;
+   for (size_t d = 0; d < devices.size(); d++) {
+     const std::string key = DeviceKey(devices[d]);
+-    if (key.empty() || devices[d].synthetic || used[d] || std::find(keys_.begin(), keys_.end(), key) != keys_.end()) {
++    if (key.empty() || used[d] || std::find(keys_.begin(), keys_.end(), key) != keys_.end()) {
+       continue;
+     }
+     pool.push_back(d);
+   }
+-  std::stable_sort(pool.begin(), pool.end(),
+-                   [&](size_t a, size_t b) { return devices[a].ordinal < devices[b].ordinal; });
++  std::stable_sort(pool.begin(), pool.end(), [&](size_t a, size_t b) {
++    if (devices[a].synthetic != devices[b].synthetic) return devices[a].synthetic;
++    return devices[a].ordinal < devices[b].ordinal;
++  });
+ 
+   // Pass 2: mapped-but-absent players first, then Auto, lowest player first.
+   size_t next = 0;
+@@ -142,15 +155,6 @@ void ExplicitAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices
+     }
+   }
+ 
+-  // The keyboard and mouse always belong to player 1, whatever else it has.
+-  if (!users_.empty()) {
+-    for (const auto& device : devices) {
+-      if (device.synthetic && !device.nop) {
+-        users_[0].push_back(device.id);
+-      }
+-    }
+-  }
+-
+   // The NOP stand-in keeps the guest from pausing when user 0 has no device.
+   if (!users_.empty() && users_[0].empty()) {
+     for (const auto& device : devices) {
+@@ -161,6 +165,16 @@ void ExplicitAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices
+     }
+   }
+ 
++  int kbm_user = -1;
++  for (size_t p = 0; p < users_.size() && kbm_user < 0; p++) {
++    for (const auto& id : users_[p]) {
++      for (const auto& device : devices) {
++        if (device.id == id && device.synthetic && !device.nop) kbm_user = int(p);
++      }
++    }
++  }
++  g_kbm_user.store(kbm_user, std::memory_order_relaxed);
++
+   std::string log;
+   for (size_t p = 0; p < users_.size(); p++) {
+     std::string key = "-";
+diff --git a/tests/unit/input/input_assignment_test.cpp b/tests/unit/input/input_assignment_test.cpp
+index 3d04992..43f6222 100644
+--- a/tests/unit/input/input_assignment_test.cpp
++++ b/tests/unit/input/input_assignment_test.cpp
+@@ -282,11 +282,30 @@ TEST_CASE("DeviceKey names kbm, pads by guid and path, and nothing for NOP", "[i
+   CHECK(DeviceKey(SdlPad(4, 0, "G", "")) != DeviceKey(SdlPad(5, 1, "G", "")));
+ }
+ 
+-TEST_CASE("ExplicitAssignment_KbmAlwaysUser0", "[input]") {
++TEST_CASE("ExplicitAssignment_AllAutoKbmIsPlayer1", "[input]") {
++  // COGBox #420: all Auto = keyboard/mouse player 1, the first pad player 2
++  ExplicitAssignment a({"", ""});
++  a.OnDevicesChanged({Kbm(9), SdlPad(1, 0, "A", "p"), SdlPad(2, 1, "B", "q")});
++  CHECK(For(a, 0) == Of({9}));
++  CHECK(For(a, 1) == Of({1}));
++  CHECK(rex::input::KeyboardMouseUser() == 0);
++}
++
++TEST_CASE("ExplicitAssignment_NamedPadLeavesKbmToAuto", "[input]") {
++  // COGBox #420: player 1 on a named pad, player 2 Auto = player 2 gets the keyboard/mouse
+   ExplicitAssignment a({"sdl:A|p", ""});
+   a.OnDevicesChanged({Kbm(9), SdlPad(1, 0, "A", "p"), SdlPad(2, 1, "B", "q")});
+-  CHECK(For(a, 0) == Of({1, 9}));
++  CHECK(For(a, 0) == Of({1}));
++  CHECK(For(a, 1) == Of({9}));
++  CHECK(rex::input::KeyboardMouseUser() == 1);
++}
++
++TEST_CASE("ExplicitAssignment_NoKbmMeansNoKbmUser", "[input]") {
++  ExplicitAssignment a({"", ""});
++  a.OnDevicesChanged({SdlPad(1, 0, "A", "p"), SdlPad(2, 1, "B", "q")});
++  CHECK(For(a, 0) == Of({1}));
+   CHECK(For(a, 1) == Of({2}));
++  CHECK(rex::input::KeyboardMouseUser() == -1);
+ }
+ 
+ TEST_CASE("ExplicitAssignment_TwoIdenticalPads", "[input]") {
+@@ -322,11 +341,13 @@ TEST_CASE("ExplicitAssignment_ExtraPadsIgnored", "[input]") {
+   CHECK(For(a, 3).empty());
+ }
+ 
+-TEST_CASE("ExplicitAssignment_KbmKeyIgnoredForPlacement", "[input]") {
++TEST_CASE("ExplicitAssignment_KbmKeyPlacesKbm", "[input]") {
++  // COGBox #420: the keyboard/mouse can be chosen for any player
+   ExplicitAssignment a({"", "kbm"});
+   a.OnDevicesChanged({Kbm(9), SdlPad(1, 0, "A", "a")});
+-  CHECK(For(a, 0) == Of({1, 9}));
+-  CHECK(For(a, 1).empty());
++  CHECK(For(a, 0) == Of({1}));
++  CHECK(For(a, 1) == Of({9}));
++  CHECK(rex::input::KeyboardMouseUser() == 1);
+ }
+ 
+ TEST_CASE("ExplicitAssignment_NopIsFlagNotName", "[input]") {

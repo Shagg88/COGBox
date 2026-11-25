@@ -559,6 +559,7 @@ bool PromptOverlayCompositor::Initialize(const std::filesystem::path& glyphs_dir
   for (auto& style_slots : weak_overlays_)
     for (auto& slot : style_slots) slot.reset();
   resident_order_.clear();
+  for (bool& u : style_unavailable_) u = false;
   initialized_ = true;
   REXLOG_INFO("prompt_compositor: glyphs in '{}', active style={}", resolved_glyphs_dir_.string(),
               DeviceStyleName(active_style_));
@@ -579,6 +580,7 @@ bool PromptOverlayCompositor::StyleResidentLocked(DeviceStyle style) const {
 bool PromptOverlayCompositor::EnsureStyleLocked(DeviceStyle style) {
   if (!initialized_ || style == DeviceStyle::kOriginal || static_cast<size_t>(style) >= kStyleCount) return false;
   const size_t s = static_cast<size_t>(style);
+  if (style_unavailable_[s]) return false;  // its glyph set is incomplete: warned once, not retried
   if (!StyleResidentLocked(style)) {
     // Evicted earlier but still held by the texture cache (its per-style host textures keep a reference): take it back
     // instead of composing again, so the cache sees the same buffer and reuses its texture.
@@ -599,7 +601,9 @@ bool PromptOverlayCompositor::EnsureStyleLocked(DeviceStyle style) {
           const std::filesystem::path p = resolved_glyphs_dir_ / StyleFolder(style) / (std::string(btn) + ".png");
           Image img;
           if (!LoadPng(p, &img)) {
-            REXLOG_WARN("prompt_compositor: failed to load glyph PNG '{}'", p.string());
+            REXLOG_WARN("prompt_compositor: failed to load glyph PNG '{}' - no {} prompts (the game's own instead) "
+                        "until the next start", p.string(), DeviceStyleName(style));
+            style_unavailable_[s] = true;
             return false;
           }
           glyphs.emplace(btn, std::move(img));
@@ -655,6 +659,11 @@ void PromptOverlayCompositor::SetGameTitle(uint32_t title_id) {
 bool PromptOverlayCompositor::PrepareStyle(DeviceStyle style) {
   std::lock_guard<std::mutex> lock(mutex_);
   return EnsureStyleLocked(style);
+}
+
+bool PromptOverlayCompositor::IsStyleUnavailable(DeviceStyle style) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return static_cast<size_t>(style) < kStyleCount && style_unavailable_[static_cast<size_t>(style)];
 }
 
 bool PromptOverlayCompositor::IsStyleReady(DeviceStyle style) const {
@@ -830,8 +839,10 @@ std::span<const uint8_t> PromptOverlayCompositor::GetOverlay(uint64_t hash, Devi
 void PromptOverlayCompositor::ApplyActiveStyleLocked() {
   // Disk overlays (the launcher's key caps, --gow2_texture_overlay_dir) are hidden only when auto mode asked for the
   // game's own prompts; an explicit "original" leaves them exactly as before this feature.
-  SetSuppressDiskOverlaysForPrompts(active_style_ == DeviceStyle::kOriginal && hide_disk_overlays_);
-  if (active_style_ == DeviceStyle::kOriginal) {
+  // A pad style that could not be built shows the game's own prompts (not the launcher's key caps left from before).
+  const bool unavailable = style_unavailable_[static_cast<size_t>(active_style_)];
+  SetSuppressDiskOverlaysForPrompts((active_style_ == DeviceStyle::kOriginal && hide_disk_overlays_) || unavailable);
+  if (active_style_ == DeviceStyle::kOriginal || unavailable) {
     for (const auto& layout : GetAllAtlasLayouts()) {
       SetDynamicOverlayShared(layout.hash, nullptr);
     }

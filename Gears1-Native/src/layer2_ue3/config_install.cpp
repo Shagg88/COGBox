@@ -13,6 +13,8 @@
 // an earlier search of an incomplete image copy missed it), so both are updated.
 // Our code (MIT).
 #include <ue3/config_bundle.h>
+#include <ue3/gow1_split_package_patch.h>
+#include <ue3/package_patch.h>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -61,6 +63,9 @@ REXCVAR_DEFINE_STRING(ue3_voice_language, "", "Gears3",
                       "empty = the game's language");
 REXCVAR_DEFINE_STRING(ue3_ini_bundle_dir, "GearGame\\CookedXbox360", "Gears3",
                       "Folder of the Coalesced_*.bin config bundles, relative to the game data root");
+REXCVAR_DEFINE_BOOL(gow1_split_vertical, false, "Gears 1",
+                    "GitHub #420: the two-player split side by side (eSST_2P_VERTICAL), chosen by the game's own "
+                    "script (an Engine.xxx package patch, ue3/gow1_split_package_patch.h)");
 
 namespace {
 constexpr const char* kGameDevice = "\\Device\\Harddisk0\\Partition1";
@@ -299,6 +304,18 @@ std::string Md5Hex(const std::filesystem::path& file) {
 std::string ModLower(std::string s) {
   for (char& c : s) c = char(std::tolower(uint8_t(c)));
   return s;
+}
+
+// GitHub #420: a file's table-of-contents uncompressed size - Gears 1's own LZO packages (little-endian header, the
+// tag twice: ue3/package_patch.h) give their header's total, anything else Gears 2's reader (0 = stored plain).
+uint64_t UncompressedSize(const std::filesystem::path& file) {
+  std::ifstream in(file, std::ios::binary);
+  uint8_t h[16] = {};
+  if (in.read(reinterpret_cast<char*>(h), 16)) {
+    const uint64_t total = ue3::LegacyCompressedTotal(h);
+    if (total) return total;
+  }
+  return ue3::WholeCompressedSize(file);
 }
 
 std::string RelKey(std::string rel) {
@@ -579,7 +596,7 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
           listed.insert(k);
           auto it = files.find(k);
           if (it != files.end()) {
-            line = std::to_string(fs::file_size(it->second, ec)) + " " + std::to_string(ue3::WholeCompressedSize(it->second)) + " " +  // 0.6.5 (#367): its own uncompressed size
+            line = std::to_string(fs::file_size(it->second, ec)) + " " + std::to_string(UncompressedSize(it->second)) + " " +  // 0.6.5 (#367): its own uncompressed size
                    (tok.size() == 5 ? tok[2] + " " : std::string()) + path + " " +
                    Md5Hex(it->second);
             ++changed;
@@ -596,7 +613,7 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
         std::string rel = rex::path_to_utf8(host.filename());
         std::string guest = "..\\" + rex::path_to_utf8(topdir.filename()) + "\\" + k.substr(top.size() + 1);
         guest = guest.substr(0, guest.size() - rel.size()) + rel;   // keep the mod file's own name casing
-        added += std::to_string(fs::file_size(host, ec)) + " " + std::to_string(ue3::WholeCompressedSize(host)) +  // 0.6.5 (#367)
+        added += std::to_string(fs::file_size(host, ec)) + " " + std::to_string(UncompressedSize(host)) +  // 0.6.5 (#367)
                  (fields_seen == 5 ? " 0 " : " ") + guest + " " + Md5Hex(host) + "\r\n";
         ++changed;
       }
@@ -621,6 +638,56 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
   }
   REXLOG_INFO("ue3_mods: {} folder view(s); {} hash table entries updated", devices, hashed);
 }
+
+// GitHub #420 (task 8b): --gow1_split_vertical. WarGame\CookedXenon\Engine.xxx (a mod's copy if one has it) gets the
+// patches of ue3/gow1_split_package_patch.h; the patched copy, still LZO-compressed in the disc's format, is written to
+// <user data>\package-patches and served through the mods' folder view. Anything unexpected leaves the game's own file.
+void AddSplitPackagePatch(rex::Runtime* runtime, std::map<std::string, std::filesystem::path>* mods) {
+  namespace fs = std::filesystem;
+  std::string err;
+  const std::vector<ue3::PackagePatch> patches = ue3::ParsePackagePatches(gow1::kSplitVerticalPackagePatch, &err);
+  if (!err.empty() || patches.empty()) {
+    REXLOG_WARN("gow1_split_vertical: {}", err);
+    return;
+  }
+  const std::string rel = "WarGame\\CookedXenon";
+  const fs::path dir = runtime->game_data_root() / fs::path(rel);
+  std::error_code ec;
+  std::string real;
+  for (const auto& e : fs::directory_iterator(dir, ec))
+    if (e.is_regular_file() && ModLower(rex::path_to_utf8(e.path().filename())) == ModLower(patches[0].file))
+      real = rex::path_to_utf8(e.path().filename());
+  if (real.empty()) {
+    REXLOG_WARN("gow1_split_vertical: {} not found in {} - the split is the game's own", patches[0].file, dir.string());
+    return;
+  }
+  const std::string key = RelKey(rel + "\\" + real);
+  const auto modCopy = mods->find(key);
+  const fs::path src = modCopy != mods->end() ? modCopy->second : dir / rex::to_path(real);
+  std::ifstream in(src, std::ios::binary);
+  const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+  std::vector<uint8_t> patched;
+  std::vector<std::string> log;
+  const int applied = ue3::PatchCompressedPackage(bytes, real, patches, patched, &log, &err);
+  for (const std::string& l : log) REXLOG_INFO("gow1_split_vertical: {}", l);
+  if (applied <= 0) {
+    REXLOG_WARN("gow1_split_vertical: {} left as it is ({}) - the split is the game's own", real, err);
+    return;
+  }
+  const fs::path out_dir = runtime->user_data_root() / "package-patches";
+  fs::create_directories(out_dir, ec);
+  const fs::path out = out_dir / rex::to_path(real);
+  std::ofstream o(out, std::ios::binary | std::ios::trunc);
+  o.write(reinterpret_cast<const char*>(patched.data()), std::streamsize(patched.size()));
+  o.close();
+  if (!o) {
+    REXLOG_WARN("gow1_split_vertical: could not write {}", out.string());
+    return;
+  }
+  (*mods)[key] = out;
+  REXLOG_INFO("gow1_split_vertical: {}: {} patch(es), {} -> {} bytes, {} (served through the mods' folder view)", real,
+              applied, bytes.size(), patched.size(), out.string());
+}
 }  // namespace
 
 void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
@@ -640,6 +707,7 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
       }
     }
   } modsAtEnd{runtime, &mods, &modDirs};
+  if (REXCVAR_GET(gow1_split_vertical)) AddSplitPackagePatch(runtime, &mods);   // GitHub #420 (task 8b)
   const std::string spec = REXCVAR_GET(ue3_ini_edits);
   if (spec.empty() || !runtime || !runtime->file_system()) return;
   std::string error;

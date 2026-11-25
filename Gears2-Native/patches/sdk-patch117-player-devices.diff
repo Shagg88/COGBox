@@ -1,0 +1,412 @@
+diff --git a/include/rex/input/device.h b/include/rex/input/device.h
+index 22f7804..f0c21d4 100644
+--- a/include/rex/input/device.h
++++ b/include/rex/input/device.h
+@@ -27,8 +27,10 @@ struct DeviceInfo {
+   uint32_t ordinal = 0;  // connection order, assigned by InputSystem
+   std::string name;
+   std::string guid;
++  std::string path;  // OS device path (SDL_GetGamepadPath); empty when the driver has none
+   uint8_t subtype = 0x01;  // XINPUT_DEVSUBTYPE_*
+   bool synthetic = false;  // keyboard/mouse emulation or the NOP stand-in
++  bool nop = false;        // the NOP stand-in (synthetic, no real input); set by the NOP driver
+ };
+ 
+ }  // namespace rex::input
+diff --git a/include/rex/input/device_assignment.h b/include/rex/input/device_assignment.h
+index a318f2c..948c484 100644
+--- a/include/rex/input/device_assignment.h
++++ b/include/rex/input/device_assignment.h
+@@ -11,6 +11,7 @@
+  */
+ 
+ #include <cstdint>
++#include <string>
+ #include <vector>
+ 
+ #include <rex/input/device.h>
+@@ -38,6 +39,32 @@ class SlotAssignment final : public DeviceAssignment {
+   std::vector<std::vector<DeviceId>> users_ = std::vector<std::vector<DeviceId>>(kMaxGuestUsers);
+ };
+ 
++/// Stable identity of a device across runs: "kbm" for the keyboard/mouse
++/// synthetic device, "sdl:<guid>|<path>" for a pad (path falls back to the
++/// per-run instance id when the driver has none, so identical pads stay
++/// distinct), "" for the NOP stand-in.
++std::string DeviceKey(const DeviceInfo& device);
++
++/// Splits a `player_devices` cvar value: `;`-separated keys in player order,
++/// "auto" or empty meaning Auto (returned as "").
++std::vector<std::string> ParsePlayerDevices(const std::string& text);
++
++/// Player N gets the device named by keys_by_player[N] (empty = Auto). Players
++/// whose device is absent, and Auto players, take unchosen devices lowest
++/// player first, pads in ordinal order before keyboard/mouse. The NOP stand-in
++/// feeds user 0 only when user 0 has nothing else. Players = number of keys.
++class ExplicitAssignment final : public DeviceAssignment {
++ public:
++  explicit ExplicitAssignment(std::vector<std::string> keys_by_player);
++  void OnDevicesChanged(const std::vector<DeviceInfo>& devices) override;
++  void DevicesForUser(uint32_t user_index, std::vector<DeviceId>& out) const override;
++
++ private:
++  std::vector<std::string> keys_;
++  std::vector<std::vector<DeviceId>> users_;
++  std::string last_log_;
++};
++
+ /// Every device feeds guest user 0. Users 1 and up report not connected. For
+ /// single-player titles that only ever poll user 0.
+ class SharedAssignment final : public DeviceAssignment {
+diff --git a/src/input/device_assignment.cpp b/src/input/device_assignment.cpp
+index 52e0073..dfe9efd 100644
+--- a/src/input/device_assignment.cpp
++++ b/src/input/device_assignment.cpp
+@@ -11,6 +11,11 @@
+ 
+ #include <rex/input/device_assignment.h>
+ 
++#include <algorithm>
++#include <cctype>
++
++#include <rex/logging.h>
++
+ namespace rex::input {
+ 
+ void SlotAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices) {
+@@ -37,6 +42,150 @@ void SlotAssignment::DevicesForUser(uint32_t user_index, std::vector<DeviceId>&
+   out = users_[user_index];
+ }
+ 
++std::string DeviceKey(const DeviceInfo& device) {
++  if (device.synthetic) {
++    return device.nop ? std::string() : std::string("kbm");
++  }
++  // Drivers without a path (or SDL builds that cannot report one) fall back to
++  // the instance id, unique per run, so two identical pads never share a key.
++  const std::string suffix =
++      device.path.empty() ? "#" + std::to_string(static_cast<uint64_t>(device.id)) : device.path;
++  return "sdl:" + device.guid + "|" + suffix;
++}
++
++std::vector<std::string> ParsePlayerDevices(const std::string& text) {
++  std::vector<std::string> keys;
++  if (text.empty()) {
++    return keys;
++  }
++  size_t start = 0;
++  while (true) {
++    size_t end = text.find(';', start);
++    std::string key = text.substr(start, end == std::string::npos ? end : end - start);
++    const auto b = key.find_first_not_of(" \t");
++    const auto e = key.find_last_not_of(" \t");
++    key = b == std::string::npos ? std::string() : key.substr(b, e - b + 1);
++    std::string lower = key;  // match "auto" any case; keys keep theirs (guids are case-sensitive)
++    std::transform(lower.begin(), lower.end(), lower.begin(),
++                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
++    if (lower == "auto") {
++      key.clear();
++    }
++    keys.push_back(std::move(key));
++    if (end == std::string::npos) {
++      break;
++    }
++    start = end + 1;
++  }
++  return keys;
++}
++
++ExplicitAssignment::ExplicitAssignment(std::vector<std::string> keys_by_player)
++    : keys_(std::move(keys_by_player)) {
++  if (keys_.size() > kMaxGuestUsers) {
++    keys_.resize(kMaxGuestUsers);
++  }
++  // Keyboard and mouse always drive player 1; a "kbm" key from an older setting is just Auto.
++  for (auto& key : keys_) {
++    if (key == "kbm") {
++      key.clear();
++    }
++  }
++  users_.resize(keys_.size());
++}
++
++void ExplicitAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices) {
++  for (auto& user : users_) {
++    user.clear();
++  }
++  std::vector<bool> used(devices.size(), false);
++  std::vector<bool> has(users_.size(), false);
++
++  // Pass 1: mapped keys claim their device.
++  for (size_t p = 0; p < keys_.size(); p++) {
++    if (keys_[p].empty()) {
++      continue;
++    }
++    for (size_t d = 0; d < devices.size(); d++) {
++      if (!used[d] && DeviceKey(devices[d]) == keys_[p]) {
++        users_[p].push_back(devices[d].id);
++        used[d] = true;
++        has[p] = true;
++        break;
++      }
++    }
++  }
++
++  // Unchosen pads by ordinal. A device some player names stays reserved for it
++  // even while that player is unmatched. Keyboard/mouse is never pooled: it
++  // always drives user 0 (below).
++  std::vector<size_t> pool;
++  for (size_t d = 0; d < devices.size(); d++) {
++    const std::string key = DeviceKey(devices[d]);
++    if (key.empty() || devices[d].synthetic || used[d] || std::find(keys_.begin(), keys_.end(), key) != keys_.end()) {
++      continue;
++    }
++    pool.push_back(d);
++  }
++  std::stable_sort(pool.begin(), pool.end(),
++                   [&](size_t a, size_t b) { return devices[a].ordinal < devices[b].ordinal; });
++
++  // Pass 2: mapped-but-absent players first, then Auto, lowest player first.
++  size_t next = 0;
++  for (int pass = 0; pass < 2; pass++) {
++    for (size_t p = 0; p < keys_.size() && next < pool.size(); p++) {
++      if (has[p] || keys_[p].empty() != (pass == 1)) {
++        continue;
++      }
++      users_[p].push_back(devices[pool[next++]].id);
++      has[p] = true;
++    }
++  }
++
++  // The keyboard and mouse always belong to player 1, whatever else it has.
++  if (!users_.empty()) {
++    for (const auto& device : devices) {
++      if (device.synthetic && !device.nop) {
++        users_[0].push_back(device.id);
++      }
++    }
++  }
++
++  // The NOP stand-in keeps the guest from pausing when user 0 has no device.
++  if (!users_.empty() && users_[0].empty()) {
++    for (const auto& device : devices) {
++      if (device.nop) {
++        users_[0].push_back(device.id);
++        break;
++      }
++    }
++  }
++
++  std::string log;
++  for (size_t p = 0; p < users_.size(); p++) {
++    std::string key = "-";
++    for (const auto& device : devices) {
++      if (!users_[p].empty() && device.id == users_[p][0]) {
++        key = DeviceKey(device).empty() ? "nop" : DeviceKey(device);
++        break;
++      }
++    }
++    log += (p ? " P" : "P") + std::to_string(p + 1) + "=" + key;
++  }
++  if (log != last_log_) {
++    last_log_ = log;
++    REXLOG_INFO("player_devices: {}", log);
++  }
++}
++
++void ExplicitAssignment::DevicesForUser(uint32_t user_index, std::vector<DeviceId>& out) const {
++  out.clear();
++  if (user_index >= users_.size()) {
++    return;
++  }
++  out = users_[user_index];
++}
++
+ void SharedAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices) {
+   user0_.clear();
+   user0_.reserve(devices.size());
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index 5bcf770..fa5c4b9 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -29,6 +29,9 @@
+ #include <rex/logging.h>
+ #include <rex/system/kernel_state.h>
+ 
++REXCVAR_DEFINE_STRING(player_devices, "", "Input",
++                     "Splitscreen device map: ';'-separated device keys in player order, 'auto' or empty "
++                     "for Auto (e.g. 'kbm;auto'). Empty = pads by connection order");
+ REXCVAR_DEFINE_STRING(input_backend, "sdl", "Input", "Input backend: sdl, xinput")
+     .allowed({"sdl", "xinput"});
+ 
+@@ -904,7 +907,12 @@ std::unique_ptr<InputSystem> CreateDefaultInputSystem(bool tool_mode) {
+   // NOP driver (primary in tool mode, fallback otherwise)
+   uint8_t nop_index = tool_mode ? 0 : 1;
+   input->AddDriver(std::make_unique<nop::NopInputDriver>(nullptr, nop_index));
+-  input->SetDeviceAssignment(std::make_unique<SlotAssignment>());
++  const auto player_keys = ParsePlayerDevices(REXCVAR_GET(player_devices));
++  if (!player_keys.empty()) {
++    input->SetDeviceAssignment(std::make_unique<ExplicitAssignment>(player_keys));
++  } else {
++    input->SetDeviceAssignment(std::make_unique<SlotAssignment>());
++  }
+   return input;
+ }
+ 
+diff --git a/src/input/nop/nop_input_driver.cpp b/src/input/nop/nop_input_driver.cpp
+index 23fbca1..0e682bb 100644
+--- a/src/input/nop/nop_input_driver.cpp
++++ b/src/input/nop/nop_input_driver.cpp
+@@ -40,6 +40,7 @@ void NopInputDriver::EnumerateDevices(std::vector<DeviceInfo>& out) {
+   DeviceInfo info;
+   info.id = kNopDevice;
+   info.name = "None";
++  info.nop = true;
+   info.synthetic = true;
+   out.push_back(info);
+ }
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+index 0a0d4d6..0e39185 100644
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -371,6 +371,8 @@ void SDLInputDriver::EnumerateDevices(std::vector<DeviceInfo>& out) {
+     SDL_GUIDToString(SDL_GetJoystickGUID(SDL_GetGamepadJoystick(controller.sdl)), guid_text,
+                      static_cast<int>(sizeof(guid_text)));
+     info.guid = guid_text;
++    const char* dev_path = SDL_GetGamepadPath(controller.sdl);
++    info.path = dev_path ? dev_path : "";
+     info.subtype = GamepadSubType(controller.sdl);
+     info.synthetic = false;
+     out.push_back(info);
+diff --git a/tests/unit/input/input_assignment_test.cpp b/tests/unit/input/input_assignment_test.cpp
+index 096238d..3d04992 100644
+--- a/tests/unit/input/input_assignment_test.cpp
++++ b/tests/unit/input/input_assignment_test.cpp
+@@ -16,6 +16,8 @@ using rex::X_STATUS;
+ using rex::input::DeviceAssignment;
+ using rex::input::DeviceId;
+ using rex::input::DeviceInfo;
++using rex::input::DeviceKey;
++using rex::input::ExplicitAssignment;
+ using rex::input::InputDriver;
+ using rex::input::InputSystem;
+ using rex::input::SharedAssignment;
+@@ -236,3 +238,117 @@ TEST_CASE("A synthetic device does not push the first pad off guest user 0", "[i
+   REQUIRE(static_cast<uint16_t>(state.gamepad.buttons) == X_INPUT_GAMEPAD_B);
+   REQUIRE(system->GetState(1, &state) == X_ERROR_DEVICE_NOT_CONNECTED);
+ }
++
++namespace {
++
++DeviceInfo SdlPad(uint64_t id, uint32_t ordinal, const char* guid, const char* path) {
++  DeviceInfo info = Pad(id, ordinal);
++  info.guid = guid;
++  info.path = path;
++  return info;
++}
++
++DeviceInfo Kbm(uint64_t id) {
++  DeviceInfo info;
++  info.id = static_cast<DeviceId>(id);
++  info.name = "Keyboard and Mouse";
++  info.synthetic = true;
++  return info;
++}
++
++DeviceInfo Nop(uint64_t id) {
++  DeviceInfo info;
++  info.id = static_cast<DeviceId>(id);
++  info.name = "None";
++  info.synthetic = true;
++  info.nop = true;
++  return info;
++}
++
++using Ids = std::vector<DeviceId>;
++Ids Of(std::initializer_list<uint64_t> ids) {
++  Ids out;
++  for (auto id : ids) out.push_back(static_cast<DeviceId>(id));
++  return out;
++}
++
++}  // namespace
++
++TEST_CASE("DeviceKey names kbm, pads by guid and path, and nothing for NOP", "[input]") {
++  CHECK(DeviceKey(Kbm(1)) == "kbm");
++  CHECK(DeviceKey(Nop(2)).empty());
++  CHECK(DeviceKey(SdlPad(3, 0, "G", "p1")) == "sdl:G|p1");
++  // No path: two identical pads still get distinct keys.
++  CHECK(DeviceKey(SdlPad(4, 0, "G", "")) != DeviceKey(SdlPad(5, 1, "G", "")));
++}
++
++TEST_CASE("ExplicitAssignment_KbmAlwaysUser0", "[input]") {
++  ExplicitAssignment a({"sdl:A|p", ""});
++  a.OnDevicesChanged({Kbm(9), SdlPad(1, 0, "A", "p"), SdlPad(2, 1, "B", "q")});
++  CHECK(For(a, 0) == Of({1, 9}));
++  CHECK(For(a, 1) == Of({2}));
++}
++
++TEST_CASE("ExplicitAssignment_TwoIdenticalPads", "[input]") {
++  ExplicitAssignment a({"sdl:G|p2", "sdl:G|p1"});
++  a.OnDevicesChanged({SdlPad(1, 0, "G", "p1"), SdlPad(2, 1, "G", "p2")});
++  CHECK(For(a, 0) == Of({2}));
++  CHECK(For(a, 1) == Of({1}));
++}
++
++TEST_CASE("ExplicitAssignment_AutoTakesUnchosenOnly", "[input]") {
++  ExplicitAssignment a({"sdl:B|x", ""});
++  a.OnDevicesChanged({SdlPad(1, 0, "A", "a"), SdlPad(2, 1, "B", "x")});
++  CHECK(For(a, 0) == Of({2}));
++  CHECK(For(a, 1) == Of({1}));
++}
++
++TEST_CASE("ExplicitAssignment_LateMappedPadReclaims", "[input]") {
++  ExplicitAssignment a({"sdl:B|x", ""});
++  a.OnDevicesChanged({SdlPad(1, 0, "A", "a"), Nop(7)});
++  CHECK(For(a, 0) == Of({1}));
++  CHECK(For(a, 1).empty());
++  a.OnDevicesChanged({SdlPad(1, 0, "A", "a"), SdlPad(2, 1, "B", "x"), Nop(7)});
++  CHECK(For(a, 0) == Of({2}));
++  CHECK(For(a, 1) == Of({1}));
++}
++
++TEST_CASE("ExplicitAssignment_ExtraPadsIgnored", "[input]") {
++  ExplicitAssignment a({"", ""});
++  a.OnDevicesChanged({SdlPad(1, 0, "A", "a"), SdlPad(2, 1, "B", "b"), SdlPad(3, 2, "C", "c")});
++  CHECK(For(a, 0) == Of({1}));
++  CHECK(For(a, 1) == Of({2}));
++  CHECK(For(a, 2).empty());
++  CHECK(For(a, 3).empty());
++}
++
++TEST_CASE("ExplicitAssignment_KbmKeyIgnoredForPlacement", "[input]") {
++  ExplicitAssignment a({"", "kbm"});
++  a.OnDevicesChanged({Kbm(9), SdlPad(1, 0, "A", "a")});
++  CHECK(For(a, 0) == Of({1, 9}));
++  CHECK(For(a, 1).empty());
++}
++
++TEST_CASE("ExplicitAssignment_NopIsFlagNotName", "[input]") {
++  DeviceInfo renamed = Kbm(5);
++  renamed.name = "None";  // a keyboard whose name happens to be "None" is still not the NOP stand-in
++  CHECK(DeviceKey(renamed) == "kbm");
++  ExplicitAssignment a({"", ""});
++  a.OnDevicesChanged({Nop(7)});
++  CHECK(For(a, 0) == Of({7}));
++}
++
++TEST_CASE("ExplicitAssignment_NopOnlyWhenUser0Empty", "[input]") {
++  ExplicitAssignment a({"", ""});
++  a.OnDevicesChanged({Nop(7)});
++  CHECK(For(a, 0) == Of({7}));
++  a.OnDevicesChanged({SdlPad(1, 0, "A", "a"), Nop(7)});
++  CHECK(For(a, 0) == Of({1}));
++}
++
++TEST_CASE("ParsePlayerDevices splits keys and maps auto to empty", "[input]") {
++  CHECK(rex::input::ParsePlayerDevices("").empty());
++  CHECK(rex::input::ParsePlayerDevices("kbm;auto;sdl:G|p1") ==
++        std::vector<std::string>{"kbm", "", "sdl:G|p1"});
++  CHECK(rex::input::ParsePlayerDevices("Auto;AUTO; aUtO ") == std::vector<std::string>{"", "", ""});
++}
+\ No newline at end of file

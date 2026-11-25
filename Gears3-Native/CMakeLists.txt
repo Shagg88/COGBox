@@ -370,6 +370,12 @@ if(GN_BUILD_TESTS)
         ${GN_LAYER0_DIR}/renderer/texture_pack.cpp
         tests/modcore_campaigns_test.cpp
         src/layer2_ue3/modcore/modcore.cpp
+        tests/layer3_split_vertical_test.cpp
+        tests/layer3_split_package_patch_test.cpp
+        tests/layer3_pause_package_patch_test.cpp
+        tests/layer3_scope_subtitle_test.cpp   # GitHub #420: zoom overlay, subtitles
+        src/layer2_ue3/package_patch.cpp
+        src/layer2_ue3/lzx.cpp
         tests/playlist_names_test.cpp
         src/layer2_ue3/playlist_names.cpp
         ${GN_LAYER0_HOME}/src/layer2_ue3/config_bundle.cpp)

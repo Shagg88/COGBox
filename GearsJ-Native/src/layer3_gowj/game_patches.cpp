@@ -24,6 +24,10 @@
 #include <ue3/native_viewport.h>  // 0.6.6 true 1080p menus
 #include <ue3/tick_log.h>  // --gowj_tick_log (shared)
 #include <ue3/objects.h>
+#include <ue3/split_layout.h>  // GitHub #420
+#include <ue3/split_quad_clamp.h>  // GitHub #420: the side-by-side glow
+#include <ue3/canvas_tile_clip.h>  // GitHub #420: the side-by-side event band
+#include <ue3/package_patch.h>  // GitHub #420 task 7b: IsPatchedPackageHash (Gears 2's, built in layer 2)
 #include "mouse_look.h"   // 0.5.0: CogMouseLookNoteFov (aim / zoom sensitivity)
 
 #include <algorithm>
@@ -993,7 +997,180 @@ void GowjNativeWidthCheck(PPCRegister& r11) {  // after `lwz r11,0(r30)` at 0x82
 // GameViewportClient.Viewport); if a name is not found, Gears 3's layout moved by Judgment's GamePlayers (+4: 1188 here,
 // 1184 in Gears 3) - GameViewport +1200 [not read in Judgment's code], Viewport +68 - and Install's checks decide.
 // Once per engine tick (cheats.cpp's GetMaxTickRate override) until on, every 30 ticks; then the object is followed.
+// GitHub #420: two-player split side by side (--gowj_split_vertical). The split is decided in UnrealScript
+// (GameViewportClient.UpdateActiveSplitscreenType / LayoutPlayers - no native function to hook). Task 7b: values written
+// from outside were undone at every profile update / save (GearPC.UpdateLocalCacheOfProfileSettings calls
+// SetSplitscreenConfiguration(eSST_2P_HORIZONTAL)), so the game now makes the choice itself - --gowj_split_vertical adds
+// an Engine.xxx package patch (layer 2 config_install.cpp, ue3/gowj_split_package_patch.h) and every relayout runs the
+// game's own code with eSST_2P_VERTICAL. This tick (cheats.cpp's GetMaxTickRate override, engine-loop call only) only
+// reads and logs: Default2PSplitType once (2 = the patched package is the one loaded), then the types the game set,
+// capped and only on change. As Gears 3's Gow3SplitLayoutTick and Gears 2's Gow2SplitLayoutTick.
+REXCVAR_DEFINE_BOOL(gowj_split_vertical, false, "Judgment",
+                    "GitHub #420: the two-player split side by side (eSST_2P_VERTICAL), chosen by the game's own script "
+                    "(an Engine.xxx package patch, ue3/gowj_split_package_patch.h)");
 bool GowjObjectsReady();  // adaptive_triggers.cpp
+// Two players and the game's active split is side by side (set by the tick below; read by GowjQuadClampToView).
+std::atomic<bool> g_gowj_side_by_side{false};
+
+// GitHub #420, the side-by-side "glow" (ue3/split_quad_clamp.h): at the entry of DrawDenormalizedQuad (sub_827DA688,
+// gowj_manifest.toml). Its arguments: f1 X, f2 Y, f3 SizeX, f4 SizeY, f5 U, f6 V, f7 SizeU, f8 SizeV (f9 Z), then on
+// the stack TargetSizeX r1+84, TargetSizeY r1+92, TextureSizeX r1+100, TextureSizeY r1+108 (the function's `lwz
+// rN,452/460/468/476(r1)` after its 368-byte frame; TargetSizeX divides the positions, TextureSizeX the U values). Only
+// while two players are side by side: a quad drawing into one half of its target reads only the same half of its
+// source. One atomic load per quad otherwise. Capped log of the first changes.
+void GowjQuadClampToView(PPCRegister& f1, PPCRegister& f3, PPCRegister& f5, PPCRegister& f7, PPCRegister& r1) {
+  if (!g_gowj_side_by_side.load(std::memory_order_relaxed)) return;
+  const uint32_t target_w = ue3::obj::Read32(r1.u32 + 84), texture_w = ue3::obj::Read32(r1.u32 + 100);
+  const float u = float(f5.f64), size_u = float(f7.f64);
+  const ue3::QuadSource q = ue3::ClampQuadToViewHalf(float(f1.f64), float(f3.f64), u, size_u, target_w, texture_w);
+  if (q.u == u && q.size_u == size_u) return;
+  static std::atomic<int> n{0};
+  if (n++ < 24)
+    REXLOG_INFO("gowj_split_vertical: quad x {} +{} in {} reads u {} +{} of {} -> u {} +{} (its own half)", f1.f64,
+                f3.f64, target_w, u, size_u, texture_w, q.u, q.size_u);
+  f5.f64 = double(q.u);
+  f7.f64 = double(q.size_u);
+}
+
+// GitHub #420, Judgment's GIB / EXECUTION band (ue3/canvas_tile_clip.h): at UCanvas::DrawTile's entry (sub_8275DC00,
+// gowj_manifest.toml), only while two players are side by side, a tile starting left of its canvas is cut at the
+// canvas's left edge (OrgX, canvas +64), U / UL in proportion. One atomic load per tile otherwise. Capped log.
+void GowjCanvasTileClip(PPCRegister& f1, PPCRegister& f4, PPCRegister& f6, PPCRegister& f8, PPCRegister& r3) {
+  if (!g_gowj_side_by_side.load(std::memory_order_relaxed)) return;
+  const uint32_t bits = ue3::obj::Read32(r3.u32 + 64);
+  float org_x;
+  std::memcpy(&org_x, &bits, 4);
+  const float x = float(f1.f64);
+  if (x >= org_x) return;
+  const ue3::TileX t = ue3::ClipTileLeft(x, float(f4.f64), float(f6.f64), float(f8.f64), org_x);
+  static std::atomic<int> n{0};
+  if (n++ < 16)
+    REXLOG_INFO("gowj_split_vertical: HUD tile x {} +{} cut at the view's left edge {} -> +{}", f1.f64, f4.f64, org_x,
+                t.xl);
+  f1.f64 = double(t.x);
+  f4.f64 = double(t.xl);
+  f6.f64 = double(t.u);
+  f8.f64 = double(t.ul);
+}
+
+// GitHub #420, the Longshot's zoom overlay (ue3/canvas_tile_clip.h FitFullViewTile16x9): at UCanvas::DrawMaterialTile's
+// entry (sub_8275DD98, gowj_manifest.toml), only while two players are side by side, a material tile covering the whole
+// view samples a centred part of its texture (U 0.5, V 2 at 640x720; U 1, V 2 on a 16:9 half of 32:9), so its art keeps
+// its full-screen proportions. One atomic load per material tile otherwise. Capped log.
+void GowjCanvasMaterialTileFit(PPCRegister& f1, PPCRegister& f3, PPCRegister& f4, PPCRegister& f5, PPCRegister& f6,
+                               PPCRegister& f7, PPCRegister& f8, PPCRegister& r3) {
+  if (!g_gowj_side_by_side.load(std::memory_order_relaxed)) return;
+  auto rf = [](uint32_t a) {
+    const uint32_t v = ue3::obj::Read32(a);
+    float f;
+    std::memcpy(&f, &v, 4);
+    return f;
+  };
+  const float org_x = rf(r3.u32 + 64), clip_x = rf(r3.u32 + 72), clip_y = rf(r3.u32 + 76);
+  const float u = float(f5.f64), ul = float(f7.f64), v = float(f6.f64), vl = float(f8.f64);
+  const ue3::TileUV t =
+      ue3::FitFullViewTile16x9(float(f1.f64), float(f3.f64), float(f4.f64), u, ul, v, vl, org_x, clip_x, clip_y, 2.0f);
+  if (t.u == u && t.ul == ul && t.v == v && t.vl == vl) return;
+  static std::atomic<int> n{0};
+  if (n++ < 16)
+    REXLOG_INFO("gowj_split_vertical: full-view material tile on {}x{}: u {} +{} v {} +{} -> u {} +{} v {} +{}", clip_x,
+                clip_y, u, ul, v, vl, t.u, t.ul, t.v, t.vl);
+  f5.f64 = double(t.u);
+  f7.f64 = double(t.ul);
+  f6.f64 = double(t.v);
+  f8.f64 = double(t.vl);
+}
+
+void GowjSplitLayoutTick() {
+  if (!REXCVAR_GET(gowj_split_vertical)) return;   // reads only
+  namespace obj = ue3::obj;
+  constexpr uint32_t kGEngine = 0x83544E04u;  // cheats.cpp / adaptive_triggers.cpp
+  // Offsets are class layout: found once (a failed class lookup scans every object: at most every 5 s). Objects are read
+  // from GEngine every frame, so a level change never leaves a stale pointer.
+  static int vp_off = -1, players_off = -1, desired_off = -1, active_off = -1, default_off = -1;
+  static bool gave_up = false;
+  if (desired_off < 0 || active_off < 0) {
+    if (gave_up) return;
+    using Clock = std::chrono::steady_clock;
+    static Clock::time_point next_lookup{};
+    const Clock::time_point now = Clock::now();
+    if (now < next_lookup) return;
+    next_lookup = now + std::chrono::seconds(5);
+    if (!GowjObjectsReady()) return;
+    const uint32_t engine_cls = obj::FindClass("Engine"), game_engine_cls = obj::FindClass("GameEngine");
+    const uint32_t vpc_cls = obj::FindClass("GameViewportClient");
+    if (!engine_cls || !game_engine_cls || !vpc_cls) return;
+    vp_off = obj::PropertyOffset(game_engine_cls, "GameViewport");
+    players_off = obj::PropertyOffset(engine_cls, "GamePlayers");
+    default_off = obj::PropertyOffset(vpc_cls, "Default2PSplitType");
+    const int desired = obj::PropertyOffset(vpc_cls, "DesiredSplitscreenType");
+    const int active = obj::PropertyOffset(vpc_cls, "ActiveSplitscreenType");
+    if (vp_off < 0 || players_off < 0 || desired < 0 || active < 0) {
+      REXLOG_WARN("gowj_split_vertical: viewport properties not found - the split is not logged");
+      gave_up = true;
+      return;
+    }
+    desired_off = desired;
+    active_off = active;
+  }
+  const uint32_t engine = obj::Read32(kGEngine);
+  const uint32_t viewport = engine ? obj::Read32(engine + uint32_t(vp_off)) : 0;
+  if (!viewport) {
+    g_gowj_side_by_side.store(false, std::memory_order_relaxed);
+    return;
+  }
+  auto read8 = [](uint32_t a) { return uint8_t(obj::Read32(a & ~3u) >> (8 * (3 - (a & 3u)))); };
+  static bool default_logged = false;
+  if (!default_logged && default_off >= 0) {
+    default_logged = true;
+    const uint8_t d = read8(viewport + uint32_t(default_off));
+    REXLOG_INFO("gowj_split_vertical: the game's Default2PSplitType is {}{}", d,
+                d == ue3::kSplitVertical ? " (side by side: the patched Engine.xxx is loaded)" : " - not the patched value");
+  }
+  const int players = int(obj::Read32(engine + uint32_t(players_off) + 4));  // TArray: data, count, max
+  if (players != 2) {
+    g_gowj_side_by_side.store(false, std::memory_order_relaxed);
+    return;
+  }
+  const uint8_t desired = read8(viewport + uint32_t(desired_off)), active = read8(viewport + uint32_t(active_off));
+  g_gowj_side_by_side.store(active == ue3::kSplitVertical, std::memory_order_relaxed);
+  // The split is the game's own choice (the Engine.xxx patch); logged capped and only on change.
+  static uint8_t seen_desired = 0xFF, seen_active = 0xFF;
+  static int lines = 0;
+  if ((desired != seen_desired || active != seen_active) && ++lines <= 50)
+    REXLOG_INFO("gowj_split_vertical: the game set split type desired {} active {}{}", desired, active,
+                active == ue3::kSplitVertical ? " (side by side)" : active == 0 ? " (full screen)" : "");
+  seen_desired = desired;
+  seen_active = active;
+}
+
+// GitHub #420 task 7b (gowj_manifest.toml): TU4's two SHA-1 compares that call the dirty-disc error on a difference -
+// sub_8231AA20 (digest r1+96, at 0x8231ABFC) and sub_822C1E20 (digest r1+80 of the block r31+0 / size r31+4, at
+// 0x822C1EA4); r9 = the first differing byte, 0 = same. A difference is accepted only when the computed digest is one
+// of our own patched copies (ue3::IsPatchedPackageHash, recorded by config_install.cpp), so every other file is still
+// checked. Capped log.
+void GowjPackageHashOk(PPCRegister& r9, PPCRegister& r1) {
+  if (r9.u32 == 0) return;
+  const uint8_t* m = rex::Runtime::instance()->virtual_membase();
+  const bool ours = ue3::IsPatchedPackageHash(m + r1.u32 + 96);
+  static std::atomic<int> n{0};
+  if (n++ < 16) REXLOG_INFO("gowj: package hash differs - {}", ours ? "our patched package, accepted" : "not ours, left to the game");
+  if (ours) r9.u64 = 0;
+}
+void GowjFileHashOk(PPCRegister& r9, PPCRegister& r31, PPCRegister& r1) {
+  if (r9.u32 == 0) return;
+  const uint8_t* m = rex::Runtime::instance()->virtual_membase();
+  const bool ours = ue3::IsPatchedPackageHash(m + r1.u32 + 80);
+  static std::atomic<int> n{0};
+  if (n++ < 16) {
+    const uint8_t* sz = m + r31.u32 + 4;
+    REXLOG_INFO("gowj: file hash differs ({} bytes) - {}",
+                uint32_t(sz[0]) << 24 | uint32_t(sz[1]) << 16 | uint32_t(sz[2]) << 8 | sz[3],
+                ours ? "our patched package, accepted" : "not ours, left to the game");
+  }
+  if (ours) r9.u64 = 0;
+}
+
 void GowjNativeUiViewportTick() {
   namespace nv = ue3::native_viewport;
   namespace obj = ue3::obj;

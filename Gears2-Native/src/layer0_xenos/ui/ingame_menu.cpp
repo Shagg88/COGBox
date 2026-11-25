@@ -16,6 +16,7 @@
 #include <xenos/achievements_popup_logic.h>   // achievements part 4: popup settings applied at once (LiveCvarFor)
 #include <xenos/input/prompt_device_monitor.h>
 #include <xenos/menu_input.h>
+#include <xenos/pad_assignment_policy.h>   // --player_devices: the SDK's assignment stays
 #include <xenos/window_hotkey.h>   // GitHub #316: Alt+Enter (bind_cogbox_fullscreen) - windowed / borderless full screen
 #include <xenos/menu_look.h>   // 0.4.9: the full-screen look (Noto Sans, the launcher's style)
 #include <xenos/renderer/prompt_overlay_compositor.h>   // GitHub #223: XenosSetPromptGame
@@ -91,6 +92,16 @@ std::atomic<int> g_real_pads{-1};   // controllers (not keyboard / mouse) the in
 std::atomic<bool> g_pump_stop{false};
 std::thread g_pump;
 
+// Task 14 (#420): player 1's devices to the prompt monitor (in split screen only they change the prompts).
+void ReportPlayerOneDevices(const rex::input::DeviceAssignment& a, const std::vector<rex::input::DeviceInfo>& devices) {
+  std::vector<rex::input::DeviceId> ids;
+  a.DevicesForUser(0, ids);
+  std::vector<rex::input::DeviceInfo> p1;
+  for (const auto& d : devices)
+    if (std::find(ids.begin(), ids.end(), d.id) != ids.end()) p1.push_back(d);
+  xenos::input::GlobalPromptDeviceMonitor().SetPlayerOneDevices(p1);
+}
+
 class SinglePlayerPads final : public rex::input::DeviceAssignment {
  public:
   void OnDevicesChanged(const std::vector<rex::input::DeviceInfo>& devices) override {
@@ -121,8 +132,8 @@ class SinglePlayerPads final : public rex::input::DeviceAssignment {
 };
 
 // 0.4.9 split-screen: with --local_players 2-4 the SDK's own rule (SlotAssignment: device ordinal N drives player N+1,
-// keyboard / mouse and stand-ins drive player 1) - the same rule, plus the device -> slot list in the log on every change,
-// so a report shows which pad went to which player (a Steam Input or DS4Windows duplicate shows as two devices).
+// keyboard / mouse and stand-ins drive player 1) - the same rule, plus the device -> slot list in the log on every
+// change, so a report shows which pad went to which player (a Steam Input or DS4Windows duplicate shows as two devices).
 class SplitScreenPads final : public rex::input::DeviceAssignment {
  public:
   explicit SplitScreenPads(uint32_t players) : players_(players) {}
@@ -146,6 +157,7 @@ class SplitScreenPads final : public rex::input::DeviceAssignment {
       REXLOG_INFO("cogbox_pads: {} device(s), {} local players, device -> slot: {}", devices.size(), players_,
                   list.empty() ? "none" : list);
     }
+    ReportPlayerOneDevices(*this, devices);
   }
   void DevicesForUser(uint32_t user_index, std::vector<rex::input::DeviceId>& out) const override {
     out.clear();
@@ -158,6 +170,27 @@ class SplitScreenPads final : public rex::input::DeviceAssignment {
   std::string last_ = "\x01";
 };
 
+// SDK patch 117: with --player_devices the SDK's ExplicitAssignment decides who drives which player. This is that same
+// assignment (built from the same cvar), forwarded as is, plus the real-controller count the SDL pump below needs
+// (g_real_pads): the SDK's own instance keeps no count, and without one the pump never runs under Wine / Proton (#108).
+class CountedExplicitPads final : public rex::input::DeviceAssignment {
+ public:
+  explicit CountedExplicitPads(std::vector<std::string> keys) : inner_(std::move(keys)) {}
+  void OnDevicesChanged(const std::vector<rex::input::DeviceInfo>& devices) override {
+    int real = 0;   // as SinglePlayerPads counts: not the keyboard / mouse or the stand-in
+    for (const auto& d : devices) if (!d.synthetic) ++real;
+    g_real_pads.store(real);
+    inner_.OnDevicesChanged(devices);
+    ReportPlayerOneDevices(inner_, devices);
+  }
+  void DevicesForUser(uint32_t user_index, std::vector<rex::input::DeviceId>& out) const override {
+    inner_.DevicesForUser(user_index, out);
+  }
+
+ private:
+  rex::input::ExplicitAssignment inner_;
+};
+
 // Returns false while the runtime has no input system yet (it is made after the dialogs: job 1101's Gears 1 log), so the
 // pads thread below retries; true once decided.
 bool InstallPadAssignment(rex::Runtime* runtime) {
@@ -167,6 +200,14 @@ bool InstallPadAssignment(rex::Runtime* runtime) {
   }
   if (!input) return false;
   const uint32_t players = rex::cvar::Query<uint32_t>("local_players");
+  // SDK patches 117 + 128: with --player_devices the launcher's choice stands (each player's chosen device, the Auto
+  // players the rest: keyboard and mouse first, then the pads); COGBox's own rules below would undo it. Same assignment as the SDK's, with the pad count added.
+  const std::string player_devices = rex::cvar::Query<std::string>("player_devices");
+  if (!xenos::ShouldOverridePadAssignment(player_devices)) {
+    REXLOG_INFO("cogbox_pads: --player_devices is set - the chosen devices stand (local_players {})", players);
+    input->SetDeviceAssignment(std::make_unique<CountedExplicitPads>(rex::input::ParsePlayerDevices(player_devices)));
+    return true;
+  }
   const bool script2 = !rex::cvar::Query<std::string>("gow2_input_script2").empty();
   if (!REXCVAR_GET(cogbox_pad_merge) || players > 1 || script2) {
     REXLOG_INFO("cogbox_pads: one controller per player (local_players {}, merge {}, second script pad {})", players,

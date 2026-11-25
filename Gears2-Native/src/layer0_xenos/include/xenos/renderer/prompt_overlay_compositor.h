@@ -57,6 +57,9 @@ class PromptOverlayCompositor {
   // thread. IsStyleReady: resident (kOriginal is always ready).
   bool PrepareStyle(DeviceStyle style);
   bool IsStyleReady(DeviceStyle style) const;
+  // A controller style whose glyph set is incomplete: tried once per Initialize (one warning), then left alone - the
+  // pad gets the game's own prompts instead.
+  bool IsStyleUnavailable(DeviceStyle style) const;
 
   // How many styles keep their atlases resident (default 2: keyboard + the pad in use). Older ones are dropped; a
   // buffer the texture cache still holds is taken back rather than rebuilt.
@@ -102,6 +105,7 @@ class PromptOverlayCompositor {
   DeviceStyle active_style_ = DeviceStyle::kOriginal;
   std::filesystem::path resolved_glyphs_dir_;
   bool hide_disk_overlays_ = false;
+  bool style_unavailable_[kStyleCount] = {};
   uint8_t game_bits_ = 0;  // GitHub #223: AtlasLayout::games bit of the running game; 0 = build every atlas
   size_t max_resident_ = 2;
   std::vector<DeviceStyle> resident_order_;  // resident styles, least recently used first

@@ -101,6 +101,8 @@ target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_pre
     ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp  # GitHub #264: engine console commands (shared with Gears 2 / 3)
     ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp  # GitHub #245: Gears 2's ue3::obj reflection (Judgment has no other)
     ${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp  # GitHub #353: COGBox tags after the players' names
+    ${GN_LAYER0_HOME}/src/layer2_ue3/package_patch.cpp  # GitHub #420 task 7b: script package byte patches
+    ${GN_LAYER0_HOME}/src/layer2_ue3/lzx.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/chat.cpp)  # in-match chat
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp
@@ -108,6 +110,7 @@ set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/tick_log.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/package_patch.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/lzx.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/chat.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 # its options are saved under Judgment's settings group
@@ -362,8 +365,18 @@ if(GN_BUILD_TESTS)
         ${GN_LAYER0_TESTS}/layer0_pm4_test.cpp
         ${GN_LAYER0_DIR}/pm4.cpp
         ${GN_LAYER0_TESTS}/layer0_display_gamma_test.cpp
-        ${GN_LAYER0_DIR}/display_gamma.cpp)
-    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS})
+        ${GN_LAYER0_DIR}/display_gamma.cpp
+        tests/layer3_split_vertical_test.cpp   # GitHub #420 (header only)
+        tests/layer3_split_quad_clamp_test.cpp   # GitHub #420 Judgment glow (header only)
+        tests/layer3_canvas_tile_clip_test.cpp   # GitHub #420 Judgment band (header only)
+        tests/layer2_split_package_patch_test.cpp   # GitHub #420 task 7b
+        tests/layer2_pause_package_patch_test.cpp   # GitHub #420 task 13
+        tests/layer2_prompt_height_package_patch_test.cpp   # GitHub #420 task 15b
+        tests/layer2_subtitle_region_package_patch_test.cpp   # GitHub #420 subtitles side by side
+        ${GN_LAYER0_HOME}/src/layer2_ue3/package_patch.cpp
+        ${GN_LAYER0_HOME}/src/layer2_ue3/lzx.cpp)
+    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/layer2_ue3/include ${GN_LAYER0_HOME}/src/layer2_ue3/include)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(gn_tests PRIVATE -ffp-contract=off)
     elseif(MSVC)

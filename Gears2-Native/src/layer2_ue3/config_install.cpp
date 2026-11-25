@@ -12,6 +12,11 @@
 #include <ue3/main_menu_exit.h>
 #include <ue3/mod_extras.h>
 #include <ue3/package_exports.h>
+#include <ue3/gow2_pause_package_patch.h>   // GitHub #420 (task 13)
+#include <ue3/gow2_split_package_patch.h>
+#include <ue3/gow2_subtitle_region_package_patch.h>   // GitHub #420
+#include <ue3/gow2_toast_slide_package_patch.h>   // GitHub #420
+#include <ue3/package_patch.h>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -63,8 +68,12 @@ REXCVAR_DEFINE_BOOL(gow2_horde_bots, false, "Gears2",
                     "a Horde game this PC hosts, fills the team to five with bots (the game's Friends exec); nothing in "
                     "Versus, the lobbies or on a client");
 REXCVAR_DEFINE_BOOL(gow2_split_vertical, false, "Gears2",
-                    "GitHub #237: the two-player split side by side (eSST_2P_VERTICAL) from the start: Default2PSplitType "
-                    "and DesiredSplitscreenType in [Engine.GameViewportClient] of the engine ini (in memory)");
+                    "GitHub #237 / #420: the two-player split side by side (eSST_2P_VERTICAL), chosen by the game's own "
+                    "script (an Engine.xxx package patch, ue3/gow2_split_package_patch.h)");
+REXCVAR_DEFINE_BOOL(gow2_pause_fullscreen, false, "Gears2",
+                    "Split screen (two or more local players): the pause menu and Options cover the whole window "
+                    "instead of the pausing player's view (patched GearGame.xxx, ue3/gow2_pause_package_patch.h; "
+                    "GitHub #420)");
 
 namespace {
 constexpr const char* kGameDevice = "\\Device\\Harddisk0\\Partition1";
@@ -173,7 +182,9 @@ int AddInputBindings(ue3::ConfigFile& f, const char* key) {
     sec->keys.push_back({ue3::ConfigString::FromUtf8(key, wide), ue3::ConfigString::FromUtf8(b, wide)});
   return int(binds.size());
 }
-bool InputBindingsWanted() { return REXCVAR_GET(gow2_horde_bots) || REXCVAR_GET(gow2_split_vertical); }
+bool InputBindingsWanted() { return REXCVAR_GET(gow2_horde_bots); }
+// GitHub #420: the split ini default needs no binding (layer 3 keeps the split every frame), only the bundle edit
+bool SplitIniWanted() { return REXCVAR_GET(gow2_split_vertical); }
 
 // GitHub #237: side-by-side split from the start. Sets the viewport client's split defaults in the engine ini
 // (GameViewportClient is config(Engine); a GearGame subclass inherits them unless its own section sets them).
@@ -1057,6 +1068,68 @@ ue3::GameId DetermineGameId(rex::Runtime* runtime) {
   if (bdir.find("judgment") != std::string::npos || bdir.find("gearsj") != std::string::npos || bdir.find("gowj") != std::string::npos) return ue3::GameId::Judgment;
   return ue3::GameId::Gears2;
 }
+// GitHub #420: a same-length script patch of one package (task 6b: Engine.xxx, ue3/gow2_split_package_patch.h; task 13:
+// GearGame.xxx, ue3/gow2_pause_package_patch.h). The package (a mod's copy if one has it) is decompressed, patched
+// (every expected byte checked first) and written to <user data>\package-patches; it then goes in front of the game's
+// through the mods' folder view, which gives it its table-of-contents line and start-up hash table entry. Its SHA-1 is
+// remembered, so a game-side whole-file check may accept exactly this copy (ue3::IsPatchedPackageHash). A different
+// package is refused and left as it is. Every edit of one spec is in the same file; `what` names the switch in the log.
+void AddPackagePatch(rex::Runtime* runtime, std::map<std::string, std::filesystem::path>* mods, const char* spec,
+                     const char* what) {
+  namespace fs = std::filesystem;
+  std::string err;
+  const std::vector<ue3::PackagePatch> patches = ue3::ParsePackagePatches(spec, &err);
+  if (!err.empty() || patches.empty()) {
+    REXLOG_WARN("{}: {}", what, err);
+    return;
+  }
+  const std::string rel = REXCVAR_GET(ue3_ini_bundle_dir);
+  const fs::path dir = runtime->game_data_root() / fs::path(rel);
+  std::error_code ec;
+  std::string real;
+  for (const auto& e : fs::directory_iterator(dir, ec))
+    if (e.is_regular_file() && ModLower(rex::path_to_utf8(e.path().filename())) == ModLower(patches[0].file))
+      real = rex::path_to_utf8(e.path().filename());
+  if (real.empty()) {
+    REXLOG_WARN("{}: {} not found in {} - the game's own is used", what, patches[0].file, dir.string());
+    return;
+  }
+  const std::string key = RelKey(rel + "\\" + real);
+  const auto modCopy = mods->find(key);
+  const fs::path src = modCopy != mods->end() ? modCopy->second : dir / rex::to_path(real);
+  std::ifstream in(src, std::ios::binary);
+  std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+  in.close();   // the chained case writes this same file below
+  if (ue3::IsFullyCompressed(bytes)) {
+    std::vector<uint8_t> plain;
+    if (!ue3::DecompressFully(bytes, plain, &err)) {
+      REXLOG_WARN("{}: {}: can't decompress ({}) - the game's own is used", what, real, err);
+      return;
+    }
+    bytes.swap(plain);
+  }
+  std::vector<std::string> log;
+  const int applied = ue3::ApplyPackagePatches(bytes, real, patches, &log);
+  for (const std::string& l : log) REXLOG_INFO("{}: {}", what, l);
+  if (applied <= 0) {
+    REXLOG_WARN("{}: {} left as it is - the game's own is used", what, real);
+    return;
+  }
+  const fs::path out_dir = runtime->user_data_root() / "package-patches";
+  fs::create_directories(out_dir, ec);
+  const fs::path out = out_dir / rex::to_path(real);
+  std::ofstream o(out, std::ios::binary | std::ios::trunc);
+  o.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+  o.close();
+  if (!o) {
+    REXLOG_WARN("{}: could not write {}", what, out.string());
+    return;
+  }
+  ue3::RememberPatchedPackageHash(ue3::Sha1(bytes.data(), bytes.size()).data());
+  (*mods)[key] = out;
+  REXLOG_INFO("{}: {}: {} patch(es), {} bytes -> {} (served through the mods' folder view)", what, real, applied,
+              bytes.size(), out.string());
+}
 }  // namespace
 
 void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
@@ -1081,9 +1154,17 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
       }
     }
   } modsAtEnd{runtime, &mods, &modDirs};
+  if (REXCVAR_GET(gow2_split_vertical))   // GitHub #420 (task 6b)
+    AddPackagePatch(runtime, &mods, gow2::kSplitVerticalPackagePatch, "gow2_split_vertical");
+  if (gow2::PauseFullscreenWanted(REXCVAR_GET(gow2_pause_fullscreen), rex::cvar::Query<uint32_t>("local_players")))
+    AddPackagePatch(runtime, &mods, gow2::kPauseFullscreenPackagePatch, "gow2_pause_fullscreen");   // task 13
+  if (gow2::SubtitleRegionWanted(REXCVAR_GET(gow2_split_vertical), rex::cvar::Query<uint32_t>("local_players")))
+    AddPackagePatch(runtime, &mods, gow2::kSubtitleRegionPackagePatch, "gow2_split_vertical");   // subtitles, chained
+  if (gow2::ToastSlideWanted(REXCVAR_GET(gow2_split_vertical), rex::cvar::Query<uint32_t>("local_players")))
+    AddPackagePatch(runtime, &mods, gow2::kToastSlidePackagePatch, "gow2_split_vertical");   // toasts (GearGame, chained)
   const std::string spec = REXCVAR_GET(ue3_ini_edits);
   const bool exit_menu = REXCVAR_GET(gow_main_menu_exit);
-  const bool binds = InputBindingsWanted();   // GitHub #237
+  const bool binds = InputBindingsWanted() || SplitIniWanted();   // GitHub #237: bindings and / or the split default
   if (spec.empty() && !exit_menu && !binds) return;
   std::string error;
   const std::vector<ue3::ConfigEdit> edits = spec.empty() ? std::vector<ue3::ConfigEdit>{} : ue3::ParseConfigEdits(spec, &error);
@@ -1155,7 +1236,7 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
         changed += added;
         if (n == "Coalesced_int.bin" || written == 0)
           REXLOG_INFO("gow2 input bindings: {}: {} binding(s) added to {}", n, added, target->name.Utf8());
-      } else if (n == "Coalesced_int.bin") {
+      } else if (n == "Coalesced_int.bin" && InputBindingsWanted()) {
         REXLOG_WARN("gow2 input bindings: {}: no GearInput.ini in the bundle", n);
       }
     }
