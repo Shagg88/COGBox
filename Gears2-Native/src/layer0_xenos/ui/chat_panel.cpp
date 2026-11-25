@@ -87,10 +87,19 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
   }
 
   // Whether Y / U may open the typing row now: chat on, no COGBox screen, a match running.
-  static bool CanOpen() {
-    if (!REXCVAR_GET(cogbox_match_chat) || XenosInGameMenuIsOpen()) return false;
+  static bool CanOpen(bool log = true) {
+    // GitHub #452: a refused chat key says why in the log (once per press)
+    const char* why = nullptr;
     auto* running = g_match_running.load();
-    return running && running();
+    if (!REXCVAR_GET(cogbox_match_chat)) why = "In-match chat is off";
+    else if (XenosInGameMenuIsOpen()) why = "a COGBox screen is open";
+    else if (!running || !running()) why = "not in a match (see the last 'chat: in a match' line)";
+    static double last_log = -1e9;   // (UI thread) at most once a second: a held or mashed key would fill the log
+    if (why && log && Now() - last_log >= 1.0) {
+      last_log = Now();
+      REXLOG_INFO("chat: the chat key did nothing - {}", why);
+    }
+    return !why;
   }
 
   // UI thread, the listener (z 200, above the keyboard / mouse driver and the SDK's binds): a press of the chat keys
@@ -104,25 +113,14 @@ class ChatPanel final : public rex::ui::ImGuiDialog {
     }
     const auto key_of = [](const char* bind) { return rex::ui::ParseVirtualKey(rex::cvar::GetFlagByName(bind)); };
     const bool all = vk == key_of("bind_cogbox_chat_all"), team = !all && vk == key_of("bind_cogbox_chat_team");
-    if (!all && !team) return false;
-    if (!CanOpen()) {
-      // #452 (0.6.9): say why the box did not open (chat off / a COGBox screen / no match running), at most 40 times
-      static std::atomic<int> said{0};
-      if (said.fetch_add(1) < 40) {
-        auto* running = g_match_running.load();
-        REXLOG_INFO("chat: {} pressed, box not opened - {}", all ? "chat key (all)" : "chat key (team)",
-                    !REXCVAR_GET(cogbox_match_chat) ? "chat is off" : XenosInGameMenuIsOpen() ? "a COGBox screen is open"
-                    : (running && running()) ? "?" : "no match running (see the last 'chat: match' line)");
-      }
-      return false;
-    }
+    if ((!all && !team) || !CanOpen()) return false;
     Open(team);
     return true;
   }
 
   // UI thread (BindKey, or the Y / U binds). Opens the typing row (or switches ALL / TEAM while open).
   void Open(bool team) {
-    if (!CanOpen()) return;
+    if (!CanOpen(false)) return;   // (the listener has logged a refusal already)
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (typing_) return;

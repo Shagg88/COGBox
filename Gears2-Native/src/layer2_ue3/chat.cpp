@@ -154,17 +154,24 @@ void Ue3ChatPump(PPCContext&, uint8_t*) {
   const uint32_t player = (int32_t(count) > 0 && players) ? obj::Read32(players) : 0;
   const uint32_t pc = player ? obj::Read32(player + uint32_t(o.actor)) : 0;
   const uint32_t hud = pc ? obj::Read32(pc + uint32_t(o.my_hud)) : 0;
+  std::string cls;
+  int begun = -1, over = -1;   // the GRI's flags as read (-1: not read)
   if (hud) {
-    // the match: a HUD that isn't a menu / lobby one, and (where the GRI says so) begun and not over
-    const std::string cls = obj::ObjectName(obj::ClassOf(hud));
+    // the match: a HUD that isn't a menu / lobby one, and (where the GRI says so) begun. bMatchIsOver is only logged,
+    // never used (GitHub #452): Gears 3's campaign sets it when a mission ends and keeps it through every later
+    // mission (the chapters run in one game), so chat stayed off; chatting on a scoreboard after a match is fine.
+    cls = obj::ObjectName(obj::ClassOf(hud));
     match = cls.find("Menu") == std::string::npos && cls.find("FrontEnd") == std::string::npos &&
             cls.find("Lobby") == std::string::npos;
     const uint32_t world = (match && o.world >= 0) ? obj::Read32(pc + uint32_t(o.world)) : 0;
     const uint32_t gri = (world && o.gri >= 0) ? obj::Read32(world + uint32_t(o.gri)) : 0;
-    if (gri && o.match_begun >= 0 && o.begun_mask)
-      match = match && (obj::Read32(gri + uint32_t(o.match_begun)) & o.begun_mask) != 0;
-    if (gri && o.match_over >= 0 && o.over_mask)
-      match = match && (obj::Read32(gri + uint32_t(o.match_over)) & o.over_mask) == 0;
+    if (gri && o.match_begun >= 0 && o.begun_mask) {
+      begun = (obj::Read32(gri + uint32_t(o.match_begun)) & o.begun_mask) != 0;
+      match = match && begun;
+    }
+    if (gri && o.match_over >= 0 && o.over_mask) {
+      over = (obj::Read32(gri + uint32_t(o.match_over)) & o.over_mask) != 0;
+    }
 
     // Only in a match with chat on: elsewhere (menus, campaign, chat off) the engine's own messages are left alone
     const uint32_t array = hud + uint32_t(o.messages);
@@ -193,20 +200,12 @@ void Ue3ChatPump(PPCContext&, uint8_t*) {
       }
     }
   }
-  // #452 (0.6.9): every change of "in a match" is logged with what decided it (at most 60 lines a run)
-  {
-    static int said = 0;
-    if (match != g_match.load(std::memory_order_relaxed) && said < 60) {
-      ++said;
-      std::string cls = hud ? obj::ObjectName(obj::ClassOf(hud)) : std::string("none");
-      int begun = -1, over = -1;
-      const uint32_t world = (hud && o.world >= 0) ? obj::Read32(pc + uint32_t(o.world)) : 0;
-      const uint32_t gri = (world && o.gri >= 0) ? obj::Read32(world + uint32_t(o.gri)) : 0;
-      if (gri && o.match_begun >= 0 && o.begun_mask) begun = (obj::Read32(gri + uint32_t(o.match_begun)) & o.begun_mask) != 0;
-      if (gri && o.match_over >= 0 && o.over_mask) over = (obj::Read32(gri + uint32_t(o.match_over)) & o.over_mask) != 0;
-      REXLOG_INFO("chat: match {} (HUD {}, players {}, GRI {:08X} begun {} over {})", match ? "on" : "off", cls, count, gri,
-                  begun, over);
-    }
+  // GitHub #452: every change of "in a match" is logged with what decided it (the HUD's class, the local players,
+  // the GRI's begun / over flags), so a report of Y / U doing nothing shows why
+  if (match != g_match.load(std::memory_order_relaxed)) {
+    REXLOG_INFO("chat: in a match {} - HUD {}, {} local player(s), GRI bMatchHasBegun {} bMatchIsOver {}",
+                match ? "ON" : "OFF", hud ? cls : std::string("none"), int32_t(count),
+                begun < 0 ? std::string("?") : std::to_string(begun), over < 0 ? std::string("?") : std::to_string(over));
   }
   if (!match && g_match.load(std::memory_order_relaxed)) {   // the match ended: what was still waiting is not sent
     std::lock_guard<std::mutex> lock(g_sent_mutex);

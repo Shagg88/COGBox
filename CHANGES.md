@@ -27,7 +27,9 @@ A quick update for the crash at the end of a round, match, co-op session or leve
   and all four games use at most 256 MB for the texture pool, whatever is asked.
 - **DLSS model**: the tooltip says which model to pick for which card, and that each card behaves differently; it is
   translated again in all 11 languages (the old translations had been stale since 0.6.6).
-- Chat: logging when the chat box does not open, and when "in a match" changes (#452, for the next fix).
+- **Chat in co-op campaign** (#452, #462 by Flippage): Y / U kept working only until the first mission ended in Gears 3's
+  campaign (the game never clears its "match is over" flag between chapters). Chat now stays on; menus and lobbies are
+  still excluded. A refused chat key is logged with the reason.
 - Known: Prepare all shaders takes about twice as long as in 0.6.7 (#449; every shader is still made - same counts, no
   failures, tested in all four games). Being looked into for the next update.
 
