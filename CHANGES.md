@@ -9,6 +9,11 @@ A quick update for the crash at the end of a round, match, co-op session or leve
   The game handed the stats code a bad pointer (0x00000001). SDK patch 128 (runtime 072) checks every stats pointer
   against readable game memory first and skips a bad one, and no longer reads XSessionFlushStats as views. Tested:
   Gears 2 online Horde, die between rounds - 0.6.8 crashed, 0.6.9 did not.
+- **Split screen side by side in all four games, each player's own controls** (#420, #461 by Flippage): two-player split
+  screen stays side by side for the whole session (checkpoints, level starts and options no longer switch it back), with
+  the pause menu full-window, subtitles near the bottom, sniper overlays the right shape. In the launcher each player
+  (2+) picks Auto, Keyboard & mouse or a controller; keyboard and mouse can be any player's. Runtime 073 (SDK patches 117
+  and 129, which replaces 122).
 - **Gears 1 shadows at 1080p / 1440p** (#446): the game's own shadow limit (MaxShadowResolution 432, for 720 lines)
   grows with the native lines (656 at 1080p, 864 at 1440p). `--gow1_shadow_max_res`: -1 automatic, 0 the game's own.
 - **Update button with a controller** (#445): the D-pad reaches UPDATE TO in the launcher's top row (Steam Deck).
