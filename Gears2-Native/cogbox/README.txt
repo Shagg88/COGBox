@@ -84,6 +84,17 @@ release - the same release - for a smooth game: players on different versions ca
 other, or fall out of sync. Update with the launcher's "new version" notice or from the release page.
 
 
+New in 0.6.9
+------------
+- Fixed: the crash at the end of a round, wave, match, co-op session or level (stats; #447 #451 #453 #454).
+- Split screen side by side in all four games for the whole session; each player picks their own controls
+  (Auto, keyboard & mouse or a controller) in the launcher (#420, PR #461).
+- The in-game HUD keeps its size and place at true 1080p (all four games; Gears 2 / 3: title update 6).
+- Gears 1 shadows sharper at 1080p / 1440p (#446). The D-pad reaches the Update button (#445).
+- Chat keeps working after a campaign mission ends (Gears 3 co-op; #452, PR #462).
+- Texture memory at most 256 MB (#458). The launcher says when Windows ran out of memory (#456, PR #457).
+- Known: Prepare all shaders takes about twice as long as in 0.6.7 (#449); every shader is still made.
+
 New in 0.6.8
 ------------
 - SMOOTHER, WITH SHORTER FREEZES: shaders are prepared on background threads that scale with your CPU (DirectX 12;
