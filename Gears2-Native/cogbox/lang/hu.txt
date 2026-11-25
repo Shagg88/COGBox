@@ -1809,3 +1809,13 @@ Judgment's controller buttons laid out as in Gears of War 1, 2 and 3: D-pad up t
 (needs its console-command support). = (konzolparancs támogatásra van szükség).
 Experimental - how the screen is split for 2 players. Side by side suits ultrawide monitors. = Kísérleti – hogyan oszlik meg a képernyő 2 játékos esetén. Az Egymás mellett ultraszéles monitorokhoz illik.
 Gears 2: side by side from the start. = Gears 2: az elejétől egymás mellett.
+# 0.6.9 (missing text that was found - by HJ)
+Off: no ambient occlusion at all. = Ki: egyáltalán nincs környezeti takarás (ambient occlusion).
+In a match, Y opens chat to everyone and U chat to your team; messages show on the left of the screen. Off: the keys do nothing and no messages are shown. = Meccs közben az Y megnyitja a chatet mindenkinek, az U pedig a csapatodnak; az üzenetek a képernyő bal oldalán jelennek meg. Ki: a billentyűk nem csinálnak semmit, és nem jelennek meg üzenetek.
+How the screen is split for 2 players. Side by side suits ultrawide monitors and stays for the whole session. 3 and 4 players keep the game's own split. = Hogyan oszlik meg a képernyő 2 játékos esetén. Az Egymás mellett ultraszéles monitorokhoz illik, és a teljes játékmenet alatt megmarad. 3 és 4 játékos esetén megmarad a játék saját osztása.
+Player 1 input = 1. játékos bemenete
+Player 2 input = 2. játékos bemenete
+Auto = Automatikus
+Keyboard & mouse = Billentyűzet és egér
+nothing left = nincs eszköz
+What this player uses in split-screen: a controller, or the keyboard and mouse. Auto takes what nobody chose - keyboard and mouse first, then controllers in order - and shows what it will be (Player 1 on Auto gets the keyboard and mouse; pick a controller for Player 1 and the next Auto player gets them). A device can drive one player: choosing it again takes it from the earlier player. Your choice is kept if a controller is unplugged; plug it in again and it is used. = Mit használ ez a játékos osztott képernyős módban: kontrollert, vagy billentyűzetet és egeret. Az Automatikus azt választja, amit még senki nem foglalt le – először a billentyűzetet és egeret, majd sorrendben a kontrollereket –, és jelzi is, mi lesz a kiosztás (az Automatikuson lévő 1. játékos kapja a billentyűzetet és egeret; ha az 1. játékosnak kontrollert választasz, a következő Automatikus játékos kapja meg azokat). Egy eszköz egy játékost irányíthat: ha újra kiválasztod, elveszi a korábbi játékostól. A választásod megmarad, ha kihúznak egy kontrollert; ha visszadugod, ismét azt fogja használni.
