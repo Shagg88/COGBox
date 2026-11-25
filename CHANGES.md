@@ -12,6 +12,12 @@ A quick update for the crash at the end of a round, match, co-op session or leve
 - **Gears 1 shadows at 1080p / 1440p** (#446): the game's own shadow limit (MaxShadowResolution 432, for 720 lines)
   grows with the native lines (656 at 1080p, 864 at 1440p). `--gow1_shadow_max_res`: -1 automatic, 0 the game's own.
 - **Update button with a controller** (#445): the D-pad reaches UPDATE TO in the launcher's top row (Steam Deck).
+- **HUD at true 1080p** (Myth, ticket-0017): in play, the HUD at 1080p was drawn at 720p pixel sizes, so it looked
+  two-thirds size. It now lays out as at 720p and is scaled to the screen, the same size and place as at 720p (checked
+  in all four games, job b2391d). `--gowN_native_hud_layout720` (on; off = the old small HUD). Gears 2 and Gears 3: title
+  update 6 builds.
+- **Out of memory** (#456, #457 by KiltedKernel): when a game closes because Windows ran out of memory, the launcher
+  says so and how to fix it, instead of blaming the title update.
 - **DLSS model**: the tooltip says which model to pick for which card, and that each card behaves differently; it is
   translated again in all 11 languages (the old translations had been stale since 0.6.6).
 - Chat: logging when the chat box does not open, and when "in a match" changes (#452, for the next fix).
