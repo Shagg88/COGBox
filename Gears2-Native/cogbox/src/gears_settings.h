@@ -319,6 +319,7 @@ int pad_input_from_token(const std::string& token);   // any case; -1 = not a na
 // Names go by the button's place, as the game's own prompts do (assets/glyphs): Xbox A (bottom) is B on a Switch.
 enum class PadGlyphs { Xbox, PlayStation, Switch, SteamDeck };
 PadGlyphs pad_glyphs(int promptStyle, bool playStationPad);
+PadGlyphs pad_glyphs(int promptStyle, PadGlyphs connectedPad);   // Automatic: the connected pad's own kind
 const char* pad_glyph_name(PadGlyphs s, const char* xbox);   // "A" -> "Cross" / "B" / "A"; LB LT LS Back Start too
 struct PadMap {
     int to[kPadInputs];                 // to[controller button] = the game button it presses (to[i] == i: unchanged)

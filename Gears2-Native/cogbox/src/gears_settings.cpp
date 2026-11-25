@@ -1239,12 +1239,17 @@ const char* pad_input_label(int i) { return i >= 0 && i < kPadInputs ? k_padName
 
 PadGlyphs pad_glyphs(int promptStyle, bool playStationPad)
 {
+    return pad_glyphs(promptStyle, playStationPad ? PadGlyphs::PlayStation : PadGlyphs::Xbox);
+}
+
+PadGlyphs pad_glyphs(int promptStyle, PadGlyphs connectedPad)
+{
     switch (promptStyle) {
     case 1: return PadGlyphs::Xbox;
     case 2: return PadGlyphs::PlayStation;
     case 3: return PadGlyphs::Switch;
     case 4: return PadGlyphs::SteamDeck;
-    default: return playStationPad ? PadGlyphs::PlayStation : PadGlyphs::Xbox;
+    default: return connectedPad;
     }
 }
 

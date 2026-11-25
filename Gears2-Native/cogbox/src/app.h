@@ -118,6 +118,7 @@ struct App {
     bool prepThenPlay[G_COUNT] = {};    // 0.6.5: a Prepare all shaders run started from that question - play when it ends
     bool misplacedAsked[G_COUNT] = {};  // 0.6.4: the hand-copied saves question was asked for this Play (play.cpp)
     bool tuMismatchOk[G_COUNT] = {};  // TU preflight: "Play anyway" chosen for this game (until the launcher closes)
+    gs::PadGlyphs padKind = gs::PadGlyphs::Xbox;   // GitHub #464: the connected pad's kind, for Automatic (PlayStation first, then Switch / Steam)
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
     gs::PadGlyphs padGlyphs = gs::PadGlyphs::Xbox;   // GitHub #464: the pictures / names drawn - the game's Button prompt style (main.cpp)
     // 0.6.3: the Custom controller layout's "press a button" (page.cpp pad_layout_section). padPress = the last controller

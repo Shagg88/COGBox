@@ -1216,6 +1216,8 @@ int summary() {
         if (pad_glyphs(1, true) != PadGlyphs::Xbox || pad_glyphs(2, false) != PadGlyphs::PlayStation ||
             pad_glyphs(3, true) != PadGlyphs::Switch || pad_glyphs(4, false) != PadGlyphs::SteamDeck) bad("chosen style");
         if (pad_glyphs(9, false) != PadGlyphs::Xbox) bad("out of range");
+        if (pad_glyphs(0, PadGlyphs::Switch) != PadGlyphs::Switch || pad_glyphs(0, PadGlyphs::SteamDeck) != PadGlyphs::SteamDeck ||
+            pad_glyphs(1, PadGlyphs::Switch) != PadGlyphs::Xbox) bad("automatic follows a Switch / Steam pad");
         const char* const keys[] = { "A", "B", "X", "Y", "LB", "RT", "RS", "Start" };
         const char* const want[][8] = { { "A", "B", "X", "Y", "LB", "RT", "RS", "Start" },
                                         { "Cross", "Circle", "Square", "Triangle", "L1", "R2", "R3", "Options" },

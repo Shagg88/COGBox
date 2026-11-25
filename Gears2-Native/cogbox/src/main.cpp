@@ -600,7 +600,7 @@ static void draw_ui(App &a, ImVec2 size)
     // GitHub #464: the controller pictures follow the Button prompt style of the open page's game, else the library's
     {
         const int pg = a.screen == SCR_PAGE ? a.page : a.front;
-        a.padGlyphs = gs::pad_glyphs(pg >= 0 && pg < G_COUNT ? a.cur[pg].i("PromptStyle") : 0, a.padPs);
+        a.padGlyphs = gs::pad_glyphs(pg >= 0 && pg < G_COUNT ? a.cur[pg].i("PromptStyle") : 0, a.padKind);
     }
     if (a.screen == SCR_FRONT) front_draw(a, size);
     else if (a.screen == SCR_FABRICATOR) fabricator_draw(a, size);
@@ -689,11 +689,20 @@ static void refresh_pads(App &a)
     a.padConnected = n > 0;
     if (getenv("COGBOX_PADPS") || getenv("COGBOX_PAD")) { a.padConnected = true; }   // test switches: PlayStation names / any pad (the hint line's pictures)
     a.padPs = false;   // job 523: the first PlayStation pad switches the button names
+    gs::PadGlyphs other = gs::PadGlyphs::Xbox;   // GitHub #464: else a Switch or Steam pad (Steam Deck, Steam Controller) its own
     for (int i = 0; i < n; i++) {
         SDL_GamepadType t = SDL_GetGamepadTypeForID(ids[i]);
         if (t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5) { a.padPs = true; break; }
+        if (other != gs::PadGlyphs::Xbox) continue;
+        if (t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT ||
+            t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT || t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR) other = gs::PadGlyphs::Switch;
+        else if (SDL_GetGamepadVendorForID(ids[i]) == 0x28DE) {   // Valve hardware: Steam Deck 1205, Steam Controller 1102/1106/1142 -
+            const Uint16 pid = SDL_GetGamepadProductForID(ids[i]);   // not Steam Input's virtual pad (11FF), which can stand for any pad
+            if (pid == 0x1205 || pid == 0x1102 || pid == 0x1106 || pid == 0x1142) other = gs::PadGlyphs::SteamDeck;
+        }
     }
     if (getenv("COGBOX_PADPS")) a.padPs = true;
+    a.padKind = a.padPs ? gs::PadGlyphs::PlayStation : other;
     if (ids) SDL_free(ids);
 }
 
