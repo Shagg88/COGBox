@@ -89,7 +89,7 @@ void Gow1AddBuiltInIniEdits() {
   if (REXCVAR_GET(gow1_trilinear)) game_default("gow2_renderer_force_trilinear", "true");
   std::string add;
   if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xe-WarEngine.ini|FullScreenMovie|bForceNoMovies=True;";
-  if (const int32_t mb = REXCVAR_GET(gow1_texture_pool_mb); mb > 0 && mb <= 400)
+  if (const int32_t mb = std::min<int32_t>(REXCVAR_GET(gow1_texture_pool_mb), 256); mb > 0)   // 0.6.9 (Shagg): at most 256 MB (#458)
     add += std::format("Xe-WarEngine.ini|TextureStreaming|PoolSize={};", mb);
   {   // #446: shadow detail that keeps up with true 1080p / 1440p
     int32_t sr = REXCVAR_GET(gow1_shadow_max_res);

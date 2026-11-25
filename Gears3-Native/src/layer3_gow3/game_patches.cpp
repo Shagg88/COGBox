@@ -1103,10 +1103,10 @@ void Gow3StopMemoryGauge() { g_memory_gauge_stop.store(true); }
 void Gow3TexturePoolSize(PPCRegister& r11, PPCRegister& r26) {  // after `slwi r11,r26,20` at 0x829678BC
   const int32_t mb = REXCVAR_GET(gow3_texture_pool_mb);
   const uint32_t game_mb = r26.u32;
-  if (mb > 0 && mb <= 400) r11.u64 = uint64_t(uint32_t(mb) << 20);
+  if (mb > 0) r11.u64 = uint64_t(uint32_t(std::min<int32_t>(mb, 256)) << 20);   // 0.6.9 (Shagg): at most 256 MB (#458)
   static std::atomic<bool> first{true};
   if (first.exchange(false)) {
-    if (mb > 400) REXLOG_WARN("gow3_texture_pool_mb: {} is above 400 MB; the game's size is used", mb);
+    if (mb > 256) REXLOG_WARN("gow3_texture_pool_mb: {} is above 256 MB; 256 MB is used", mb);
     REXLOG_INFO("gow3_texture_pool_mb: texture pool {} MB (game's value {} MB)", uint32_t(r11.u32 >> 20), game_mb);
     StartMemoryGauge();
   }

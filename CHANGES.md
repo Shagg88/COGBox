@@ -18,6 +18,8 @@ A quick update for the crash at the end of a round, match, co-op session or leve
   update 6 builds.
 - **Out of memory** (#456, #457 by KiltedKernel): when a game closes because Windows ran out of memory, the launcher
   says so and how to fix it, instead of blaming the title update.
+- **Texture memory at most 256 MB** (#458): the launcher's "Larger (320 MB)" choice is gone (a saved 320 becomes 256),
+  and all four games use at most 256 MB for the texture pool, whatever is asked.
 - **DLSS model**: the tooltip says which model to pick for which card, and that each card behaves differently; it is
   translated again in all 11 languages (the old translations had been stale since 0.6.6).
 - Chat: logging when the chat box does not open, and when "in a match" changes (#452, for the next fix).

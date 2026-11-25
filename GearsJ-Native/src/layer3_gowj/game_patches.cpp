@@ -681,7 +681,7 @@ void GowjAddBuiltInIniEdits() {
   if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xbox360-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;";
   if (REXCVAR_GET(gowj_skip_logos)) add += "Xbox360-GearEngine.ini|FullScreenMovie|StartupMovies-=Open_Logos;";
   if (REXCVAR_GET(gowj_aniso16)) add += "Xbox360-GearEngine.ini|SystemSettings|MaxAnisotropy=16;";
-  if (const int32_t mb = REXCVAR_GET(gowj_texture_pool_mb); mb > 0 && mb <= 400)
+  if (const int32_t mb = std::min<int32_t>(REXCVAR_GET(gowj_texture_pool_mb), 256); mb > 0)   // 0.6.9 (Shagg): at most 256 MB (#458)
     add += std::format("Xbox360-GearEngine.ini|TextureStreaming|PoolSize={};", mb);
   // -1: job 019 run E stayed at 62 fps with bSmoothFrameRate=FALSE (applied). GetMaxTickRate doesn't read that key: its
   // test at 0x8255E210 is `lwz r11,0x354(r9)` on a global (0x8355CC04), not the engine object, and when set it returns

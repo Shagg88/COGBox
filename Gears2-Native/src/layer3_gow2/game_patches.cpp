@@ -179,7 +179,7 @@ void Gow2PatchTexturePoolSize(PPCRegister& r4) {
   if (!gauge.exchange(true)) Gow2StartMemoryGauge();  // patch 0087
   const int32_t mb = REXCVAR_GET(gow2_patch_texture_pool_mb);
   REXLOG_INFO("gow2_patch_texture_pool_mb: texture pool {} MB (game's value {} MB)", mb > 0 ? uint32_t(mb) : r4.u32, r4.u32);
-  if (mb > 0 && mb <= 400) r4.u64 = uint32_t(mb);
+  if (mb > 0) r4.u64 = uint32_t(std::min<int32_t>(mb, 256));   // 0.6.9 (Shagg): at most 256 MB (#458)
 }
 
 bool Gow2PatchTextureStatsOff(PPCRegister& r3) {

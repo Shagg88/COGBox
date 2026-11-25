@@ -105,7 +105,7 @@ const char* const k_drawScale[3] = { "1", "1.5", "2" };                         
 const int k_bodyCap[3] = { 0, 16, 32 }, k_bodyCapG2[3] = { 0, 12, 20 };   // GitHub #306 (Gears 2 lower: its memory)
 const int k_bodyLife[3] = { 0, 60, 300 }, k_bodyUnseen[3] = { 0, 20, 60 };  // #306, seconds (game: 20 / 8; Gears 1 5)
 const char* const k_shakeValue[3] = { "", "*=0.5", "=0" };   // 0.2.0 (#12): the factor scales the shake - Less halves the game's own, Off is 0                                    // PS1 167
-const int k_poolMb[4] = { 0, -1, 256, 320 };                                                 // PS1 171
+const int k_poolMb[3] = { 0, -1, 256 };   // PS1 171; 0.6.9 (Shagg): 256 MB is the most, 320 taken out (GitHub #458)
 const int k_winSizes[7][2] = { { 0, 0 }, { 1280, 720 }, { 1600, 900 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 }, { 1366, 768 } };   // PS1 174
 const double k_deadValue[6] = { 0, 0.05, 0.10, 0.15, 0.20, 0.25 };                          // PS1 177
 
@@ -383,7 +383,7 @@ std::vector<Option> make_options(Game g) {
              "the time in Judgment, its title screen too) is drawn at the render resolution instead of the console's "
              "half or quarter of 720p enlarged. Only when the render resolution is above 720p.", 0), "dofscale");
     add(choice("Pool", "Texture memory", Tab::Graphics, PG,
-               { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)", "Larger (320 MB, not long-tested)" }, 1,
+               { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)" }, 1,
                "The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory "
                "for the rest of the game.", 360), "pool", "", true);
     // 0.6.4 (GitHub #341): the renderer's host texture cache (--gow2_renderer_texture_cache_mb, 512 MB by default) - the
@@ -2289,7 +2289,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // the box changed nothing whether ticked or not; edited Coalesced files load in Gears 2 either way.)
     // PS1 860-864: texture pool (-1 = the port's own default; Judgment then 200)
     if (avail("Pool")) {
-        int mb = k_poolMb[std::max(0, std::min(3, s.i("Pool")))];
+        int mb = k_poolMb[std::max(0, std::min(2, s.i("Pool")))];   // a saved 320 MB (3) is sent as 256 now
         if (mb < 0 && isGJ) mb = 200;
         if (mb < 0 && isG1) mb = 196;   // as Gears 2 (the same 140 MB pool on the disc)
         if (mb >= 0) {
