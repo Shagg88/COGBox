@@ -920,7 +920,10 @@ static std::string pad_button_name(const App &a, int i)
     const char *l = gs::pad_input_label(i);
     if (!l) return "?";
     if (i <= gs::PadRT || i == gs::PadBack || i == gs::PadStart) return pad_name(a, l);
-    if (a.padPs && (i == gs::PadLS || i == gs::PadRS)) return i == gs::PadLS ? "L3" : "R3";   // r48: PlayStation names
+    if (i == gs::PadLS || i == gs::PadRS) {   // r48: PlayStation names; GitHub #464: Steam Deck's too
+        const char *k = i == gs::PadLS ? "LS" : "RS", *n = pad_name(a, k);
+        if (strcmp(n, k)) return n;
+    }
     return tr(l);
 }
 

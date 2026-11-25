@@ -1208,6 +1208,27 @@ int summary() {
             if (res->choices[size_t(ord[3])].find("1080") == std::string::npos) bad("1080p not fourth: " + res->choices[size_t(ord[3])]);
         }
     }
+    // GitHub #464: the launcher's hint pictures follow the Button prompt style; Automatic follows the pad; names by
+    // place as the game's glyphs (Switch's bottom button is B), the saved index of Steam Deck / Steam Controller kept
+    {
+        auto bad = [&](const std::string& what) { std::cout << "FAIL #464 hint glyphs: " << what << "\n"; ++fails; };
+        if (pad_glyphs(0, false) != PadGlyphs::Xbox || pad_glyphs(0, true) != PadGlyphs::PlayStation) bad("automatic");
+        if (pad_glyphs(1, true) != PadGlyphs::Xbox || pad_glyphs(2, false) != PadGlyphs::PlayStation ||
+            pad_glyphs(3, true) != PadGlyphs::Switch || pad_glyphs(4, false) != PadGlyphs::SteamDeck) bad("chosen style");
+        if (pad_glyphs(9, false) != PadGlyphs::Xbox) bad("out of range");
+        if (pad_glyphs(0, PadGlyphs::Switch) != PadGlyphs::Switch || pad_glyphs(0, PadGlyphs::SteamDeck) != PadGlyphs::SteamDeck ||
+            pad_glyphs(1, PadGlyphs::Switch) != PadGlyphs::Xbox) bad("automatic follows a Switch / Steam pad");
+        const char* const keys[] = { "A", "B", "X", "Y", "LB", "RT", "RS", "Start" };
+        const char* const want[][8] = { { "A", "B", "X", "Y", "LB", "RT", "RS", "Start" },
+                                        { "Cross", "Circle", "Square", "Triangle", "L1", "R2", "R3", "Options" },
+                                        { "B", "A", "Y", "X", "L", "ZR", "RS", "+" },
+                                        { "A", "B", "X", "Y", "L1", "R2", "R3", "Menu" } };
+        for (int s = 0; s < 4; ++s) for (int k = 0; k < 8; ++k)
+            if (std::string(pad_glyph_name(static_cast<PadGlyphs>(s), keys[k])) != want[s][k]) bad(std::string("style ") + std::to_string(s) + " " + keys[k]);
+        if (std::string(pad_glyph_name(PadGlyphs::Switch, "D-pad")) != "D-pad") bad("unmapped name");
+        const Option* ps = find_option(Game::Gears2, "PromptStyle");
+        if (!ps || ps->choices.size() != 5 || ps->choices[4] != "Steam Deck / Steam Controller") bad("choice 4 label");
+    }
     // GitHub #443: "Ask before closing COGBox" - on unless [Launcher] AskQuit=0
     {
         Ini ini;

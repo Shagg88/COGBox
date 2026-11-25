@@ -1174,7 +1174,8 @@ void front_draw(App &a, ImVec2 size)
         }
     }
     // the hint line - 0.4.6 (Shagg 4 Nov): a short legend with button / key pictures for the device in use (Xbox
-    // colours, PlayStation shapes, key caps), only the main actions (no "press", no install text)
+    // colours, PlayStation shapes, key caps), only the main actions (no "press", no install text). GitHub #464: the
+    // pictures follow the game's Button prompt style (App::padGlyphs): Switch letters by place, Steam Deck's dark buttons
     {
         struct Item { int kind; const char *key; std::string label; };   // kind 0 = pad button, 1 = keyboard key
         std::vector<Item> it;
@@ -1226,7 +1227,16 @@ void front_draw(App &a, ImVec2 size)
             const bool face = x.kind == 0 && (!strcmp(x.key, "A") || !strcmp(x.key, "B") || !strcmp(x.key, "X") || !strcmp(x.key, "Y"));
             if (face) {
                 const float r = ih * 0.5f;
-                if (!a.padPs) {   // Xbox: the coloured face button with its letter
+                if (a.padGlyphs == gs::PadGlyphs::Switch || a.padGlyphs == gs::PadGlyphs::SteamDeck) {
+                    // GitHub #464: the letter on the button in that place (Switch: B at the bottom, A on the right) -
+                    // Switch a light button with a dark letter, Steam Deck a dark button with a light letter
+                    const bool sw = a.padGlyphs == gs::PadGlyphs::Switch;
+                    dl->AddCircleFilled(c, r, sw ? IM_COL32(225, 225, 230, 255) : IM_COL32(40, 40, 46, 255), 24);
+                    if (!sw) dl->AddCircle(c, r - S(0.5f), IM_COL32(110, 110, 118, 255), 24, S(1));
+                    const char *l = pad_name(a, x.key);
+                    const ImVec2 ts = F_BOLD->CalcTextSizeA(fs, FLT_MAX, 0, l);
+                    dl->AddText(F_BOLD, fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), sw ? IM_COL32(40, 40, 46, 255) : IM_COL32(235, 235, 235, 255), l);
+                } else if (a.padGlyphs == gs::PadGlyphs::Xbox) {   // Xbox: the coloured face button with its letter
                     const ImU32 fill = !strcmp(x.key, "A") ? IM_COL32(80, 170, 60, 255) : !strcmp(x.key, "B") ? IM_COL32(200, 50, 50, 255)
                                      : !strcmp(x.key, "X") ? IM_COL32(40, 110, 200, 255) : IM_COL32(220, 180, 40, 255);
                     dl->AddCircleFilled(c, r, fill, 24);

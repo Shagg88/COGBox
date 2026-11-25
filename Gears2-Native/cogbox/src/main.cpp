@@ -597,6 +597,11 @@ static void draw_ui(App &a, ImVec2 size)
     // Carousel <-> page: the screen changes at the end of the frame that asked for it (screen_fade_frame_end); the
     // old picture then cross-fades into the new one. (Before 0.3.8: a 0.5 s dip through black - the whole window,
     // window buttons and background included, went black half way, and the switch waited for it.)
+    // GitHub #464: the controller pictures follow the Button prompt style of the open page's game, else the library's
+    {
+        const int pg = a.screen == SCR_PAGE ? a.page : a.front;
+        a.padGlyphs = gs::pad_glyphs(pg >= 0 && pg < G_COUNT ? a.cur[pg].i("PromptStyle") : 0, a.padKind);
+    }
     if (a.screen == SCR_FRONT) front_draw(a, size);
     else if (a.screen == SCR_FABRICATOR) fabricator_draw(a, size);
     else page_draw(a, size);
@@ -624,11 +629,7 @@ static void draw_ui(App &a, ImVec2 size)
 
 const char *pad_name(const App &a, const char *x)
 {
-    if (!a.padPs) return x;
-    static const char *const map[][2] = { { "A", "Cross" }, { "B", "Circle" }, { "X", "Square" }, { "Y", "Triangle" },
-                                          { "LB", "L1" }, { "RB", "R1" }, { "RS", "R3" }, { "LT", "L2" }, { "RT", "R2" }, { "Back", "Share" }, { "Start", "Options" } };
-    for (auto &m : map) if (strcmp(m[0], x) == 0) return m[1];
-    return x;
+    return gs::pad_glyph_name(a.padGlyphs, x);   // GitHub #464: the Button prompt style's names (gears_settings.cpp)
 }
 
 bool pad_capturing(const App &a) { return ImGui::GetFrameCount() <= a.padCaptureFrame + 1; }
@@ -686,19 +687,29 @@ static void refresh_pads(App &a)
     int n = 0;
     SDL_JoystickID *ids = SDL_GetGamepads(&n);
     a.padConnected = n > 0;
-    if (getenv("COGBOX_PADPS")) { a.padConnected = true; }   // test switch: shows the PlayStation names
+    if (getenv("COGBOX_PADPS") || getenv("COGBOX_PAD")) { a.padConnected = true; }   // test switches: PlayStation names / any pad (the hint line's pictures)
     a.padPs = false;   // job 523: the first PlayStation pad switches the button names
+    gs::PadGlyphs other = gs::PadGlyphs::Xbox;   // GitHub #464: else a Switch or Steam pad (Steam Deck, Steam Controller) its own
     for (int i = 0; i < n; i++) {
         SDL_GamepadType t = SDL_GetGamepadTypeForID(ids[i]);
         if (t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5) { a.padPs = true; break; }
+        if (other != gs::PadGlyphs::Xbox) continue;
+        if (t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT ||
+            t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT || t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR) other = gs::PadGlyphs::Switch;
+        else if (SDL_GetGamepadVendorForID(ids[i]) == 0x28DE) {   // Valve hardware: Steam Deck 1205, Steam Controller 1102/1106/1142 -
+            const Uint16 pid = SDL_GetGamepadProductForID(ids[i]);   // not Steam Input's virtual pad (11FF), which can stand for any pad
+            if (pid == 0x1205 || pid == 0x1102 || pid == 0x1106 || pid == 0x1142) other = gs::PadGlyphs::SteamDeck;
+        }
     }
     if (getenv("COGBOX_PADPS")) a.padPs = true;
+    a.padKind = a.padPs ? gs::PadGlyphs::PlayStation : other;
     if (ids) SDL_free(ids);
 }
 
 // Test switches (all off for players): COGBOX_SHOT=<file.bmp> saves the window after COGBOX_SHOT_FRAMES frames (90)
 // and exits (COGBOX_SHOT_NOTICES=1 keeps the startup questions); COGBOX_PAGE=<game>[:<tab>] opens on a page; COGBOX_FRONT=<game> turns the carousel there;
-// COGBOX_FABRICATOR=<library|store|creator> opens the FABRICATOR screen on that tab.
+// COGBOX_FABRICATOR=<library|store|creator> opens the FABRICATOR screen on that tab. COGBOX_PAD=1 acts as if a controller is
+// connected (the library's hint line with the Button prompt style's pictures, GitHub #464); COGBOX_PADPS=1 as a PlayStation one.
 static void test_shot(App &a)
 {
     const char *shot = getenv("COGBOX_SHOT");
