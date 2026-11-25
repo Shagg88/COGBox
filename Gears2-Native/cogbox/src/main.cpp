@@ -14,6 +14,7 @@
 #include "update.h"
 #include "report.h"
 #include "legal.h"   // legal050
+#include "input_devices.h"   // RefreshControllers (Player N input lists)
 #include "imgui_impl_sdl3.h"
 extern int g_lastKeyScancode;   // page.cpp
 #include "imgui_impl_sdlrenderer3.h"
@@ -968,7 +969,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             ImGui_ImplSDL3_ProcessEvent(&e);
             if (e.type == SDL_EVENT_QUIT) a.quit = true;
             if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && e.window.windowID == SDL_GetWindowID(win)) a.quit = true;
-            if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED) refresh_pads(a);
+            if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                refresh_pads(a);
+                cogbox::RefreshControllers();   // the Player N input lists and their "Auto (...)" follow a pad plugged in / out
+            }
             // 0.2.0: the hints follow the device used last (stick movement past half way counts, small drift doesn't)
             if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && abs(e.gaxis.value) > 16000)) a.lastPad = true;
             pad_press_event(a, e, (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0);   // 0.6.3: the controller layout's "press a button"
