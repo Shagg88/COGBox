@@ -4,7 +4,7 @@
 
 A quick update for the crash at the end of a round, match, co-op session or level in 0.6.8.
 
-- **Stats crash fixed** (#447, #451, #453, #454, ticket-0017): all four games could crash when they sent their stats -
+- **Stats crash fixed** (#447, #451, #453, #454, Discord reports): all four games could crash when they sent their stats -
   dying between Horde rounds, leaving a match, a co-op host closing the session, ending a level or pressing Continue.
   The game handed the stats code a bad pointer (0x00000001). SDK patch 128 (runtime 072) checks every stats pointer
   against readable game memory first and skips a bad one, and no longer reads XSessionFlushStats as views. Tested:
@@ -12,9 +12,9 @@ A quick update for the crash at the end of a round, match, co-op session or leve
 - **Gears 1 shadows at 1080p / 1440p** (#446): the game's own shadow limit (MaxShadowResolution 432, for 720 lines)
   grows with the native lines (656 at 1080p, 864 at 1440p). `--gow1_shadow_max_res`: -1 automatic, 0 the game's own.
 - **Update button with a controller** (#445): the D-pad reaches UPDATE TO in the launcher's top row (Steam Deck).
-- **HUD at true 1080p** (Myth, ticket-0017): in play, the HUD at 1080p was drawn at 720p pixel sizes, so it looked
+- **HUD at true 1080p** (#426, Discord): in play, the HUD at 1080p was drawn at 720p pixel sizes, so it looked
   two-thirds size. It now lays out as at 720p and is scaled to the screen, the same size and place as at 720p (checked
-  in all four games, job b2391d). `--gowN_native_hud_layout720` (on; off = the old small HUD). Gears 2 and Gears 3: title
+  in all four games). `--gow1/2/3/j_native_hud_layout720` (on; off = the old small HUD). Gears 2 and Gears 3: title
   update 6 builds.
 - **Out of memory** (#456, #457 by KiltedKernel): when a game closes because Windows ran out of memory, the launcher
   says so and how to fix it, instead of blaming the title update.

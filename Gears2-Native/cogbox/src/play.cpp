@@ -806,8 +806,12 @@ void play_poll(App &a)
     // GitHub #456: out of memory, read from the log - said first, and then the title update line below is left out
     // (the signature warning is harmless on reported-working updates, and blaming it sent the player the wrong way)
     const int oomLog = code != 0 ? crash_hints::log_out_of_memory(log) : 0;
-    const bool oom = oomLog == 2 || (oomLog == 1 && (code == 0xC0000409 || code == 0xC0000017 || code == 0xC000012D));
-    if (oom) what += std::string(". ") + crash_hints::out_of_memory_text();
+    // (0.6.9 review: the two out-of-memory exit codes count by themselves; their exit meaning already says "Windows ran
+    // out of memory", so only the advice is added then)
+    const bool oomCode = known && (code == 0xC0000017 || code == 0xC000012D);
+    const bool oom = oomLog == 2 || oomCode || (oomLog == 1 && code == 0xC0000409);
+    if (oomCode) what += std::string(" - ") + crash_hints::out_of_memory_advice();
+    else if (oom) what += std::string(". ") + crash_hints::out_of_memory_text();
     if (!oom && code != 0 && secs <= 90 && log.find("XEX patch signature hash doesn't match") != std::string::npos)
         what += ". Its log says the title update doesn't match this copy of the game (it was made for another version of "
                 "the game) - add the title update that belongs to your copy (same console and disc) by dropping it onto this window";
