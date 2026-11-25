@@ -1636,3 +1636,4 @@ The output device you chose is not plugged in at the moment - the game uses the 
 Ask before closing COGBox = COGBox を閉じる前に確認する
 EXIT, Esc and Start on the library ask "Close COGBox?" first. Off: they close COGBox at once. While a game is running COGBox can't be closed from there either way. = ライブラリの EXIT、Esc、Start は先に「COGBox を閉じますか?」と確認します。オフ: すぐに COGBox を閉じます。ゲームの実行中は、どちらの場合もここから COGBox を閉じることはできません。
 The game allows two local players only. = このゲームのローカルプレイヤーは 2 人までです。
+Steam Deck / Steam Controller = Steam Deck / Steam コントローラー

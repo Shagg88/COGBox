@@ -119,6 +119,7 @@ struct App {
     bool misplacedAsked[G_COUNT] = {};  // 0.6.4: the hand-copied saves question was asked for this Play (play.cpp)
     bool tuMismatchOk[G_COUNT] = {};  // TU preflight: "Play anyway" chosen for this game (until the launcher closes)
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
+    gs::PadGlyphs padGlyphs = gs::PadGlyphs::Xbox;   // GitHub #464: the pictures / names drawn - the game's Button prompt style (main.cpp)
     // 0.6.3: the Custom controller layout's "press a button" (page.cpp pad_layout_section). padPress = the last controller
     // button pressed (a gs::PadInput, from SDL's gamepad events; LT / RT past half way), padPressSeq counts the presses.
     // padCaptureFrame = the last frame the list waited for a press: then and the frame after, the controller's own uses in
@@ -155,6 +156,7 @@ bool untested_version(const App &a, int g);
 // page.cpp: after a report: its folder opens with the zip selected and a pre-filled GitHub issue opens (Shagg 2 Nov)
 void report_share(App &a, int g, const std::string &zip, const std::string &what);
 // Job 523: a controller button's name for the connected pad - "A" on Xbox, "Cross" on PlayStation (A B X Y LB RB Back Start).
+// GitHub #464: for the Button prompt style (App::padGlyphs) - Switch and Steam Deck names too.
 const char *pad_name(const App &a, const char *xbox);
 bool pad_capturing(const App &a);   // 0.6.3: the controller layout list is waiting for a button (see App::padCaptureFrame)
 void set_borderless(App &a, bool on);   // job 523: saved in CogBox.ini [Window] Borderless

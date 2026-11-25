@@ -479,9 +479,9 @@ std::vector<Option> make_options(Game g) {
              "With Keyboard and mouse on, keep the game's controller button prompts instead of the key caps "
              "(for example when Steam Input sends a controller as keyboard and mouse).", 0));
     // GitHub #249: a manual button-prompt style (the runtime's --gow_button_prompts; auto could pick PlayStation for an
-    // Xbox pad when a Sony device was also connected).
+    // Xbox pad when a Sony device was also connected). GitHub #464: Steam Deck / Steam Controller (one style for both).
     add(choice("PromptStyle", "Button prompt style", Tab::Controls, SH,
-               { "Automatic", "Xbox", "PlayStation", "Nintendo Switch", "Steam Deck" }, 0,
+               { "Automatic", "Xbox", "PlayStation", "Nintendo Switch", "Steam Deck / Steam Controller" }, 0,
                "Which controller's buttons the game shows. Automatic follows the controller in use.", 0));
     // 0.2.0 (GitHub #2): up to 20 (was 5) - the mouse drives the right stick, so slow moves sat inside the game's stick
     // dead zone at 5. True mouse look (no stick limits) is planned.
@@ -1236,6 +1236,27 @@ const PadName k_padNames[kPadInputs] = {
 
 const char* pad_input_token(int i) { return i >= 0 && i < kPadInputs ? k_padNames[i].token : nullptr; }
 const char* pad_input_label(int i) { return i >= 0 && i < kPadInputs ? k_padNames[i].label : nullptr; }
+
+PadGlyphs pad_glyphs(int promptStyle, bool playStationPad)
+{
+    switch (promptStyle) {
+    case 1: return PadGlyphs::Xbox;
+    case 2: return PadGlyphs::PlayStation;
+    case 3: return PadGlyphs::Switch;
+    case 4: return PadGlyphs::SteamDeck;
+    default: return playStationPad ? PadGlyphs::PlayStation : PadGlyphs::Xbox;
+    }
+}
+
+const char* pad_glyph_name(PadGlyphs s, const char* x)
+{
+    static const char* const k[][4] = {   // Xbox, PlayStation, Switch, Steam Deck
+        { "A", "Cross", "B", "A" }, { "B", "Circle", "A", "B" }, { "X", "Square", "Y", "X" }, { "Y", "Triangle", "X", "Y" },
+        { "LB", "L1", "L", "L1" }, { "RB", "R1", "R", "R1" }, { "LT", "L2", "ZL", "L2" }, { "RT", "R2", "ZR", "R2" },
+        { "LS", "L3", "LS", "L3" }, { "RS", "R3", "RS", "R3" }, { "Back", "Share", "-", "View" }, { "Start", "Options", "+", "Menu" } };
+    for (auto& m : k) if (std::strcmp(m[0], x) == 0) return m[static_cast<int>(s)];
+    return x;
+}
 
 int pad_input_from_token(const std::string& token)
 {

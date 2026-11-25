@@ -262,7 +262,7 @@ int main()
         // the choices' texts the code relies on
         const gs::Option *ps = gs::find_option(gs::Game::Gears2, "PromptStyle");
         const gs::Option *cap = gs::find_option(gs::Game::Gears2, "FrameCap");
-        CHECK(ps && ps->choices.size() > 4 && ps->choices[4] == "Steam Deck");
+        CHECK(ps && ps->choices.size() > 4 && ps->choices[4] == "Steam Deck / Steam Controller");
         CHECK(cap && cap->choices[3] == "60" && cap->choices[1] == "40");
         CHECK(fs_ && fs_->choices[1] == "Borderless fullscreen" && fs_->choices[2] == "Exclusive fullscreen");
     }

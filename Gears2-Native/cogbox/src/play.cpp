@@ -523,7 +523,9 @@ void play_start(App &a, int g, bool prepare)
     if (a.env[g].cap.exe_has && a.env[g].cap.exe_has("cogbox_menu")) {   // ports with the in-game menu (patch 0163)
         write_menu_file(a, g, ver, logDir);
         args.push_back("--cogbox_menu=\"" + join(logDir, "menu.txt") + "\"");
-        if (a.padPs && a.env[g].cap.exe_has("Circle: back to the game")) args.push_back("--cogbox_menu_ps=true");   // job 523: PlayStation names in the in-game menu
+        // job 523: PlayStation names in the in-game menu; GitHub #464: for this game's Button prompt style (Automatic: the pad)
+        if (gs::pad_glyphs(a.cur[g].i("PromptStyle"), a.padPs) == gs::PadGlyphs::PlayStation && a.env[g].cap.exe_has("Circle: back to the game"))
+            args.push_back("--cogbox_menu_ps=true");
     }
     // Achievements (part 1): the game caches its achievement list in <COGBox>\achievements. The capability text is the
     // setting's description: a short name like "cogbox_dir" is built in code, not stored as text in the exe.

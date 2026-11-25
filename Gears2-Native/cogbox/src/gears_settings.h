@@ -314,6 +314,12 @@ enum PadInput { PadA, PadB, PadX, PadY, PadLB, PadRB, PadLT, PadRT, PadLS, PadRS
 const char* pad_input_token(int i);   // the runtime's name: "a", "lb", "ls", "back", "up" ... (nullptr out of range)
 const char* pad_input_label(int i);   // the launcher's: "A", "LB", "Left stick click", "Back", "D-pad up" ...
 int pad_input_from_token(const std::string& token);   // any case; -1 = not a name the runtime knows
+// GitHub #464: the launcher's controller pictures and button names (the library's hint line, the Controls tab) follow a
+// game's Button prompt style. Automatic (0) = the connected pad as before: PlayStation for a Sony pad, else Xbox.
+// Names go by the button's place, as the game's own prompts do (assets/glyphs): Xbox A (bottom) is B on a Switch.
+enum class PadGlyphs { Xbox, PlayStation, Switch, SteamDeck };
+PadGlyphs pad_glyphs(int promptStyle, bool playStationPad);
+const char* pad_glyph_name(PadGlyphs s, const char* xbox);   // "A" -> "Cross" / "B" / "A"; LB LT LS Back Start too
 struct PadMap {
     int to[kPadInputs];                 // to[controller button] = the game button it presses (to[i] == i: unchanged)
     bool sticks_swapped = false;
