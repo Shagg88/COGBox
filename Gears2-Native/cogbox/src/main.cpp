@@ -710,6 +710,30 @@ static void test_shot(App &a)
     a.quit = true;
 }
 
+// Test switch: COGBOX_PADKEYS=<frame>:<button>,... presses controller buttons in Dear ImGui (u d l r = D-pad, a b = A B)
+// at those frames, each held 4 frames, as a pad would (gamepad navigation on, window focus or not) - for window shots
+// of controller navigation (GitHub #479 / #483) without touching the desktop's input.
+static void test_pad_keys()
+{
+    static const char *spec = getenv("COGBOX_PADKEYS");
+    if (!spec) return;
+    ImGuiIO &io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+    const int now = ImGui::GetFrameCount() + 1;   // the frame NewFrame is about to start
+    for (const char *p = spec; *p;) {
+        int frame = 0;
+        char b = 0;
+        if (sscanf(p, "%d:%c", &frame, &b) != 2) break;
+        const ImGuiKey k = b == 'u' ? ImGuiKey_GamepadDpadUp : b == 'd' ? ImGuiKey_GamepadDpadDown : b == 'l' ? ImGuiKey_GamepadDpadLeft :
+                           b == 'r' ? ImGuiKey_GamepadDpadRight : b == 'a' ? ImGuiKey_GamepadFaceDown : b == 'b' ? ImGuiKey_GamepadFaceRight : ImGuiKey_None;
+        if (k != ImGuiKey_None && now == frame) io.AddKeyEvent(k, true);
+        if (k != ImGuiKey_None && now == frame + 4) io.AddKeyEvent(k, false);
+        const char *c = strchr(p, ',');
+        p = c ? c + 1 : p + strlen(p);
+    }
+}
+
 // Test switch: CogBox.exe --x360test <source> <out folder or -> <report.txt> - what x360fs makes of a copy: its kind, header,
 // listing, then (with an out folder) the extraction and the SHA-1 of every file written. For checking the reader on real
 // discs and packages; players never see it.
@@ -1048,6 +1072,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             }
         }
         ImGui_ImplSDL3_NewFrame();
+        test_pad_keys();
         ImGui::NewFrame();
         if (a.padCaptureActive && pad_capturing(a)) {   // r48: a click while a controller button is awaited only cancels
             static const ImGuiKey k_mouse[3] = { ImGuiKey_MouseLeft, ImGuiKey_MouseRight, ImGuiKey_MouseMiddle };

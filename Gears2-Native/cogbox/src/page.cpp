@@ -1135,6 +1135,44 @@ static bool voice_on_copy(const std::string &root, int g, int idx)
     return !any;
 }
 
+// GitHub #479: D-pad / arrow left or right from a row whose neighbour in the other column is greyed did nothing. Greyed
+// rows stay out of reach (Shagg: by design), but Dear ImGui only takes a left / right step to an item level with the
+// current one (NavScoreItem: any vertical gap puts a candidate in the up / down quadrant), so there was no stop at all.
+// Each frame the enabled option controls are noted (option_row); when a left / right move has found nothing by the end
+// of the rows, the focus goes to the nearest noted control wholly on that side - the other column's closest row.
+struct SideStop { ImGuiID id; ImGuiWindow *win; ImRect r; };
+static std::vector<SideStop> g_sideStops;
+static int g_sideStopsFrame = -1;
+static void side_stop_note()   // after an enabled option's control (the last item)
+{
+    const ImGuiContext &gc = *ImGui::GetCurrentContext();
+    if (g_sideStopsFrame != ImGui::GetFrameCount()) { g_sideStops.clear(); g_sideStopsFrame = ImGui::GetFrameCount(); }
+    const ImGuiLastItemData &it = gc.LastItemData;
+    if (it.ID && !(it.ItemFlags & (ImGuiItemFlags_Disabled | ImGuiItemFlags_NoNav)))
+        g_sideStops.push_back({ it.ID, gc.CurrentWindow, it.NavRect });
+}
+static void side_stop_fallback()   // after the rows: a left / right move that found no item
+{
+    ImGuiContext &gc = *ImGui::GetCurrentContext();
+    const ImGuiDir dir = gc.NavMoveDir;
+    if (g_sideStopsFrame != ImGui::GetFrameCount() || !gc.NavWindow || (dir != ImGuiDir_Left && dir != ImGuiDir_Right) ||
+        !ImGui::NavMoveRequestButNoResultYet())
+        return;
+    const ImRect cur = ImGui::WindowRectRelToAbs(gc.NavWindow, gc.NavWindow->NavRectRel[gc.NavLayer]);
+    const SideStop *best = nullptr;
+    float bestD = FLT_MAX;
+    for (const SideStop &s : g_sideStops) {
+        const float dx = dir == ImGuiDir_Right ? s.r.Min.x - cur.Max.x : cur.Min.x - s.r.Max.x;
+        if (s.id == gc.NavId || dx < 0) continue;
+        const float d = dx + fabsf((s.r.Min.y + s.r.Max.y) - (cur.Min.y + cur.Max.y)) * 0.5f;
+        if (d < bestD) { bestD = d; best = &s; }
+    }
+    if (!best) return;
+    ImGui::SetFocusID(best->id, best->win);
+    ImGui::SetNavCursorVisible(true);
+    ImGui::ScrollToRectEx(best->win, best->r, ImGuiScrollFlags_KeepVisibleEdgeX | ImGuiScrollFlags_KeepVisibleEdgeY);
+}
+
 static void option_row(App &a, int g, const gs::Option &o)
 {
     gs::Game G = (gs::Game)g;
@@ -1380,6 +1418,7 @@ static void option_row(App &a, int g, const gs::Option &o)
         break;
     }
     }
+    if (av.ok) side_stop_note();   // GitHub #479
     if (!av.ok) ImGui::EndDisabled();
     if (o.id == "FrameGen" && av.ok && gs::fg_vk_nvidia_warning(a.cur[g], a.env[g]))   // vkfreeze049
         ui_note(gs::k_fgVkNvidiaWarning, col::amber);
@@ -2298,6 +2337,7 @@ void page_draw(App &a, ImVec2 size)
     } else if (a.tab == k_tabSocial) social_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // social step 3
     else if (a.tab == k_tabMods) mods_tab(a, g);
     else about_tab(a, g);
+    side_stop_fallback();   // GitHub #479: left / right next to a greyed row
     ImGui::PopFont();
     ImGui::EndChild();
 
