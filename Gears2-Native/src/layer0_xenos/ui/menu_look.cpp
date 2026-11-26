@@ -591,7 +591,14 @@ Action DrawSettings(const Look& L, SettingsPage& pg) {
       } else if (r.kind == "choice" && r.choices && !r.choices->empty()) {
         const int n = int(r.choices->size());
         const int cur = std::clamp(int(std::lround(*r.value)), 0, n - 1);
-        if (ImGui::BeginCombo("##v", (*r.choices)[size_t(cur)].c_str(), ImGuiComboFlags_HeightLarge)) {
+        // GitHub #483: the list's first entry sat right under the box (PushStyle's window padding is 0) - room above
+        // and below the entries; their text in the middle of each (taller) entry, not at its top, so the lit entry's
+        // crimson is centred on it
+        ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.f, 0.5f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 6 * u));
+        const bool list_open = ImGui::BeginCombo("##v", (*r.choices)[size_t(cur)].c_str(), ImGuiComboFlags_HeightLarge);
+        ImGui::PopStyleVar();   // the padding: taken by the list's window (Begin); the text alignment stays for the entries
+        if (list_open) {
           open_here = true;
           // GitHub #443: COGBox's order (Render resolution by size; the value stays the index) - only when every
           // entry is a choice and none is listed twice; otherwise index order as before
@@ -624,6 +631,7 @@ Action DrawSettings(const Look& L, SettingsPage& pg) {
           }
           ImGui::EndCombo();
         }
+        ImGui::PopStyleVar();   // the entries' text alignment
       } else if (r.kind == "int") {
         // menu5 (RC4-4, Judgment's Brightness 50..150 step 5): a slider over the option's own steps, as for "float".
         // It was a slider over every integer, snapped to the step afterwards - a pad / key nudge moves it by 1 (65 -> 66),

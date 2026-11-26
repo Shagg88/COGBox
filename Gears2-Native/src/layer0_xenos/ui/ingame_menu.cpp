@@ -561,6 +561,8 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     ImGuiIO& io = GetIO();
     saved_config_ = io.ConfigFlags;
     saved_backend_ = io.BackendFlags;
+    saved_repeat_delay_ = io.KeyRepeatDelay;   // GitHub #483 (FeedPad)
+    saved_repeat_rate_ = io.KeyRepeatRate;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard;
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     std::lock_guard<std::mutex> l(g_pad_mutex);
@@ -580,6 +582,8 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     ImGuiIO& io = GetIO();
     io.ConfigFlags = saved_config_;
     io.BackendFlags = saved_backend_;
+    io.KeyRepeatDelay = saved_repeat_delay_;
+    io.KeyRepeatRate = saved_repeat_rate_;
     io.MouseDrawCursor = saved_draw_cursor_;
   }
   bool done() const { return done_; }
@@ -703,17 +707,30 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, !own_nav && ly > dz, !own_nav && ly > dz ? ly : 0.0f);
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, !own_nav && ly < -dz, !own_nav && ly < -dz ? -ly : 0.0f);
     nav_move_ = nav_adjust_ = 0;
+    // GitHub #483 (double inputs): Dear ImGui moves in an open list and steps a slider in edit mode by itself, and its
+    // gamepad repeat came after 0.2 s (KeyRepeatDelay 0.275 x 0.72), every 0.04 s (0.05 x 0.8) - a press held a little
+    // longer than a tap moved twice there. While the controller drives the menu, Dear ImGui's first repeat comes when
+    // ours does (0.35 s), then every 0.11 s in lists (a held slider steps about three times as fast: 0.3 x the rate).
+    // Keys keep Dear ImGui's own repeat.
+    constexpr int kRepeatDelayMs = 350, kRepeatMs = 110;
+    if (!mode_.keys()) {
+      io.KeyRepeatDelay = kRepeatDelayMs / 1000.0f / 0.72f;   // Dear ImGui's RepeatRateNavMove factors (imgui.cpp)
+      io.KeyRepeatRate = kRepeatMs / 1000.0f / 0.80f;
+    } else {
+      io.KeyRepeatDelay = saved_repeat_delay_;
+      io.KeyRepeatRate = saved_repeat_rate_;
+    }
+    int dir = 0;   // 1 up, 2 down, 3 left, 4 right (none while the keyboard's binds drive the pad state)
+    if (pad_from_keys) dir = 0;
+    else if ((live & XINPUT_GAMEPAD_DPAD_UP) || ly > dz) dir = 1;
+    else if ((live & XINPUT_GAMEPAD_DPAD_DOWN) || ly < -dz) dir = 2;
+    else if ((live & XINPUT_GAMEPAD_DPAD_LEFT) || lx < -dz) dir = 3;
+    else if ((live & XINPUT_GAMEPAD_DPAD_RIGHT) || lx > dz) dir = 4;
+    const auto now = std::chrono::steady_clock::now();
     if (own_nav) {   // D-pad or stick: one step on the press, then repeats while held (0.35 s, then every 0.11 s)
-      int dir = 0;   // 1 up, 2 down, 3 left, 4 right (none while the keyboard's binds drive the pad state)
-      if (pad_from_keys) dir = 0;
-      else if ((live & XINPUT_GAMEPAD_DPAD_UP) || ly > dz) dir = 1;
-      else if ((live & XINPUT_GAMEPAD_DPAD_DOWN) || ly < -dz) dir = 2;
-      else if ((live & XINPUT_GAMEPAD_DPAD_LEFT) || lx < -dz) dir = 3;
-      else if ((live & XINPUT_GAMEPAD_DPAD_RIGHT) || lx > dz) dir = 4;
-      const auto now = std::chrono::steady_clock::now();
       bool step = false;
-      if (dir != nav_dir_) { step = dir != 0; nav_next_ = now + std::chrono::milliseconds(350); }
-      else if (dir && now >= nav_next_) { step = true; nav_next_ = now + std::chrono::milliseconds(110); }
+      if (dir != nav_dir_) { step = dir != 0; nav_next_ = now + std::chrono::milliseconds(kRepeatDelayMs); }
+      else if (dir && now >= nav_next_) { step = true; nav_next_ = now + std::chrono::milliseconds(kRepeatMs); }
       nav_dir_ = dir;
       // keys repeat by themselves; menu3: WASD as the arrows
       if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || ImGui::IsKeyPressed(ImGuiKey_W, true)) nav_move_ = -1;
@@ -727,7 +744,10 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
         if (dir == 4) nav_adjust_ = 1;
       }
     } else {
-      nav_dir_ = 0;
+      // GitHub #483: a direction still held when our navigation takes over again (a list just closed, a slider left) was
+      // Dear ImGui's press - not a new one for us; it repeats after the delay like any held press
+      nav_dir_ = dir;
+      nav_next_ = now + std::chrono::milliseconds(kRepeatDelayMs);
     }
     // our own presses: LB / RB tabs, B / Start / Esc close (edge-triggered)
     WORD pressed = WORD(live & ~last_live_);
@@ -1075,6 +1095,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
 
   ImGuiConfigFlags saved_config_ = 0;
   ImGuiBackendFlags saved_backend_ = 0;
+  float saved_repeat_delay_ = 0, saved_repeat_rate_ = 0;   // GitHub #483: Dear ImGui's, put back on close
   XINPUT_GAMEPAD last_ = {};
   WORD held_at_open_ = 0, last_live_ = 0;
   int tab_ = 0;

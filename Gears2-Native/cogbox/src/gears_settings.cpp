@@ -455,7 +455,8 @@ std::vector<Option> make_options(Game g) {
                "Game's own: the original.", 0), "pcss");
     add(choice("Shake", "Camera shake (roadie run)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
                "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "iniedit", "", true);
-    add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,
+    // GitHub #483: steps of 1 (were 5) - the launcher's slider and the in-game menu's move by the step with the pad
+    add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 1, 100,
                "100 = the original. Widens (or narrows) every camera view by this much.", 374), "iniedit", "", true);
     // PR #43 (legoliamneeson): strict occlusion queries (--gow2_renderer_queries=strict), off by default in every game.
     // Per game, Gears 3 and Judgment only (where it was tried: walls hiding light flares); not in the preset.
