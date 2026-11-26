@@ -479,10 +479,12 @@ std::vector<Option> make_options(Game g) {
              "With Keyboard and mouse on, keep the game's controller button prompts instead of the key caps "
              "(for example when Steam Input sends a controller as keyboard and mouse).", 0));
     // GitHub #249: a manual button-prompt style (the runtime's --gow_button_prompts; auto could pick PlayStation for an
-    // Xbox pad when a Sony device was also connected).
+    // Xbox pad when a Sony device was also connected). Xbox One = the drawn Xbox glyphs ("xbox"); Original = the game's
+    // own Xbox 360 prompts, nothing drawn over them ("original"). Original is last: the saved value is the index.
     add(choice("PromptStyle", "Button prompt style", Tab::Controls, SH,
-               { "Automatic", "Xbox", "PlayStation", "Nintendo Switch", "Steam Deck" }, 0,
-               "Which controller's buttons the game shows. Automatic follows the controller in use.", 0));
+               { "Automatic", "Xbox One", "PlayStation", "Nintendo Switch", "Steam Deck", "Original" }, 0,
+               "Which controller's buttons the game shows. Automatic follows the controller in use; Original keeps "
+               "the game's own Xbox 360 prompts.", 0));
     // 0.2.0 (GitHub #2): up to 20 (was 5) - the mouse drives the right stick, so slow moves sat inside the game's stick
     // dead zone at 5. True mouse look (no stick limits) is planned.
     // 0.2.1: native mouse look - the value is the multiplier on the mouse counts (Shagg 15:59: 1.0 far too fast, 0.5
@@ -2795,8 +2797,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // GitHub #249: manual prompt style (Automatic = the runtime's auto, nothing passed). GitHub #443: a controller-only
     // player's choice too - it was sent with Keyboard and mouse on only, so without it every style showed Xbox's.
-    if (s.i("PromptStyle") > 0 && s.i("PromptStyle") <= 4 && cap_exe(env, "gow_button_prompts")) {
-        static const char* const k_prompt[5] = { "auto", "xbox", "playstation", "switch", "steamdeck" };   // 0.6.8: Xbox = "xbox" (drawn Xbox glyphs, starts the prompt monitor; "original" never did)
+    if (s.i("PromptStyle") > 0 && s.i("PromptStyle") <= 5 && cap_exe(env, "gow_button_prompts")) {
+        // 0.6.8: Xbox One = "xbox" (drawn Xbox glyphs, starts the prompt monitor); Original = "original" (the game's own
+        // prompts: the prompt monitor is never started)
+        static const char* const k_prompt[6] = { "auto", "xbox", "playstation", "switch", "steamdeck", "original" };
         a.push_back(std::string("--gow_button_prompts=") + k_prompt[s.i("PromptStyle")]);
     }
     // PS1 930-937: keyboard and mouse with the Gears layout
@@ -2853,9 +2857,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // GitHub #249: manual prompt style - sent above, with or without keyboard and mouse (GitHub #443)
         if (s.b("PadPrompts") && cap_exe(env, "gow_button_prompts_keep_pad"))
             a.push_back("--gow_button_prompts_keep_pad=true");
-        // GitHub #443: the Xbox style ("original": the game's own prompts, no prompt monitor) gets no key caps either -
-        // they were laid over the game's prompts from the start, so Xbox showed the keyboard's
-        const bool xboxStyle = s.i("PromptStyle") == 1 && cap_exe(env, "gow_button_prompts");
+        // GitHub #443: the Xbox One and Original styles get no key caps either - they were laid over the game's prompts
+        // from the start, so those styles showed the keyboard's (Original: the game's own Xbox 360 prompts)
+        const bool xboxStyle = (s.i("PromptStyle") == 1 || s.i("PromptStyle") == 5) && cap_exe(env, "gow_button_prompts");
         if (!isG1 && !s.b("PadPrompts") && !xboxStyle && !env.prompt_dir.empty() && cap_exe(env, "gow2_texture_overlay_dir")) {
             // Job 661 (Shagg 30 Oct: "make those prompts higher resolution"): the launcher draws the key caps itself, 4x the
             // sheet's size and for the player's own keys too (job 660); without it, the shipped default-key overlays.
@@ -3097,7 +3101,7 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         // 0.4.9 batch 2: Vsync live on DirectX 12 only; frame generation only when AMD FSR's swap chain was made at start
         // (DirectX 12). Both read build_args' own result, so a fallback (no DLL, Vulkan) counts as what really runs.
         if (std::string(spec.id) == "Vsync" && runs_vulkan(s, env)) continue;
-        // the prompt monitor isn't started at all with "original" (the Xbox choice): from there it needs the restart
+        // the prompt monitor isn't started at all with "original" (the Original choice): from there it needs the restart
         if (std::string(spec.id) == "PromptStyle") {
             bool original = false;
             std::string v;
