@@ -59,6 +59,7 @@ struct Environment {
     std::string online_region;      // the region chosen in the SOCIAL tab ("" = Any region)
     std::string online_server;      // social step 3: the multiplayer server when enabled ("" = offline profiles)
     std::string online_stun;        // its STUN address (host:3478)
+    bool social_notify_online = true, social_notify_playing = true;   // GitHub #485: the friends' in-game pop-ups
     std::string shader_cache_dir;   // --gow2_shader_cache_dir (every game; Gears 2 since #58)
     std::string log_dir;            // this play session's folder (--log_file, --gow2_crash_dir, {LOG} in extra args)
     char path_sep = '\\';           // used to join log_dir with the log file's name

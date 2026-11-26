@@ -1633,3 +1633,9 @@ The output device you chose is not plugged in at the moment - the game uses the 
 Ask before closing COGBox = Pytaj przed zamknięciem COGBox
 EXIT, Esc and Start on the library ask "Close COGBox?" first. Off: they close COGBox at once. While a game is running COGBox can't be closed from there either way. = WYJŚCIE, Esc i Start w bibliotece najpierw pytają "Zamknąć COGBox?". Wyłączone: zamykają COGBox od razu. Gdy gra jest uruchomiona, COGBox i tak nie da się stamtąd zamknąć.
 The game allows two local players only. = Gra pozwala tylko na dwóch graczy lokalnych.
+Camera shake (walking) = Drżenie kamery (chodzenie)
+Notify me when a friend comes online = Powiadamiaj, gdy znajomy będzie online
+A pop-up in the game when a friend comes online. Invites and friend requests always show. Takes effect the next time a game starts. = Powiadomienie w grze, gdy znajomy pojawi się online. Zaproszenia do gry i prośby o dodanie do znajomych są zawsze pokazywane. Działa od następnego uruchomienia gry.
+Notify me when a friend starts a game = Powiadamiaj, gdy znajomy uruchomi grę
+A pop-up in the game when a friend starts playing. Invites and friend requests always show. Takes effect the next time a game starts. = Powiadomienie w grze, gdy znajomy zacznie grać. Zaproszenia do gry i prośby o dodanie do znajomych są zawsze pokazywane. Działa od następnego uruchomienia gry.
+The camera sway while walking or standing still (the camera follows the character's body), and the small extra shake in combat (also while roadie-running). Less halves the game's own; Off removes it. Roadie run has its own option. = Kołysanie kamery podczas chodzenia i stania (kamera podąża za ciałem postaci) oraz niewielkie dodatkowe drżenie w walce (także podczas biegu roadie). Mniejsze zmniejsza o połowę kołysanie z gry; Wył. je usuwa. Bieg roadie ma własną opcję.

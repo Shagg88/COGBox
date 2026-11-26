@@ -15,6 +15,7 @@
 
 #include <imgui.h>
 
+#include <rex/cvar.h>
 #include <rex/kernel/xam/net/host_ban.h>
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/imgui_drawer.h>
@@ -25,6 +26,10 @@
 #include <xenos/dev_tools.h>          // XenosInGameMenuIsOpen
 #include <xenos/social_ingame.h>
 #include <xenos/ui_lang.h>
+
+// GitHub #485: COGBox's SOCIAL tab can turn the friends' presence pop-ups off (invites and requests always show)
+REXCVAR_DEFINE_BOOL(cogbox_social_notify_online, true, "COGBox", "Social: a pop-up when a friend comes online");
+REXCVAR_DEFINE_BOOL(cogbox_social_notify_playing, true, "COGBox", "Social: a pop-up when a friend starts a game");
 
 namespace {
 constexpr float kSlideSeconds = 0.3f, kShowSeconds = 5.f, kLongShowSeconds = 8.f;
@@ -172,6 +177,8 @@ void XenosPumpSocialPopup() {
   const auto now = std::chrono::steady_clock::now();
   if (now - g_last_pump < std::chrono::seconds(1)) return;
   g_last_pump = now;
-  for (const SocialEvent& ev : XenosSocialTakeEvents()) g_popup->Push(ev);
+  for (const SocialEvent& ev : XenosSocialTakeEvents())
+    if (social_event_wanted(ev, REXCVAR_GET(cogbox_social_notify_online), REXCVAR_GET(cogbox_social_notify_playing)))
+      g_popup->Push(ev);
   if (const int minutes = rex::kernel::xam::net::TakeHostBanNotice()) g_popup->PushHostBan(minutes);
 }

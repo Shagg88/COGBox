@@ -321,6 +321,21 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
                             { tr("No"), tr("Yes, delete") });
                     ui_tip("Removes this profile's account from the COGBox multiplayer server and turns online play off.");
                 }
+                // GitHub #485: the friends' in-game pop-ups (invites and friend requests always show)
+                bool n_on = a.ini.get("Online", "NotifyOnline", "1") == "1";
+                if (ImGui::Checkbox(tr("Notify me when a friend comes online"), &n_on)) {
+                    a.ini.seti("Online", "NotifyOnline", n_on ? 1 : 0);
+                    a.ini.save();
+                }
+                ui_tip("A pop-up in the game when a friend comes online. Invites and friend requests always show. "
+                       "Takes effect the next time a game starts.");
+                bool n_play = a.ini.get("Online", "NotifyPlaying", "1") == "1";
+                if (ImGui::Checkbox(tr("Notify me when a friend starts a game"), &n_play)) {
+                    a.ini.seti("Online", "NotifyPlaying", n_play ? 1 : 0);
+                    a.ini.save();
+                }
+                ui_tip("A pop-up in the game when a friend starts playing. Invites and friend requests always show. "
+                       "Takes effect the next time a game starts.");
             }
         }
         if (side != 0 && on) {
