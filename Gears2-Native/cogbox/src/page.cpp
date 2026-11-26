@@ -1216,11 +1216,16 @@ static void option_row(App &a, int g, const gs::Option &o)
         break;
     }
     case gs::Kind::Int: {
-        int iv = (int)lround(v);
-        if (ImGui::SliderInt("##v", &iv, (int)o.min, (int)o.max)) {
-            int st = std::max(1, (int)o.step);
-            iv = (int)o.min + (int)lround((iv - o.min) / st) * st;
-            nv = iv; changed = true;
+        // GitHub #483: a slider over the option's own steps, as for Float (and the in-game menu's menu5). It was a slider
+        // over every integer, snapped to the step afterwards - a D-pad / key nudge moved it by 1 (100 -> 101), which the
+        // snap put straight back, so a stepped one (Field of view, sensitivities, HDR nits) never moved with the pad.
+        const int st = std::max(1, (int)o.step);
+        const int steps = std::max(1, (int)((o.max - o.min) / st));
+        int k = std::max(0, std::min(steps, (int)lround((v - o.min) / st)));
+        char fmt[24];
+        snprintf(fmt, sizeof fmt, "%d", (int)lround(v));   // the value itself (a default between two steps shows as it is)
+        if (ImGui::SliderInt("##v", &k, 0, steps, fmt)) {
+            nv = o.min + std::max(0, std::min(steps, k)) * st; changed = true;
         }
         break;
     }
