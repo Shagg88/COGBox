@@ -1810,8 +1810,8 @@ Judgment's controller buttons laid out as in Gears of War 1, 2 and 3: D-pad up t
 Experimental - how the screen is split for 2 players. Side by side suits ultrawide monitors. = Kísérleti – hogyan oszlik meg a képernyő 2 játékos esetén. Az Egymás mellett ultraszéles monitorokhoz illik.
 Gears 2: side by side from the start. = Gears 2: az elejétől egymás mellett.
 Camera shake (walking) = Kamerarázkódás (séta)
-The camera sway while walking or standing still (the camera follows the character's body). Less halves the game's own; Off removes it. Roadie run has its own option. = A kamera imbolygása séta és állás közben (a kamera követi a karakter testét). A Kevesebb a felére csökkenti a játék sajátját; a Ki megszünteti. A roadie runnak külön beállítása van.
 Notify me when a friend comes online = Értesíts, ha egy barátom online lesz
 A pop-up in the game when a friend comes online. Invites and friend requests always show. Takes effect the next time a game starts. = Értesítés a játékban, ha egy barátod online lesz. A meghívások és a barátkérések mindig megjelennek. A játék következő indításától érvényes.
 Notify me when a friend starts a game = Értesíts, ha egy barátom elindít egy játékot
 A pop-up in the game when a friend starts playing. Invites and friend requests always show. Takes effect the next time a game starts. = Értesítés a játékban, ha egy barátod játszani kezd. A meghívások és a barátkérések mindig megjelennek. A játék következő indításától érvényes.
+The camera sway while walking or standing still (the camera follows the character's body), and the small extra shake in combat (also while roadie-running). Less halves the game's own; Off removes it. Roadie run has its own option. = A kamera imbolygása séta és állás közben (a kamera követi a karakter testét), és a kis extra rázkódás harc közben (roadie run közben is). A Kevesebb a felére csökkenti a játék sajátját; a Ki megszünteti. A roadie runnak külön beállítása van.

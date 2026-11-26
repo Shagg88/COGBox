@@ -460,11 +460,13 @@ std::vector<Option> make_options(Game g) {
     // OXMShakyCamDampeningFactor x (AlphaWhenIdle up to 1 with the pawn's speed) + InCombatAlphaBonus, so the factor
     // is the share of the bone's motion kept (smaller = less shake). Less halves both terms (half the shake); Off zeroes
     // them. The combat bonus is also added on roadie run, so this nudges that shake in combat a little too. The keys
-    // are in the camera bone's own section in all four games (factor 0.15 in Gears 1 / 2, 0.125 in Gears 3 / Judgment,
-    // whose roadie-run factor moved to GearPawn); Gears 1's and Judgment's code was not read (same keys, same class).
+    // are in the camera bone's own section in all four games (factor 0.15 and bonus 0.1 in Gears 1 / 2, 0.125 and 0.05
+    // in Gears 3 / Judgment, whose roadie-run factor moved to GearPawn); Gears 1's and Judgment's code was not read
+    // (same keys, same class).
     add(choice("ShakeWalk", "Camera shake (walking)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
-               "The camera sway while walking or standing still (the camera follows the character's body). Less halves "
-               "the game's own; Off removes it. Roadie run has its own option.", 0), "iniedit");
+               "The camera sway while walking or standing still (the camera follows the character's body), and the "
+               "small extra shake in combat (also while roadie-running). Less halves the game's own; Off removes it. "
+               "Roadie run has its own option.", 0), "iniedit");
     add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,
                "100 = the original. Widens (or narrows) every camera view by this much.", 374), "iniedit", "", true);
     // PR #43 (legoliamneeson): strict occlusion queries (--gow2_renderer_queries=strict), off by default in every game.
@@ -776,6 +778,9 @@ bool cap_exe(const Environment& e, const std::string& n) {
     // Discord 16 Nov (Horde bots greyed in Gears 2 on 0.6.3): 0.6.3's gow2.exe has no "gow2_horde_bots" text either - the
     // start of its description is searched (the 0.6.3 exe has it)
     if (n == "gow2_horde_bots" && e.cap.exe_has && e.cap.exe_has("GitHub #237 (francoissubke-blip's tip")) return true;
+    // GitHub #485: the social pop-up switches by their descriptions as well (the same in all four games)
+    if (n == "cogbox_social_notify_online" && e.cap.exe_has && e.cap.exe_has("Social: a pop-up when a friend comes online")) return true;
+    if (n == "cogbox_social_notify_playing" && e.cap.exe_has && e.cap.exe_has("Social: a pop-up when a friend starts a game")) return true;
     // review 20 Nov: "gow2_ao_half" is as short as those - the start of its description is searched as well
     if (n == "gow2_ao_half" && e.cap.exe_has && e.cap.exe_has("XeGTAO at half resolution (test, Shagg 20 Nov)")) return true;
     // review 20 Nov: the native HDR switches of Judgment and Gears 1 are 15-letter names too
@@ -2445,7 +2450,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             const std::string sec = isG1 ? "WarCamera.ini|WarfareGame.WarCamMod_CameraBone|" : "GearCamera.ini|GearGame.GearCamMod_CameraBone|";
             ini.push_back(sec + "bOXMShakyCamDampening=true");
             ini.push_back(sec + "OXMShakyCamDampeningFactor" + k_shakeValue[sw]);
-            ini.push_back(sec + "InCombatAlphaBonus" + k_shakeValue[sw]);   // Judgment has none: Less leaves it, Off adds a 0
+            ini.push_back(sec + "InCombatAlphaBonus" + k_shakeValue[sw]);   // the extra in combat (also on roadie run)
         }
         const int db = std::max(0, std::min(2, s.i("DeadBodies")));
         if (avail("DeadBodies") && db > 0) {   // GitHub #306: the corpse count cap (a config property in every game)

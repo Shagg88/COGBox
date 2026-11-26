@@ -549,18 +549,20 @@ int summary() {
         for (const std::string& x : c) if (x.rfind("--net_region", 0) == 0) { std::cout << "FAIL region arg for Any\n"; ++fails; }
     }
     // GitHub #485: a friends' pop-up turned off in the SOCIAL tab is sent off (online, an exe with the switch); on: nothing
-    for (int mask = 0; mask < 8; ++mask) {
-        const bool online = mask & 1, notifyOn = mask & 2, notifyPlay = mask & 4;
+    // (an exe found only by the switches' descriptions counts; an older exe without them gets no flags)
+    for (int mask = 0; mask < 16; ++mask) {
+        const bool online = mask & 1, notifyOn = mask & 2, notifyPlay = mask & 4, exeHas = mask & 8;
         Environment e; e.update_ready = true;
-        e.cap.exe_has = [](const std::string&) { return true; };
-        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        e.cap.runtime_has = [](const std::string&) { return true; }; e.cap.file_next_to_exe = e.cap.runtime_has;
+        if (exeHas) e.cap.exe_has = [](const std::string& k) { return k.rfind("cogbox_social_notify", 0) != 0; };
+        else e.cap.exe_has = [](const std::string& k) { return k.find("friend") == std::string::npos && k.rfind("cogbox_social", 0) != 0; };
         if (online) { e.online_server = "http://1.2.3.4:18443"; e.online_stun = "1.2.3.4:3478"; }
         e.social_notify_online = notifyOn; e.social_notify_playing = notifyPlay;
         Store st; Settings s = st.view(Game::Gears2, e);
         const std::vector<std::string> a = build_args(Game::Gears2, Version::TitleUpdate, s, e, nullptr);
         const bool o = std::find(a.begin(), a.end(), "--cogbox_social_notify_online=false") != a.end();
         const bool p = std::find(a.begin(), a.end(), "--cogbox_social_notify_playing=false") != a.end();
-        if (o != (online && !notifyOn) || p != (online && !notifyPlay)) { std::cout << "FAIL social notify args (" << mask << ")\n"; ++fails; }
+        if (o != (exeHas && online && !notifyOn) || p != (exeHas && online && !notifyPlay)) { std::cout << "FAIL social notify args (" << mask << ")\n"; ++fails; }
     }
     // Network rates: online, Gears 2 / 3 / Judgment get 100000 B/s and a 60 Hz host in their own engine ini; offline none
     for (Game g : { Game::Gears2, Game::Gears3, Game::Judgment }) {
@@ -581,6 +583,23 @@ int summary() {
                 all = all && ini.find(ei + k) != std::string::npos;
             const bool any = ini.find("MaxInternetClientRate") != std::string::npos;
             if (on ? !all : any) { std::cout << "FAIL net rates for game " << static_cast<int>(g) << " (" << (on ? "on" : "off") << ")\n"; ++fails; }
+        }
+    }
+    // GitHub #474: with both shake options on, Gears 1 / 2 get both edits (the same camera-bone section)
+    for (Game g : { Game::Gears1, Game::Gears2 }) {
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        Store st; Settings s = st.view(g, e);
+        s.set("Shake", 2); s.set("ShakeWalk", 1);
+        std::string ini;
+        for (const std::string& x : build_args(g, Version::TitleUpdate, s, e, nullptr))
+            if (x.rfind("--ue3_ini_edits=", 0) == 0) ini = x;
+        const std::string sec = g == Game::Gears1 ? "WarCamera.ini|WarfareGame.WarCamMod_CameraBone|" : "GearCamera.ini|GearGame.GearCamMod_CameraBone|";
+        if (ini.find(sec + "RoadieRunShakyCamDampeningFactor=0") == std::string::npos ||
+            ini.find(sec + "OXMShakyCamDampeningFactor*=0.5") == std::string::npos ||
+            ini.find(sec + "InCombatAlphaBonus*=0.5") == std::string::npos) {
+            std::cout << "FAIL both shake options for game " << static_cast<int>(g) << ": " << ini << "\n"; ++fails;
         }
     }
     // GitHub #474: Camera shake (walking) edits the camera bone's section in each game (Gears 1 WarCamera.ini); Original none
