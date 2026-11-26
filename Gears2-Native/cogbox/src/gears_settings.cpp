@@ -2036,6 +2036,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         a.insert(a.end(), { "--net_online=true", "--net_live_emulation=true", "--net_master_server=" + q(env.online_server) });
         if (!env.online_stun.empty()) a.push_back("--net_stun_server=" + env.online_stun);
         if (!env.online_region.empty() && cap_rt(env, "net_region")) a.push_back("--net_region=" + env.online_region);
+        // GitHub #485: the friends' pop-ups the player turned off (only an exe that has the switches)
+        if (!env.social_notify_online && cap_exe(env, "cogbox_social_notify_online")) a.push_back("--cogbox_social_notify_online=false");
+        if (!env.social_notify_playing && cap_exe(env, "cogbox_social_notify_playing")) a.push_back("--cogbox_social_notify_playing=false");
     }
     // social step 4: Gears 3 TU6's UE3 GNames / GEngine variables, for the runtime's private match fixes (a friend can
     // join the pregame lobby); the runtime checks the script bytecode before it changes anything

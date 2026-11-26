@@ -183,6 +183,12 @@ std::vector<SocialEvent> social_events(const SocialLists& before, const std::vec
     return out;
 }
 
+bool social_event_wanted(const SocialEvent& e, bool came_online, bool started_playing) {
+    if (e.kind == SocialEventKind::CameOnline) return came_online;
+    if (e.kind == SocialEventKind::StartedPlaying) return started_playing;
+    return true;
+}
+
 bool friends_changed(const SocialLists& before, const SocialLists& after) {
     if (before.friends.size() != after.friends.size()) return true;
     for (size_t i = 0; i < after.friends.size(); ++i) {

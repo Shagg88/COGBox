@@ -192,6 +192,16 @@ int main() {
         ev = social_events(off, ib, b, ib, 1000 + 300000 + 100000, st);
         CHECK(ev.size() == 1 && ev[0].kind == SocialEventKind::CameOnline);
     }
+    // GitHub #485: the friends' presence pop-ups can be turned off one by one; the rest always show
+    {
+        const SocialEvent online{ SocialEventKind::CameOnline, "Dom#0002", "", "" };
+        const SocialEvent playing{ SocialEventKind::StartedPlaying, "Dom#0002", "4D53082D", "" };
+        CHECK(social_event_wanted(online, true, true) && social_event_wanted(playing, true, true));
+        CHECK(!social_event_wanted(online, false, true) && social_event_wanted(playing, false, true));
+        CHECK(social_event_wanted(online, true, false) && !social_event_wanted(playing, true, false));
+        for (SocialEventKind k : { SocialEventKind::Invite, SocialEventKind::Request, SocialEventKind::RequestAccepted })
+            CHECK(social_event_wanted({ k, "Dom#0002", "", "" }, false, false));
+    }
     // Flippage 8 Nov: the friend you asked accepted - a pop-up; any other new friend stays quiet
     {
         SocialEventState st;

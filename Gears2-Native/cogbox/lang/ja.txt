@@ -1638,3 +1638,7 @@ EXIT, Esc and Start on the library ask "Close COGBox?" first. Off: they close CO
 The game allows two local players only. = このゲームのローカルプレイヤーは 2 人までです。
 Camera shake (walking) = カメラの揺れ（歩行）
 The camera sway while walking or standing still (the camera follows the character's body). Less halves the game's own; Off removes it. Roadie run has its own option. = 歩行中や立ち止まっているときのカメラの揺れ（カメラがキャラクターの体の動きに追従します）。少なめはゲーム本来の揺れを半分にし、オフは揺れをなくします。ロードランニングには別の設定があります。
+Notify me when a friend comes online = フレンドがオンラインになったら通知する
+A pop-up in the game when a friend comes online. Invites and friend requests always show. Takes effect the next time a game starts. = フレンドがオンラインになったときにゲーム内でポップアップを表示します。招待とフレンド申請は常に表示されます。次にゲームを起動したときから有効です。
+Notify me when a friend starts a game = フレンドがゲームを始めたら通知する
+A pop-up in the game when a friend starts playing. Invites and friend requests always show. Takes effect the next time a game starts. = フレンドがプレイを始めたときにゲーム内でポップアップを表示します。招待とフレンド申請は常に表示されます。次にゲームを起動したときから有効です。

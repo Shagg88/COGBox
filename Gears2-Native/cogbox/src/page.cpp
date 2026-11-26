@@ -215,6 +215,8 @@ void env_refresh(App &a, int g)
     e.online_server = a.ini.get("Online", "Enabled") == "1" ? a.ini.get("Online", "Server", kCogboxServer) : std::string();
     e.online_stun = stun_address(e.online_server);
     e.online_region = e.online_server.empty() ? std::string() : region_or_default(a.ini.get("Online", "Region"), local_utc_minutes());
+    e.social_notify_online = a.ini.get("Online", "NotifyOnline", "1") == "1";     // GitHub #485
+    e.social_notify_playing = a.ini.get("Online", "NotifyPlaying", "1") == "1";
     e.shader_cache_dir = game_shader_dir(g);
     {   // 0.6.4 (GitHub #341): the texture cache's Auto size depends on the card's video memory (read once)
         static unsigned s_vram = ~0u;

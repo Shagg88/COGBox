@@ -1638,3 +1638,7 @@ EXIT, Esc and Start on the library ask "Close COGBox?" first. Off: they close CO
 The game allows two local players only. = 이 게임은 로컬 플레이어를 두 명까지만 허용합니다.
 Camera shake (walking) = 카메라 흔들림 (걷기)
 The camera sway while walking or standing still (the camera follows the character's body). Less halves the game's own; Off removes it. Roadie run has its own option. = 걷거나 서 있을 때의 카메라 흔들림 (카메라가 캐릭터의 몸을 따라갑니다). 적게는 게임 원래의 흔들림을 절반으로 줄이고, 끔은 없앱니다. 로디 런은 별도의 옵션이 있습니다.
+Notify me when a friend comes online = 친구가 온라인이 되면 알림
+A pop-up in the game when a friend comes online. Invites and friend requests always show. Takes effect the next time a game starts. = 친구가 온라인이 되면 게임 안에 팝업을 표시합니다. 초대와 친구 요청은 항상 표시됩니다. 다음에 게임을 시작할 때부터 적용됩니다.
+Notify me when a friend starts a game = 친구가 게임을 시작하면 알림
+A pop-up in the game when a friend starts playing. Invites and friend requests always show. Takes effect the next time a game starts. = 친구가 플레이를 시작하면 게임 안에 팝업을 표시합니다. 초대와 친구 요청은 항상 표시됩니다. 다음에 게임을 시작할 때부터 적용됩니다.

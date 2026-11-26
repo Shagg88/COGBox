@@ -1636,3 +1636,7 @@ EXIT, Esc and Start on the library ask "Close COGBox?" first. Off: they close CO
 The game allows two local players only. = Le jeu n'autorise que deux joueurs locaux.
 Camera shake (walking) = Tremblement de la caméra (marche)
 The camera sway while walking or standing still (the camera follows the character's body). Less halves the game's own; Off removes it. Roadie run has its own option. = Le balancement de la caméra en marchant ou à l'arrêt (la caméra suit le corps du personnage). Moins réduit de moitié celui du jeu ; Désactivé le supprime. La course de roadie a sa propre option.
+Notify me when a friend comes online = M'avertir quand un ami se connecte
+A pop-up in the game when a friend comes online. Invites and friend requests always show. Takes effect the next time a game starts. = Une notification en jeu quand un ami se connecte. Les invitations et les demandes d'ami s'affichent toujours. Prend effet au prochain lancement d'un jeu.
+Notify me when a friend starts a game = M'avertir quand un ami lance un jeu
+A pop-up in the game when a friend starts playing. Invites and friend requests always show. Takes effect the next time a game starts. = Une notification en jeu quand un ami commence à jouer. Les invitations et les demandes d'ami s'affichent toujours. Prend effet au prochain lancement d'un jeu.

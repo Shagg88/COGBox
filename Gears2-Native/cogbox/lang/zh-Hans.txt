@@ -1638,3 +1638,7 @@ EXIT, Esc and Start on the library ask "Close COGBox?" first. Off: they close CO
 The game allows two local players only. = 该游戏只允许两名本地玩家。
 Camera shake (walking) = 镜头抖动(行走)
 The camera sway while walking or standing still (the camera follows the character's body). Less halves the game's own; Off removes it. Roadie run has its own option. = 行走或站立时的镜头晃动(镜头跟随角色身体移动)。较少将游戏原有的晃动减半;关则将其去除。冲刺奔跑有单独的选项。
+Notify me when a friend comes online = 好友上线时通知我
+A pop-up in the game when a friend comes online. Invites and friend requests always show. Takes effect the next time a game starts. = 好友上线时在游戏中显示弹窗。邀请和好友请求始终显示。下次启动游戏时生效。
+Notify me when a friend starts a game = 好友开始游戏时通知我
+A pop-up in the game when a friend starts playing. Invites and friend requests always show. Takes effect the next time a game starts. = 好友开始游戏时在游戏中显示弹窗。邀请和好友请求始终显示。下次启动游戏时生效。

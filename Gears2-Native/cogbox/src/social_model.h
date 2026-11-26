@@ -152,3 +152,6 @@ struct SocialEventState {
 std::vector<SocialEvent> social_events(const SocialLists& before, const std::vector<SocialInvite>& inv_before,
                                        const SocialLists& after, const std::vector<SocialInvite>& inv_after,
                                        int64_t now_ms, SocialEventState& st);
+// GitHub #485: false for a friend's "came online" / "started a game" pop-up the player turned off in the SOCIAL tab.
+// Invites, requests and an accepted request are addressed to the player and always show.
+bool social_event_wanted(const SocialEvent& e, bool came_online, bool started_playing);

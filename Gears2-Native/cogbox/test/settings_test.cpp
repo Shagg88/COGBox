@@ -548,6 +548,20 @@ int summary() {
         const std::vector<std::string> c = build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr);
         for (const std::string& x : c) if (x.rfind("--net_region", 0) == 0) { std::cout << "FAIL region arg for Any\n"; ++fails; }
     }
+    // GitHub #485: a friends' pop-up turned off in the SOCIAL tab is sent off (online, an exe with the switch); on: nothing
+    for (int mask = 0; mask < 8; ++mask) {
+        const bool online = mask & 1, notifyOn = mask & 2, notifyPlay = mask & 4;
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        if (online) { e.online_server = "http://1.2.3.4:18443"; e.online_stun = "1.2.3.4:3478"; }
+        e.social_notify_online = notifyOn; e.social_notify_playing = notifyPlay;
+        Store st; Settings s = st.view(Game::Gears2, e);
+        const std::vector<std::string> a = build_args(Game::Gears2, Version::TitleUpdate, s, e, nullptr);
+        const bool o = std::find(a.begin(), a.end(), "--cogbox_social_notify_online=false") != a.end();
+        const bool p = std::find(a.begin(), a.end(), "--cogbox_social_notify_playing=false") != a.end();
+        if (o != (online && !notifyOn) || p != (online && !notifyPlay)) { std::cout << "FAIL social notify args (" << mask << ")\n"; ++fails; }
+    }
     // Network rates: online, Gears 2 / 3 / Judgment get 100000 B/s and a 60 Hz host in their own engine ini; offline none
     for (Game g : { Game::Gears2, Game::Gears3, Game::Judgment }) {
         for (int on = 0; on <= 1; ++on) {
