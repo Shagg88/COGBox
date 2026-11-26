@@ -1148,15 +1148,20 @@ static void side_stop_note()   // after an enabled option's control (the last it
     const ImGuiContext &gc = *ImGui::GetCurrentContext();
     if (g_sideStopsFrame != ImGui::GetFrameCount()) { g_sideStops.clear(); g_sideStopsFrame = ImGui::GetFrameCount(); }
     const ImGuiLastItemData &it = gc.LastItemData;
-    if (it.ID && !(it.ItemFlags & (ImGuiItemFlags_Disabled | ImGuiItemFlags_NoNav)))
+    if (it.ID && !(it.ItemFlags & (ImGuiItemFlags_Disabled | ImGuiItemFlags_NoNav)) && (g_sideStops.empty() || g_sideStops.back().id != it.ID))
         g_sideStops.push_back({ it.ID, gc.CurrentWindow, it.NavRect });
 }
-static void side_stop_fallback()   // after the rows: a left / right move that found no item
+static void side_stop_fallback(bool modal)   // after the rows: a left / right move that found no item
 {
     ImGuiContext &gc = *ImGui::GetCurrentContext();
     const ImGuiDir dir = gc.NavMoveDir;
-    if (g_sideStopsFrame != ImGui::GetFrameCount() || !gc.NavWindow || (dir != ImGuiDir_Left && dir != ImGuiDir_Right) ||
+    if (g_sideStopsFrame != ImGui::GetFrameCount() || g_sideStops.empty() || !gc.NavWindow || (dir != ImGuiDir_Left && dir != ImGuiDir_Right) ||
         !ImGui::NavMoveRequestButNoResultYet())
+        return;
+    // review: only a move on the page's own rows - not in an open list, a question box (a.modal, drawn after the page)
+    // or any other popup, whose focus must stay where it is
+    if (modal || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || (gc.NavWindow->Flags & ImGuiWindowFlags_Popup) ||
+        gc.NavWindow->RootWindowForNav != g_sideStops.front().win->RootWindowForNav)
         return;
     const ImRect cur = ImGui::WindowRectRelToAbs(gc.NavWindow, gc.NavWindow->NavRectRel[gc.NavLayer]);
     const SideStop *best = nullptr;
@@ -1165,12 +1170,25 @@ static void side_stop_fallback()   // after the rows: a left / right move that f
         const float dx = dir == ImGuiDir_Right ? s.r.Min.x - cur.Max.x : cur.Min.x - s.r.Max.x;
         if (s.id == gc.NavId || dx < 0) continue;
         const float d = dx + fabsf((s.r.Min.y + s.r.Max.y) - (cur.Min.y + cur.Max.y)) * 0.5f;
-        if (d < bestD) { bestD = d; best = &s; }
+        if (d < bestD) { bestD = d; best = &s; }   // a tie (one row above, one below) keeps the first noted: the upper one
     }
     if (!best) return;
     ImGui::SetFocusID(best->id, best->win);
     ImGui::SetNavCursorVisible(true);
     ImGui::ScrollToRectEx(best->win, best->r, ImGuiScrollFlags_KeepVisibleEdgeX | ImGuiScrollFlags_KeepVisibleEdgeY);
+}
+
+// GitHub #483: the slider just drawn moved from v to x - put x on the option's step grid (from mn). A D-pad / key
+// nudge (smaller than a step: 100 -> 101) goes on to the next step that way; a drag or a typed value (Ctrl+click,
+// Enter) to the nearest step, as before (a drag snapped toward its move would flip between two steps every frame).
+static double step_snap(double x, double v, double mn, double mx, double st)
+{
+    const ImGuiContext &gc = *ImGui::GetCurrentContext();
+    const ImGuiID id = ImGui::GetItemID();
+    const bool nudge = gc.ActiveId == id && gc.ActiveIdSource != ImGuiInputSource_Mouse && !ImGui::TempInputIsActive(id);
+    const double at = (x - mn) / st;
+    const double k = !nudge ? std::round(at) : x > v ? std::ceil(at - 1e-9) : std::floor(at + 1e-9);
+    return std::max(mn, std::min(mx, mn + k * st));
 }
 
 static void option_row(App &a, int g, const gs::Option &o)
@@ -1254,29 +1272,22 @@ static void option_row(App &a, int g, const gs::Option &o)
         break;
     }
     case gs::Kind::Int: {
-        // GitHub #483: a slider over the option's own steps, as for Float (and the in-game menu's menu5). It was a slider
-        // over every integer, snapped to the step afterwards - a D-pad / key nudge moved it by 1 (100 -> 101), which the
-        // snap put straight back, so a stepped one (Field of view, sensitivities, HDR nits) never moved with the pad.
-        const int st = std::max(1, (int)o.step);
-        const int steps = std::max(1, (int)((o.max - o.min) / st));
-        int k = std::max(0, std::min(steps, (int)lround((v - o.min) / st)));
-        char fmt[24];
-        snprintf(fmt, sizeof fmt, "%d", (int)lround(v));   // the value itself (a default between two steps shows as it is)
-        if (ImGui::SliderInt("##v", &k, 0, steps, fmt)) {
-            nv = o.min + std::max(0, std::min(steps, k)) * st; changed = true;
-        }
+        // GitHub #483: a slider over the values themselves (so a typed value - Ctrl+click, Enter - is the value), put on
+        // the option's step by step_snap. It used to snap to the nearest step: a D-pad / key nudge moved it by 1 (100 ->
+        // 101), which the snap put straight back, so a stepped one (sensitivities, HDR nits) never moved with the pad.
+        int iv = (int)lround(v);
+        if (ImGui::SliderInt("##v", &iv, (int)o.min, (int)o.max)) { nv = step_snap(iv, v, o.min, o.max, std::max(1.0, o.step)); changed = true; }
         break;
     }
     case gs::Kind::Float: {
-        // 0.2.1 (Shagg 16:41): moves in the option's own steps (0.05 for the mouse), with the mouse, keys and pad -
-        // an integer slider over the steps, showing the value
-        const double st = o.step > 0 ? o.step : 0.1;
-        const int steps = std::max(1, (int)std::lround((o.max - o.min) / st));
-        int k = std::max(0, std::min(steps, (int)std::lround((v - o.min) / st)));
-        char fmt[24];
-        snprintf(fmt, sizeof fmt, "%.*f", std::max(0, o.decimals), o.min + k * st);
-        if (ImGui::SliderInt("##v", &k, 0, steps, fmt)) {
-            nv = o.min + std::max(0, std::min(steps, k)) * st; changed = true;
+        // 0.2.1 (Shagg 16:41): moves in the option's own steps (0.05 for the mouse), with the mouse, keys and pad.
+        // GitHub #483 review: a slider over the values (it was an integer slider over the steps, so a typed value was
+        // read as a step number), put on the step by step_snap.
+        double x = v;
+        char fmt[16];
+        snprintf(fmt, sizeof fmt, "%%.%df", std::max(0, o.decimals));
+        if (ImGui::SliderScalar("##v", ImGuiDataType_Double, &x, &o.min, &o.max, fmt)) {
+            nv = step_snap(x, v, o.min, o.max, o.step > 0 ? o.step : 0.1); changed = true;
         }
         break;
     }
@@ -1403,6 +1414,7 @@ static void option_row(App &a, int g, const gs::Option &o)
         };
         ImGui::InputTextWithHint("##t", "e.g. 26.10.20.30, 26.10.20.31", buf, (size_t)cap, ImGuiInputTextFlags_CallbackCharFilter,
                                  filter, (void *)&o);
+        if (av.ok) side_stop_note();   // GitHub #479: the box itself (a note may follow it)
         if (ImGui::IsItemActive()) editing = me;
         if (ImGui::IsItemDeactivated()) {
             editing = 0;
@@ -2337,7 +2349,7 @@ void page_draw(App &a, ImVec2 size)
     } else if (a.tab == k_tabSocial) social_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // social step 3
     else if (a.tab == k_tabMods) mods_tab(a, g);
     else about_tab(a, g);
-    side_stop_fallback();   // GitHub #479: left / right next to a greyed row
+    side_stop_fallback(a.modal.open);   // GitHub #479: left / right next to a greyed row
     ImGui::PopFont();
     ImGui::EndChild();
 

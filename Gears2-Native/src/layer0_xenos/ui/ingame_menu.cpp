@@ -563,7 +563,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     saved_backend_ = io.BackendFlags;
     saved_repeat_delay_ = io.KeyRepeatDelay;   // GitHub #483 (FeedPad)
     saved_repeat_rate_ = io.KeyRepeatRate;
-    io.ConfigFlags |=ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard;
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     std::lock_guard<std::mutex> l(g_pad_mutex);
     last_ = g_pad;  // buttons already down (the Back + Start that opened us) count only after a release
@@ -1095,7 +1095,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
 
   ImGuiConfigFlags saved_config_ = 0;
   ImGuiBackendFlags saved_backend_ = 0;
-  float saved_repeat_delay_ = 0.275f, saved_repeat_rate_ = 0.050f;   // GitHub #483: Dear ImGui's, put back on close
+  float saved_repeat_delay_ = 0, saved_repeat_rate_ = 0;   // GitHub #483: Dear ImGui's, put back on close
   XINPUT_GAMEPAD last_ = {};
   WORD held_at_open_ = 0, last_live_ = 0;
   int tab_ = 0;
