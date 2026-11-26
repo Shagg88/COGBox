@@ -1633,3 +1633,5 @@ The output device you chose is not plugged in at the moment - the game uses the 
 Ask before closing COGBox = Perguntar antes de fechar o COGBox
 EXIT, Esc and Start on the library ask "Close COGBox?" first. Off: they close COGBox at once. While a game is running COGBox can't be closed from there either way. = SAIR, Esc e Start na biblioteca perguntam primeiro "Fechar o COGBox?". Desligado: fecham o COGBox na hora. Enquanto um jogo está rodando, o COGBox não pode ser fechado por ali de qualquer forma.
 The game allows two local players only. = O jogo permite apenas dois jogadores locais.
+Camera shake (walking) = Tremor da câmera (caminhada)
+The camera sway while walking or standing still (the camera follows the character's body). Less halves the game's own; Off removes it. Roadie run has its own option. = O balanço da câmera ao caminhar ou ficar parado (a câmera acompanha o corpo do personagem). Menos reduz pela metade o balanço original do jogo; Desligado o remove. A corrida roadie tem sua própria opção.

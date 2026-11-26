@@ -1809,3 +1809,5 @@ Judgment's controller buttons laid out as in Gears of War 1, 2 and 3: D-pad up t
 (needs its console-command support). = (konzolparancs támogatásra van szükség).
 Experimental - how the screen is split for 2 players. Side by side suits ultrawide monitors. = Kísérleti – hogyan oszlik meg a képernyő 2 játékos esetén. Az Egymás mellett ultraszéles monitorokhoz illik.
 Gears 2: side by side from the start. = Gears 2: az elejétől egymás mellett.
+Camera shake (walking) = Kamerarázkódás (séta)
+The camera sway while walking or standing still (the camera follows the character's body). Less halves the game's own; Off removes it. Roadie run has its own option. = A kamera imbolygása séta és állás közben (a kamera követi a karakter testét). A Kevesebb a felére csökkenti a játék sajátját; a Ki megszünteti. A roadie runnak külön beállítása van.

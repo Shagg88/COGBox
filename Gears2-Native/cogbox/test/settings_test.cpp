@@ -569,6 +569,27 @@ int summary() {
             if (on ? !all : any) { std::cout << "FAIL net rates for game " << static_cast<int>(g) << " (" << (on ? "on" : "off") << ")\n"; ++fails; }
         }
     }
+    // GitHub #474: Camera shake (walking) edits the camera bone's section in each game (Gears 1 WarCamera.ini); Original none
+    for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment }) {
+        for (int sw = 0; sw <= 2; ++sw) {
+            Environment e; e.update_ready = true;
+            e.cap.exe_has = [](const std::string&) { return true; };
+            e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+            Store st; Settings s = st.view(g, e);
+            s.set("ShakeWalk", sw);
+            std::string ini;
+            for (const std::string& x : build_args(g, Version::TitleUpdate, s, e, nullptr))
+                if (x.rfind("--ue3_ini_edits=", 0) == 0) ini = x;
+            const std::string sec = g == Game::Gears1 ? "WarCamera.ini|WarfareGame.WarCamMod_CameraBone|" : "GearCamera.ini|GearGame.GearCamMod_CameraBone|";
+            const char* v = sw == 1 ? "*=0.5" : "=0";
+            const bool all = ini.find(sec + "bOXMShakyCamDampening=true") != std::string::npos &&
+                             ini.find(sec + "OXMShakyCamDampeningFactor" + v) != std::string::npos &&
+                             ini.find(sec + "InCombatAlphaBonus" + v) != std::string::npos;
+            const bool any = ini.find("OXMShakyCam") != std::string::npos || ini.find("InCombatAlphaBonus") != std::string::npos;
+            if (sw ? !all : any) { std::cout << "FAIL walking shake for game " << static_cast<int>(g) << " (choice " << sw << "): " << ini << "\n"; ++fails; }
+            if (ini.find("RoadieRunShakyCam") != std::string::npos) { std::cout << "FAIL walking shake edits roadie run (game " << static_cast<int>(g) << ")\n"; ++fails; }
+        }
+    }
     for (int has = 0; has < 2; ++has) {   // 0.6.5: Horde bots on Gears 3 also send the bot-characters fix when gow3.exe has it
         Environment e; e.update_ready = true;
         if (has) e.cap.exe_has = [](const std::string&) { return true; };
