@@ -1633,3 +1633,5 @@ The output device you chose is not plugged in at the moment - the game uses the 
 Ask before closing COGBox = Pytaj przed zamknięciem COGBox
 EXIT, Esc and Start on the library ask "Close COGBox?" first. Off: they close COGBox at once. While a game is running COGBox can't be closed from there either way. = WYJŚCIE, Esc i Start w bibliotece najpierw pytają "Zamknąć COGBox?". Wyłączone: zamykają COGBox od razu. Gdy gra jest uruchomiona, COGBox i tak nie da się stamtąd zamknąć.
 The game allows two local players only. = Gra pozwala tylko na dwóch graczy lokalnych.
+DETECT BEST SETTINGS = WYKRYJ NAJLEPSZE USTAWIENIA
+Picks graphics settings for this PC's graphics card and screen. The changes are listed first and made only if you choose Apply; gameplay and controls are not touched. = Dobiera ustawienia grafiki do karty graficznej i ekranu tego komputera. Zmiany są najpierw wyświetlane i wprowadzane tylko po wybraniu Zastosuj; rozgrywka i sterowanie pozostają bez zmian.
