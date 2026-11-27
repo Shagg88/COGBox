@@ -1606,6 +1606,19 @@ static AutoPlan auto_plan(App &a, int g)
     return p;
 }
 
+// GitHub #488: "Detect best settings" in its own section at the top of the right column (it was a lone button above
+// the Graphics tab's first heading, out of line with the rest of the page)
+static void detect_section(App &a, int g)
+{
+    ui_section("DETECT BEST SETTINGS");
+    if (small_button("Detect best settings")) {   // Shagg 29 Oct
+        AutoPlan p = auto_plan(a, g);
+        ask(a, "autoset", g, "Detect best settings", p.text, { "Apply", "Cancel" });
+    }
+    ui_tip("Picks graphics settings for this PC's graphics card and screen. The changes are listed first and made only if "
+           "you choose Apply; gameplay and controls are not touched.");
+}
+
 void auto_settings_apply(App &a, int g)
 {
     if (g < 0 || g >= G_COUNT) return;
@@ -2221,13 +2234,6 @@ void page_draw(App &a, ImVec2 size)
     if (a.tab < k_tabSocial) {
         gs::Tab want = (gs::Tab)a.tab;
         int shown = 0;
-        if (want == gs::Tab::Graphics) {   // Shagg 29 Oct
-            if (small_button("Detect best settings")) {
-                AutoPlan p = auto_plan(a, g);
-                ask(a, "autoset", g, "Detect best settings", p.text, { "Apply", "Cancel" });
-            }
-            ImGui::Dummy(ImVec2(0, S(4)));
-        }
         // grouped under a few headings (k_groups). An option not in the table shows in its tab's first group, so a
         // new option in gears_settings is never hidden.
         {   // SDK patch 117: look for controllers again each time the Gameplay tab opens
@@ -2284,6 +2290,7 @@ void page_draw(App &a, ImVec2 size)
                     if (want == gs::Tab::Gameplay) bug_report_section(a, g);   // Shagg 23 Nov: logging levels, docs/logging.md
                     if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
                     if (want == gs::Tab::Controls) window_key_section(a, g);   // 0.6.3, GitHub #316
+                    if (want == gs::Tab::Graphics) detect_section(a, g);   // GitHub #488
                     if (want == gs::Tab::Graphics) dlss_file_section(a, g);   // 0.4.9
                     if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
                 }
