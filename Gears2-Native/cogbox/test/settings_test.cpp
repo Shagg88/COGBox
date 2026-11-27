@@ -1226,8 +1226,8 @@ int summary() {
             Environment e; e.update_ready = true; e.prompt_dir = "C:\\p";
             e.cap.exe_has = [](const std::string&) { return true; };
             e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = [](const std::string&) { return false; };
-            static const char* const k[5] = { "", "xbox", "playstation", "switch", "steamdeck" };
-            for (int mnk = 0; mnk <= 1; ++mnk) for (int ps = 0; ps <= 4; ++ps) {
+            static const char* const k[6] = { "", "xbox", "playstation", "switch", "steamdeck", "original" };
+            for (int mnk = 0; mnk <= 1; ++mnk) for (int ps = 0; ps <= 5; ++ps) {
                 Store st; Settings s = st.view(game, e);
                 s.set("Mnk", mnk); s.set("PromptStyle", ps);
                 const auto args = build_args(game, effective_version(game, s, e), s, e);
@@ -1237,17 +1237,17 @@ int summary() {
                     if (x.rfind("--gow2_texture_overlay_dir=", 0) == 0) overlay = true;
                 }
                 if (sent != (ps > 0 ? 1 : 0)) bad("sent " + std::to_string(sent) + " game " + std::to_string(g) + " mnk " + std::to_string(mnk) + " style " + std::to_string(ps));
-                if (overlay != (mnk && ps != 1 && game != Game::Gears1)) bad("key caps game " + std::to_string(g) + " mnk " + std::to_string(mnk) + " style " + std::to_string(ps));
+                if (overlay != (mnk && ps != 1 && ps != 5 && game != Game::Gears1)) bad("key caps game " + std::to_string(g) + " mnk " + std::to_string(mnk) + " style " + std::to_string(ps));
             }
-            // in-game menu from PlayStation: Xbox live with a controller only; with keyboard and mouse it drops the key
-            // caps, so it waits for the restart (Gears 1 has no launcher key caps: live there too)
+            // in-game menu from PlayStation: Xbox One and Original live with a controller only; with keyboard and mouse
+            // they drop the key caps, so they wait for the restart (Gears 1 has no launcher key caps: live there too)
             for (int mnk = 0; mnk <= 1; ++mnk) {
                 Store st; Settings s = st.view(game, e);
                 s.set("Mnk", mnk); s.set("PromptStyle", 2);
                 const auto live = live_lines(game, effective_version(game, s, e), s, e);
-                bool xbox = false, deck = false;
-                if (live.count("PromptStyle")) for (const auto& l : live.at("PromptStyle")) { xbox |= l.rfind("1:", 0) == 0; deck |= l.rfind("4:", 0) == 0; }
-                if (!deck || xbox != (!mnk || game == Game::Gears1)) bad("live lines game " + std::to_string(g) + " mnk " + std::to_string(mnk));
+                bool xbox = false, deck = false, original = false;
+                if (live.count("PromptStyle")) for (const auto& l : live.at("PromptStyle")) { xbox |= l.rfind("1:", 0) == 0; deck |= l.rfind("4:", 0) == 0; original |= l.rfind("5:", 0) == 0; }
+                if (!deck || xbox != (!mnk || game == Game::Gears1) || original != (!mnk || game == Game::Gears1)) bad("live lines game " + std::to_string(g) + " mnk " + std::to_string(mnk));
             }
         }
     }
