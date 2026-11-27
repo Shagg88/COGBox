@@ -505,6 +505,71 @@ int summary() {
                 else if (!has("--window_width=1366") || !has("--window_height=768")) why = "1366 x 768 window";
                 if (!why.empty()) { std::cout << "FAIL #436 768p / 900p (" << why << "): game " << static_cast<int>(g) << ", lines " << lines << ", choice " << res << "\n"; ++fails; }
             }
+    // GitHub #496: Sharpening (AMD CAS) - Off (or an exe without the cvar) starts the game exactly as without the setting;
+    // Low / Medium / High send one --gow2_present_sharpen at every render resolution, the upscaled 1080p included, and
+    // grey "Upscale sharpening"; FSR's own sharpening is never sent; the in-game menu has it live only when made at start
+    for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
+        for (int cap = 0; cap <= 1; ++cap)
+            for (int lines = 0; lines <= 1; ++lines)
+                for (int wine = 0; wine <= 1; ++wine)
+                    for (int res : { 0, 1, 2, 3, 4, 5, 6, 7 })   // 4: a saved "Match my monitor" (native size)
+                        for (int uw = 0; uw <= 1; ++uw)
+                            for (int aa : { 0, 1, 2, 3, 4, 5 })   // every saved AA value (4: dropped, 5: T2x)
+                                for (int old = 0; old <= 2; ++old)
+                                    for (int cas = 0; cas <= 3; ++cas) {
+                    Environment e; e.update_ready = true; e.wine = wine != 0; e.gpus = { "NVIDIA GeForce RTX 4070" };
+                    e.cap.exe_has = [cap, lines](const std::string& n) {
+                        return (cap || n != "gow2_present_sharpen") && (lines || n.find("native_lines") == std::string::npos); };
+                    e.cap.runtime_has = [](const std::string&) { return true; }; e.cap.file_next_to_exe = e.cap.runtime_has;
+                    Store st; Settings s = st.view(g, e);
+                    s.set("Resolution", res); s.set("Ultrawide", uw); s.set("AAMode", aa); s.set("Sharpen", old);
+                    const Version ver = effective_version(g, s, e);
+                    const std::vector<std::string> before = build_args(g, ver, s, e, nullptr);   // no Sharpening saved
+                    s.set("Sharpening", cas);
+                    const std::vector<std::string> a = build_args(g, ver, s, e, nullptr);
+                    std::vector<std::string> sh;
+                    bool fsrSharp = false;
+                    for (const std::string& x : a) {
+                        if (x.rfind("--gow2_present_sharpen=", 0) == 0) sh.push_back(x);
+                        if (x.rfind("--gow2_upscale_sharpness", 0) == 0) fsrSharp = true;
+                    }
+                    static const char* const k_want[4] = { "", "--gow2_present_sharpen=0.25", "--gow2_present_sharpen=0.5",
+                                                           "--gow2_present_sharpen=0.8" };
+                    const bool used = cap && cas > 0;
+                    const Option* o = find_option(g, "Sharpening");
+                    const Option* oldOpt = find_option(g, "Sharpen");
+                    const Availability av = o ? available(*o, g, ver, s, e) : Availability{};
+                    const Availability oldAv = oldOpt ? available(*oldOpt, g, ver, s, e) : Availability{};
+                    std::string why;
+                    if (!o || !oldOpt) why = "option missing";
+                    else if (!used && a != before) why = "Off / no cvar changed the args";
+                    else if (used && (sh.size() != 1 || sh[0] != k_want[cas])) why = "strength";
+                    else if (fsrSharp) why = "FSR's own sharpening sent";
+                    else if (av.ok != (cap != 0) || (!cap && av.why.find("next build") == std::string::npos)) why = "availability";
+                    else if (used && (oldAv.ok || oldAv.why != "Set by Sharpening (AMD CAS).")) why = "old option not greyed";
+                    else if (!used && oldAv.why == "Set by Sharpening (AMD CAS).") why = "old option greyed";
+                    if (!why.empty()) {
+                        std::cout << "FAIL #496 Sharpening (" << why << "): game " << static_cast<int>(g) << ", cap " << cap << ", lines "
+                                  << lines << ", wine " << wine << ", res " << res << ", uw " << uw << ", aa " << aa << ", old " << old
+                                  << ", cas " << cas << "\n"; ++fails; }
+                    // the in-game menu (a few cases: live_lines runs build_args for every value)
+                    if (aa == 1 && uw == 0 && wine == 0 && old == 0 && (res == 0 || res == 5)) {
+                        const auto live = live_lines(g, ver, s, e);
+                        const bool newLive = live.count("Sharpening") != 0, oldLive = live.count("Sharpen") != 0;
+                        const bool oldMade = !used && res == 5 && !lines;   // the upscaled 1080p sharpens by default (Automatic), as before
+                        const bool made = used;   // review: one control per cvar - the old one while Off
+                        std::string lw;
+                        if (newLive != made) lw = "Sharpening live";
+                        else if (oldLive != oldMade) lw = "Upscale sharpening live";
+                        else if (newLive) {
+                            const std::vector<std::string>& l = live.at("Sharpening");
+                            if (l.size() != 4 || l[1] != "1:gow2_present_sharpen=0.25" || l[3] != "3:gow2_present_sharpen=0.8") lw = "live values";
+                        }
+                        if (!lw.empty()) {
+                            std::cout << "FAIL #496 Sharpening in-game (" << lw << "): game " << static_cast<int>(g) << ", cap " << cap
+                                      << ", lines " << lines << ", res " << res << ", cas " << cas << "\n"; ++fails; }
+                    }
+                }
     // 0.6.4 (GitHub #341): the texture cache - Auto sends nothing (512) without a texture pack and 2048 with one; a size
     // other than 512 is sent as picked; nothing for an exe without the cvar
     for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
