@@ -326,10 +326,12 @@ std::vector<Option> make_options(Game g) {
     // included) as its own choice. Off sends nothing (as before); any other choice also decides the 1080p upscale's
     // sharpening, so "Upscale sharpening" is greyed then. Saved by index - add new strengths at the end.
     add(choice("Sharpening", "Sharpening (AMD CAS)", Tab::Graphics, PG, { "Off", "Low", "Medium", "High" }, 0,
-               "Sharpens the whole picture with AMD's contrast-adaptive sharpening (RCAS, from FidelityFX FSR 1): "
-               "less texture blur, at any render resolution and with any anti-aliasing. Light on performance. Off by "
-               "default. On Steam Deck / Linux / Mac (Wine / Proton) it can make text and some textures look wrong "
-               "(GitHub #59) - if so, turn it off.", 0), "presentsharpen");
+               "Sharpens the whole picture, HUD and text included, with AMD's contrast-adaptive sharpening (RCAS, from "
+               "FidelityFX FSR 1): less texture blur, with any anti-aliasing. Light on performance. Off by default. "
+               "Strongest with the 1080p / 768p / 900p render resolutions, which sharpen the picture at your screen's "
+               "size; at 1x (720p) in a bigger window, or 2x-4x on a smaller screen, the game's own picture is sharpened "
+               "and then resized, so it looks milder. On Steam Deck / Linux / Mac (Wine / Proton) it can make text and "
+               "some textures look wrong (GitHub #59) - if so, turn it off.", 0), "presentsharpen");
     add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (FSR 4 on RX 6000 or newer, FSR 3.1 otherwise)", "DLSS (NVIDIA RTX, experimental)", "(no longer offered)",   /* fsr049 */   /* 0.4.7: DLSS tested clean in G2/G3/GJ; 0.6.4 (Shagg 16 Nov, GitHub #345): experimental again - scene scaling in Gears 3 / Judgment */
                  "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: AMD's temporal anti-aliasing / upscaler for the 3D scene - FSR 4 on RX 6000 or "
@@ -2098,8 +2100,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         scale = 1;
     } else if (scale >= 5) { a.push_back("--gow2_renderer_resolution_scale=0"); a.push_back("--gow2_present_native_size=true"); scale = 2; }
     else a.push_back("--gow2_renderer_resolution_scale=" + std::to_string(scale));
-    // GitHub #496: every other render resolution (720p, true 1080p / 768p / 900p, 2x-4x) - the present sharpens the
-    // picture as shown (after any resize to the window; native HDR in its encoder). FSR's own RCAS
+    // GitHub #496: every other render resolution. With --gow2_present_native_size (true 1080p / 768p / 900p, a saved
+    // "Match my monitor") the present resizes to the window first and sharpens that; at 1x and 2x-4x it sharpens the
+    // game-size image, which the presenter then stretches / shrinks (milder). Native HDR sharpens in its encoder. FSR's own RCAS
     // (--gow2_upscale_sharpness) is never sent and DLSS has none, so with an upscaler this is the only sharpening.
     if (cas > 0 && (true1080 || lines == 0)) a.push_back(std::string("--gow2_present_sharpen=") + k_cas[cas]);
     if (cas > 0 && env.wine) notes.push_back("launcher: Wine / Proton - Sharpening (AMD CAS) is on; if text looks wrong, turn it off (GitHub #59)");
@@ -3122,7 +3125,9 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         // Sharpening: the present makes its RCAS pass only when the cvar is above 0 at start, so it is live only then.
         // GitHub #496: "Upscale sharpening" is greyed while Sharpening (AMD CAS) decides - not live then.
         if (std::string(spec.id) == "Sharpen" && sharpening_level(g, ver, s, env) > 0) continue;
-        if (std::string(spec.id) == "Sharpening" && !can(g, o->feature, ver, env).ok) continue;   // an exe without it
+        // review: one in-game control per cvar - Sharpening only when it decides (Off: the pass exists only in the
+        // upscaled 1080p, where "Upscale sharpening" is the live one); never for an exe without it
+        if (std::string(spec.id) == "Sharpening" && sharpening_level(g, ver, s, env) == 0) continue;
         if (std::string(spec.id) == "Sharpen" || std::string(spec.id) == "Sharpening") {
             bool made = false;
             std::string v;

@@ -512,9 +512,9 @@ int summary() {
         for (int cap = 0; cap <= 1; ++cap)
             for (int lines = 0; lines <= 1; ++lines)
                 for (int wine = 0; wine <= 1; ++wine)
-                    for (int res : { 0, 1, 2, 3, 5, 6, 7 })
+                    for (int res : { 0, 1, 2, 3, 4, 5, 6, 7 })   // 4: a saved "Match my monitor" (native size)
                         for (int uw = 0; uw <= 1; ++uw)
-                            for (int aa : { 1, 2, 3 })
+                            for (int aa : { 0, 1, 2, 3, 4, 5 })   // every saved AA value (4: dropped, 5: T2x)
                                 for (int old = 0; old <= 2; ++old)
                                     for (int cas = 0; cas <= 3; ++cas) {
                     Environment e; e.update_ready = true; e.wine = wine != 0; e.gpus = { "NVIDIA GeForce RTX 4070" };
@@ -556,10 +556,11 @@ int summary() {
                     if (aa == 1 && uw == 0 && wine == 0 && old == 0 && (res == 0 || res == 5)) {
                         const auto live = live_lines(g, ver, s, e);
                         const bool newLive = live.count("Sharpening") != 0, oldLive = live.count("Sharpen") != 0;
-                        const bool made = used || (cap && res == 5 && !lines);   // the upscaled 1080p sharpens by default (Automatic)
+                        const bool oldMade = !used && res == 5 && !lines;   // the upscaled 1080p sharpens by default (Automatic), as before
+                        const bool made = used;   // review: one control per cvar - the old one while Off
                         std::string lw;
                         if (newLive != made) lw = "Sharpening live";
-                        else if (used && oldLive) lw = "Upscale sharpening live while greyed";
+                        else if (oldLive != oldMade) lw = "Upscale sharpening live";
                         else if (newLive) {
                             const std::vector<std::string>& l = live.at("Sharpening");
                             if (l.size() != 4 || l[1] != "1:gow2_present_sharpen=0.25" || l[3] != "3:gow2_present_sharpen=0.8") lw = "live values";
