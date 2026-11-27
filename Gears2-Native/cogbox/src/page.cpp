@@ -2075,7 +2075,7 @@ struct TabGroups { const char *heading[5]; const char *const *ids[5]; int column
 static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", "AspectRatio", "HideNotes", nullptr };
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
 static const char *const k_dispPicture[] = { "HDR", "PaperWhite", "Peak", nullptr };
-static const char *const k_gfxQuality[] = { "GraphicsCard", "Api", "WineApi", "Preset", "Resolution", "AAMode", "DlssModel", "Sharpen", "SceneMode", "FrameGen", nullptr };
+static const char *const k_gfxQuality[] = { "GraphicsCard", "Api", "WineApi", "Preset", "Resolution", "AAMode", "DlssModel", "Sharpening", "Sharpen", "SceneMode", "FrameGen", nullptr };   // GitHub #496: Sharpening
 static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Pool", "TexCache", "DrawDist", "ShadowDetail", "AO", nullptr };
 static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
 static const char *const k_ctlPad[] = { "PadLayout", "ClassicButtons", "Vibration", "AdaptiveTriggers", "TriggerRumble", "PadPrompts", "PromptStyle", "DeadZoneL", "DeadZoneR", "LowLag", nullptr };

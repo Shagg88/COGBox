@@ -322,6 +322,14 @@ std::vector<Option> make_options(Game g) {
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
+    // GitHub #496: the same RCAS pass (--gow2_present_sharpen, run on the shown picture at every render resolution, HDR
+    // included) as its own choice. Off sends nothing (as before); any other choice also decides the 1080p upscale's
+    // sharpening, so "Upscale sharpening" is greyed then. Saved by index - add new strengths at the end.
+    add(choice("Sharpening", "Sharpening (AMD CAS)", Tab::Graphics, PG, { "Off", "Low", "Medium", "High" }, 0,
+               "Sharpens the whole picture with AMD's contrast-adaptive sharpening (RCAS, from FidelityFX FSR 1): "
+               "less texture blur, at any render resolution and with any anti-aliasing. Light on performance. Off by "
+               "default. On Steam Deck / Linux / Mac (Wine / Proton) it can make text and some textures look wrong "
+               "(GitHub #59) - if so, turn it off.", 0), "presentsharpen");
     add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (FSR 4 on RX 6000 or newer, FSR 3.1 otherwise)", "DLSS (NVIDIA RTX, experimental)", "(no longer offered)",   /* fsr049 */   /* 0.4.7: DLSS tested clean in G2/G3/GJ; 0.6.4 (Shagg 16 Nov, GitHub #345): experimental again - scene scaling in Gears 3 / Judgment */
                  "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: AMD's temporal anti-aliasing / upscaler for the 3D scene - FSR 4 on RX 6000 or "
@@ -955,6 +963,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "start" || f == "prebuild") {
         if ((g == Game::Judgment || g == Game::Gears1) && start_names(g).size() < 2)
             return no(not_yet(gi, f == "start" ? "its chapter list is coming" : "needs its chapter list"));
+    } else if (f == "presentsharpen") {   // GitHub #496: the shared renderer's present RCAS
+        if (!cap_exe(env, "gow2_present_sharpen")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "loglevel") {   // docs/logging.md: the shared renderer's frame log (layer 0) marks an exe that has the switches
         if (!cap_exe(env, "Frame log: every frame's time and its cause")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "achpopups") {   // achievements part 2: the text is in cogbox_ach_style's description
@@ -1324,6 +1334,13 @@ PadAssign pad_assign(PadMap& m, int game, int pad)
     return r;
 }
 
+// GitHub #496: the Sharpening (AMD CAS) choice really used - 0 (Off) also where the exe has no present sharpening
+static int sharpening_level(Game g, Version ver, const Settings& s, const Environment& env) {
+    const Option* o = find_option(g, "Sharpening");
+    const int v = s.i("Sharpening");
+    return o && v >= 1 && v <= 3 && can(g, o->feature, ver, env).ok ? v : 0;
+}
+
 Availability available(const Option& o, Game g, Version ver, const Settings& s, const Environment& env) {
     Availability a;
     if (!o.feature.empty()) a = can(g, o.feature, ver, env);
@@ -1344,6 +1361,9 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
         if (!v.ok) { a.ok = false; a.why = "DirectX 12 only for now. " + v.why; return a; }
     } else if (o.id == "FrameGen" && env.wine) { a.ok = false; a.why = env.mac ? "Not on a Mac (CrossOver)." : "Vulkan only on Proton / Wine."; return a; }
     else if (o.id == "FsrVulkan") on = runs_vulkan(s, env) && fsr_vulkan(env);      // review: opt-in, Vulkan builds with AMD's VK DLLs
+    else if (o.id == "Sharpen" && sharpening_level(g, ver, s, env) > 0) {   // GitHub #496: the new option decides
+        a.ok = false; a.why = "Set by Sharpening (AMD CAS)."; return a;
+    }
     else if (o.id == "Sharpen") {   // GitHub #59: the UPSCALED 1080p only (0.6.6: with Ultrawide, or an exe without true 1080p)
         static const char* const k_nl[kGameCount] = { "gow2_native_lines", "gow3_native_lines", "gowj_native_lines", "gow1_native_lines" };
         const bool trueLines = cap_exe(env, k_nl[static_cast<int>(g)]) && cap_exe(env, "gow2_renderer_edram_extended") &&
@@ -2055,6 +2075,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     const bool true1080 = lines > 0 && cap_exe(env, k_nativeLines[gi]) && cap_exe(env, "gow2_renderer_edram_extended") &&
                           cap_exe(env, "_native_lines: UI scene viewport") &&
                           (!(avail("Ultrawide") && on("Ultrawide")) || cap_exe(env, "the wide picture is scaled the same way"));
+    // GitHub #496: Sharpening (AMD CAS) - RCAS strength (the lobe's share, 1 = RCAS at 0 stops): Low 0.25 (about 2
+    // stops), Medium 0.5 (1 stop; the 1080p upscale's own value since 0.2.0), High 0.8 (strong, short of the full lobe's
+    // edge lines). Off sends nothing here, so a setting without it starts the game exactly as before.
+    static const char* const k_cas[4] = { "", "0.25", "0.5", "0.8" };
+    const int cas = sharpening_level(g, ver, s, env);
     if (true1080) {
         a.insert(a.end(), { "--gow2_renderer_resolution_scale=1", std::string("--") + k_nativeLines[gi] + "=" + std::to_string(lines),
                             "--gow2_renderer_edram_extended=true", "--gow2_present_native_size=true" });
@@ -2064,13 +2089,20 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         a.insert(a.end(), { "--gow2_renderer_resolution_scale=1", "--gow2_present_native_size=true",
                             "--gow2_present_upscale_filter=lanczos" });
         // GitHub #59: Automatic sharpens except under Wine; On / Off are the player's
+        // GitHub #496: Sharpening (AMD CAS) other than Off decides the strength here too
         const int sh = s.i("Sharpen");
         const bool sharpen = sh == 1 || (sh == 0 && !env.wine);
-        a.push_back(sharpen ? "--gow2_present_sharpen=0.5" : "--gow2_present_sharpen=0");
-        if (env.wine && sh == 0) notes.push_back("launcher: Wine / Proton - upscale sharpening off (Automatic; GitHub #59)");
+        if (cas > 0) a.push_back(std::string("--gow2_present_sharpen=") + k_cas[cas]);
+        else a.push_back(sharpen ? "--gow2_present_sharpen=0.5" : "--gow2_present_sharpen=0");
+        if (env.wine && sh == 0 && cas == 0) notes.push_back("launcher: Wine / Proton - upscale sharpening off (Automatic; GitHub #59)");
         scale = 1;
     } else if (scale >= 5) { a.push_back("--gow2_renderer_resolution_scale=0"); a.push_back("--gow2_present_native_size=true"); scale = 2; }
     else a.push_back("--gow2_renderer_resolution_scale=" + std::to_string(scale));
+    // GitHub #496: every other render resolution (720p, true 1080p / 768p / 900p, 2x-4x) - the present sharpens the
+    // picture as shown (after any resize to the window; native HDR in its encoder). FSR's own RCAS
+    // (--gow2_upscale_sharpness) is never sent and DLSS has none, so with an upscaler this is the only sharpening.
+    if (cas > 0 && (true1080 || lines == 0)) a.push_back(std::string("--gow2_present_sharpen=") + k_cas[cas]);
+    if (cas > 0 && env.wine) notes.push_back("launcher: Wine / Proton - Sharpening (AMD CAS) is on; if text looks wrong, turn it off (GitHub #59)");
     // PS1 843-849: Gears 3's threshold, memexport, aspect
     if (g == Game::Gears2 && avail("HordeBots") && on("HordeBots")) a.push_back("--gow2_horde_bots=true");   // GitHub #237
     // insane050: Insane from the start unless "Original unlock rules" is on (GitHub #174)
@@ -3044,6 +3076,7 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         { "AimSens", { { "ue3_mouse_aim_scale", "1" } } },
         { "ZoomSens", { { "ue3_mouse_zoom_scale", "1" } } },
         { "Sharpen", { { "gow2_present_sharpen", "0" } } },
+        { "Sharpening", { { "gow2_present_sharpen", "0" } } },   // GitHub #496: the same cvar, the same rule
         { "FpsMode", { { "gow2_fps_bar", "off" } } },
         { "ShowPing", { { "cogbox_show_ping", "false" } } },
         { "MatchChat", { { "cogbox_match_chat", "true" } } },
@@ -3087,7 +3120,10 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         const Option* o = find_option(g, spec.id);
         if (!o || o->kind == Kind::Text) continue;
         // Sharpening: the present makes its RCAS pass only when the cvar is above 0 at start, so it is live only then.
-        if (std::string(spec.id) == "Sharpen") {
+        // GitHub #496: "Upscale sharpening" is greyed while Sharpening (AMD CAS) decides - not live then.
+        if (std::string(spec.id) == "Sharpen" && sharpening_level(g, ver, s, env) > 0) continue;
+        if (std::string(spec.id) == "Sharpening" && !can(g, o->feature, ver, env).ok) continue;   // an exe without it
+        if (std::string(spec.id) == "Sharpen" || std::string(spec.id) == "Sharpening") {
             bool made = false;
             std::string v;
             for (const std::string& arg : base)

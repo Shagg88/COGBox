@@ -1635,3 +1635,8 @@ The output device you chose is not plugged in at the moment - the game uses the 
 Ask before closing COGBox = Preguntar antes de cerrar COGBox
 EXIT, Esc and Start on the library ask "Close COGBox?" first. Off: they close COGBox at once. While a game is running COGBox can't be closed from there either way. = SALIR, Esc y Start en la biblioteca preguntan primero "¿Cerrar COGBox?". Desactivado: cierran COGBox al instante. Mientras se ejecuta un juego, COGBox no se puede cerrar desde ahí en ningún caso.
 The game allows two local players only. = El juego solo permite dos jugadores locales.
+Sharpening (AMD CAS) = Nitidez (AMD CAS)
+Low = Bajo
+Medium = Medio
+Sharpens the whole picture with AMD's contrast-adaptive sharpening (RCAS, from FidelityFX FSR 1): less texture blur, at any render resolution and with any anti-aliasing. Light on performance. Off by default. On Steam Deck / Linux / Mac (Wine / Proton) it can make text and some textures look wrong (GitHub #59) - if so, turn it off. = Aumenta la nitidez de toda la imagen con el realce adaptativo al contraste de AMD (RCAS, de FidelityFX FSR 1): texturas menos borrosas, con cualquier resolución de renderizado y cualquier antialiasing. Apenas afecta al rendimiento. Desactivado por defecto. En Steam Deck / Linux / Mac (Wine / Proton) puede hacer que el texto y algunas texturas se vean mal (GitHub #59); si pasa, desactívalo.
+Set by Sharpening (AMD CAS). = Lo decide Nitidez (AMD CAS).
