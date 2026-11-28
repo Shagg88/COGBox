@@ -938,7 +938,7 @@ void front_draw(App &a, ImVec2 size)
             break;
         case R_NO_COPY: line = gd.tagline; break;
         case R_COPY_MISSING: line = "Your copy isn't where it was - is its drive connected?"; break;
-        case R_NEED_UPDATE: line = std::string(tr("Needs")) + " " + gd.updateName + " - add it from your console or its package file"; break;
+        case R_NEED_UPDATE: line = std::string(tr("Needs")) + " " + gd.updateName + tr(" - add it from your console or its package file"); break;
         // Discord 24 Nov (Norseus: Gears 2 and 3 suddenly "Not in this release" on 0.6.7): all four games ship now, so this
         // means the game's program is missing from its port folder (an antivirus quarantine or a partial unzip)
         case R_NO_PORT: line = std::string(gd.exeName) + " is missing - unzip COGBox again; check your antivirus"; break;

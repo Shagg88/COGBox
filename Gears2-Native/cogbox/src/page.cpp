@@ -2326,7 +2326,7 @@ void page_draw(App &a, ImVec2 size)
     if (!ready && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         const GameDef &gd = game_def(g);
         std::string why = a.run.proc ? "The game is already running." : a.job.state.load() == 1 ? "Wait until the copy is finished." :
-                          a.st[g].ready == R_NEED_UPDATE ? std::string(tr("Needs")) + " " + gd.updateName + " - add it from your console or its package file" :
+                          a.st[g].ready == R_NEED_UPDATE ? std::string(tr("Needs")) + " " + gd.updateName + tr(" - add it from your console or its package file") :
                           a.st[g].ready == R_COPY_MISSING ? "Your copy isn't where it was - is its drive connected?" :
                           a.st[g].ready == R_NO_PORT ? std::string(gd.exeName) + " is missing from this game's port folder - an antivirus may have "
                                                        "removed it (check its quarantine / protection history), or the unzip stopped early. Unzip "
