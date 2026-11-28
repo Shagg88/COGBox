@@ -285,7 +285,7 @@ static void draw_cover_flat(App &a, ImDrawList *dl, int g, ImVec2 o, float w, fl
     float sy = h * 0.035f;
     ImVec2 ys = F_HEAD->CalcTextSizeA(sy, FLT_MAX, 0, d.year);
     dl->AddText(F_HEAD, sy, ImVec2(b.x - ys.x - w * 0.05f, o.y + h * 0.87f), L(ImVec4(0.7f, 0.7f, 0.68f, 1)), d.year);
-    dl->AddText(F_HEAD, sy, ImVec2(o.x + w * 0.05f, o.y + h * 0.87f), L(ImVec4(0.7f, 0.7f, 0.68f, 1)), "PC PORT");
+    dl->AddText(F_HEAD, sy, ImVec2(o.x + w * 0.05f, o.y + h * 0.87f), L(ImVec4(0.7f, 0.7f, 0.68f, 1)), tr("PC PORT"));
     dl->AddRect(o, b, L(ImVec4(1, 1, 1, 0.08f)), 0, 0, h * 0.003f);
 }
 
@@ -926,7 +926,7 @@ void front_draw(App &a, ImVec2 size)
         switch (st.ready) {
         case R_READY:
             line = st.useUpdate ? std::string(gd.updateName) : "Disc version";
-            if (st.playSeconds > 0) line += "   |   " + human_duration(st.playSeconds) + " played";
+            if (st.playSeconds > 0) line += "   |   " + human_duration(st.playSeconds) + " " + tr("played");   // GitHub #499: one word is never a piece
             if (st.lastPlayed > 0) line += ", " + last_played_text(st.lastPlayed);
             // Shagg 29 Oct 18:07: an untested game version or title update (or an update made for another disc) still plays,
             // with a warning - unless the player said that exact file works
@@ -938,7 +938,7 @@ void front_draw(App &a, ImVec2 size)
             break;
         case R_NO_COPY: line = gd.tagline; break;
         case R_COPY_MISSING: line = "Your copy isn't where it was - is its drive connected?"; break;
-        case R_NEED_UPDATE: line = std::string("Needs ") + gd.updateName + " - add it from your console or its package file"; break;
+        case R_NEED_UPDATE: line = std::string(tr("Needs")) + " " + gd.updateName + " - add it from your console or its package file"; break;
         // Discord 24 Nov (Norseus: Gears 2 and 3 suddenly "Not in this release" on 0.6.7): all four games ship now, so this
         // means the game's program is missing from its port folder (an antivirus quarantine or a partial unzip)
         case R_NO_PORT: line = std::string(gd.exeName) + " is missing - unzip COGBox again; check your antivirus"; break;
@@ -1063,8 +1063,11 @@ void front_draw(App &a, ImVec2 size)
                 art_download_start();
                 set_message(a, "Getting the box art and backgrounds from the x360db archive on GitHub...", false);
             }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                ImGui::SetTooltip("Downloads each game's Xbox Marketplace box art and background from the x360db archive on GitHub\n(the one Xenia Manager uses) into the covers folder. To use your own picture (.png / .jpg, e.g. 600x900),\ndrag it onto this window while that game is in front.");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))   // GitHub #499: the lang files' key (wrapped, no line breaks)
+                hover_tip(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                          tr("Downloads each game's Xbox Marketplace box art and background from the x360db archive on GitHub (the one Xenia "
+                             "Manager uses) into the covers folder. To use your own picture (.png / .jpg, e.g. 600x900), drag it onto this "
+                             "window while that game is in front."));
         }
         // Shagg 1 Nov: ADD GAME (Back / View) - the carousel has no boxes for games not added yet (same import as a drop)
         if (nLib > 0) {
@@ -1121,7 +1124,7 @@ void front_draw(App &a, ImVec2 size)
                 else { update_install_start(newer); set_message(a, "Updating COGBox - it restarts by itself when done.", false); }
             }
             if (us_state == -1 && !uerr.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("%s", (tr("The update failed:") + std::string(" ") + uerr).c_str());
+                ImGui::SetTooltip("%s", (tr("The update failed:") + std::string(" ") + tr(uerr)).c_str());
             else if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                 ImGui::SetTooltip("%s", (std::string("COGBox ") + newer + " " + tr("is out. Click to download and install it; COGBox restarts by itself.")).c_str());
         }
@@ -1258,7 +1261,7 @@ void front_draw(App &a, ImVec2 size)
         }
     }
     {   // job 529 (Shagg 21:17): the maker's mark, bottom right, just above the hint line
-        const char *mark = "Made by Shagg";
+        const char *mark = tr("Made by Shagg");   // GitHub #499
         ImVec2 ms = F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, mark);
         ImVec2 mp(size.x - ms.x - S(24), size.y - FS(F_SMALL) * 1.35f - ms.y - S(20));   // review 0.4.6: above the legend's button pictures
         ImDrawList *wl = ImGui::GetWindowDrawList();

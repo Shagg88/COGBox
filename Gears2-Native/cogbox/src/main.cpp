@@ -390,7 +390,7 @@ void startup_notices(App &a)
     }
     if (!a.ini.geti("Notices", "LanguageNever", 0) && a.ini.get("Notices", "LanguageSeen") != COGBOX_VERSION) {
         ask(a, "langpick", -1, "Language", "Choose COGBox's language. You can change it any time on a game's About tab.", { "Continue" });
-        a.modal.list.push_back(std::string("Automatic (") + tr("Windows' language") + ")");
+        a.modal.list.push_back(std::string(tr("Automatic")) + " (" + tr("Windows' language") + ")");   // GitHub #499 (as the About tab's list)
         for (const Language &l : languages()) a.modal.list.push_back(l.name);
         const std::string cur = a.ini.get("Launcher", "Language");
         a.modal.listSel = 0;

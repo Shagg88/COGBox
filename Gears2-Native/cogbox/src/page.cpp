@@ -682,12 +682,12 @@ static void prepare_section(App &a, int g)
         if (read_file(join(game_shader_dir(g), "prepare-progress.txt"), prog, 4096))
             sscanf(prog.c_str(), "%llu %llu %31s %llu", (unsigned long long *)&done, (unsigned long long *)&total, state, (unsigned long long *)&secs);
         const float f = total ? std::min(1.0f, float(double(done) / double(total))) : 0.0f;
-        const std::string what = !strcmp(state, "reading") ? "reading the game's packages and building"
-                                 : !strcmp(state, "saving") ? "saving" : !strcmp(state, "done") ? "done" : "building";
+        const std::string what = tr(!strcmp(state, "reading") ? "reading the game's packages and building"
+                                    : !strcmp(state, "saving") ? "saving" : !strcmp(state, "done") ? "done" : "building");   // GitHub #499
         char line[200];
         snprintf(line, sizeof line, "%s - %llu of %llu (%d%%), %llu min %02llu s", what.c_str(), (unsigned long long)done,
                  (unsigned long long)total, int(f * 100.0f), (unsigned long long)(secs / 60), (unsigned long long)(secs % 60));
-        ImGui::ProgressBar(f, ImVec2(g_rowX1 - ImGui::GetCursorScreenPos().x, T(26)), total ? line : "starting the game...");
+        ImGui::ProgressBar(f, ImVec2(g_rowX1 - ImGui::GetCursorScreenPos().x, T(26)), total ? line : tr("starting the game..."));
         ImGui::Dummy(ImVec2(0, S(4)));
         if (small_button("Stop preparing")) TerminateProcess(a.run.proc, 0xC0B05709);   // job 666: stopped on purpose (play_poll)
     } else {
@@ -1208,7 +1208,7 @@ static void option_row(App &a, int g, const gs::Option &o)
                 ImGui::PushID(i);   // translations can make two choices read the same
                 if (ImGui::Selectable(items[i].c_str(), i == idx)) { nv = i; changed = true; }
                 ImGui::PopID();
-                if (!ca.ok) { ImGui::EndDisabled(); if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ca.why.empty()) ImGui::SetTooltip("%s", a.wine ? tr(ca.why).c_str() : ca.why.c_str()); }
+                if (!ca.ok) { ImGui::EndDisabled(); if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ca.why.empty()) ImGui::SetTooltip("%s", tr(ca.why).c_str()); }   // GitHub #499: on Windows too
                 if (i == idx) ImGui::SetItemDefaultFocus();
             }
             ImGui::EndCombo();
@@ -1814,7 +1814,7 @@ static void about_tab(App &a, int g)
         lamp_line(2, "COGBox " + newer + " is out (this is " COGBOX_VERSION ").");
         float p = 0; std::string err;
         int s = update_install_state(&p, &err);
-        if (s == 1 || s == 2) ImGui::ProgressBar(p, ImVec2(g_rowX1 - ImGui::GetCursorScreenPos().x, 0), s == 1 ? "Downloading..." : "Unpacking...");
+        if (s == 1 || s == 2) ImGui::ProgressBar(p, ImVec2(g_rowX1 - ImGui::GetCursorScreenPos().x, 0), tr(s == 1 ? "Downloading..." : "Unpacking..."));
         else if (s == 3) { static bool rs = false; if (!rs) { rs = true; if (update_restart()) a.quit = true; } else if (small_button("Restart COGBox")) { if (update_restart()) a.quit = true; } }   // 0.2.2: by itself
         else {
             if (s == -1) lamp_line(3, err);
@@ -2142,7 +2142,7 @@ void page_draw(App &a, ImVec2 size)
     draw_box(a, g, ImVec2(p0.x + S(60), p0.y + S(64)), S(92), -12, 1.0f, false);
     dl->AddText(F_TITLE, FS(F_TITLE), ImVec2(p0.x + S(112), p0.y + S(22)), U(col::text), d.name);
     std::string sub = a.st[g].ready == R_READY ? (a.st[g].useUpdate ? std::string(d.updateName) : "Disc version") : "Not ready to play";
-    if (a.st[g].playSeconds > 0) sub += "   |   " + human_duration(a.st[g].playSeconds) + " played";
+    if (a.st[g].playSeconds > 0) sub += "   |   " + human_duration(a.st[g].playSeconds) + " " + tr("played");   // GitHub #499: one word is never a piece
     dl->AddText(F_BODY, FS(F_BODY), ImVec2(p0.x + S(114), p0.y + S(22) + FS(F_TITLE) + S(2)), U(col::dim), tr(sub).c_str());
     {
         struct L { int s; const char *t; } lamps[3] = {
@@ -2326,7 +2326,7 @@ void page_draw(App &a, ImVec2 size)
     if (!ready && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         const GameDef &gd = game_def(g);
         std::string why = a.run.proc ? "The game is already running." : a.job.state.load() == 1 ? "Wait until the copy is finished." :
-                          a.st[g].ready == R_NEED_UPDATE ? std::string("Needs ") + gd.updateName + " - add it from your console or its package file" :
+                          a.st[g].ready == R_NEED_UPDATE ? std::string(tr("Needs")) + " " + gd.updateName + " - add it from your console or its package file" :
                           a.st[g].ready == R_COPY_MISSING ? "Your copy isn't where it was - is its drive connected?" :
                           a.st[g].ready == R_NO_PORT ? std::string(gd.exeName) + " is missing from this game's port folder - an antivirus may have "
                                                        "removed it (check its quarantine / protection history), or the unzip stopped early. Unzip "
