@@ -490,7 +490,7 @@ void install_draw(App &a, ImVec2 size)
     float frac = total ? (float)((double)done / total) : 0.0f;
     char ov[64];
     if (total) snprintf(ov, sizeof ov, "%s of %s", human_bytes(done).c_str(), human_bytes(total).c_str());
-    else snprintf(ov, sizeof ov, "Starting...");
+    else snprintf(ov, sizeof ov, "%s", tr("Starting..."));
     ImGui::SetCursorScreenPos(ImVec2(p0.x + S(26), p0.y + S(70)));
     ImGui::ProgressBar(frac, ImVec2(w - S(52), S(24)), ov);
     ImGui::SetCursorScreenPos(ImVec2(p0.x + S(26), p0.y + S(104)));
